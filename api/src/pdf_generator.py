@@ -14,11 +14,11 @@ from api.src.assignment import RouteAssignment
 class DriverHandoutGenerator:
     """Generates driver handout PDFs with 2x2 card layout."""
     
-    # Layout constants
-    CARD_WIDTH = 4.5 * inch
-    CARD_HEIGHT = 6.5 * inch
-    MARGIN = 0.35 * inch
-    CARD_SPACING = 0.2 * inch
+    # Layout constants optimized for 8.5"x11" portrait (2x2 layout per page)
+    CARD_WIDTH = 3.75 * inch  # Reduced from 4.5" to fit 2 across with margins
+    CARD_HEIGHT = 5.0 * inch  # Reduced from 6.5" to fit 2 rows on portrait page
+    CARD_SPACING = 0.25 * inch  # Vertical spacing between card rows
+    MARGIN = 0.4 * inch
     
     # Colors per governance (NDL branding: blue + white)
     COLOR_BLUE = colors.HexColor("#003DA5")  # NDL primary blue
@@ -36,47 +36,47 @@ class DriverHandoutGenerator:
         self.styles.add(ParagraphStyle(
             name='CardHeader',
             parent=self.styles['Normal'],
-            fontSize=11,
+            fontSize=9,
             textColor=self.COLOR_BLUE,
             fontName='Helvetica-Bold',
-            spaceAfter=6,
+            spaceAfter=3,
         ))
         
         # Card title style (route code, large, bold)
         self.styles.add(ParagraphStyle(
             name='CardTitle',
             parent=self.styles['Normal'],
-            fontSize=14,
+            fontSize=12,
             textColor=self.COLOR_BLACK,
             fontName='Helvetica-Bold',
-            spaceAfter=4,
+            spaceAfter=2,
         ))
         
         # Card label style (small, gray)
         self.styles.add(ParagraphStyle(
             name='CardLabel',
             parent=self.styles['Normal'],
-            fontSize=8,
+            fontSize=7,
             textColor=colors.HexColor("#666666"),
             fontName='Helvetica',
-            spaceAfter=2,
+            spaceAfter=1,
         ))
         
         # Card value style (regular, bold)
         self.styles.add(ParagraphStyle(
             name='CardValue',
             parent=self.styles['Normal'],
-            fontSize=9,
+            fontSize=8,
             textColor=self.COLOR_BLACK,
             fontName='Helvetica-Bold',
-            spaceAfter=3,
+            spaceAfter=2,
         ))
         
         # Table header style
         self.styles.add(ParagraphStyle(
             name='TableHeader',
             parent=self.styles['Normal'],
-            fontSize=7,
+            fontSize=6,
             textColor=colors.whitesmoke,
             fontName='Helvetica-Bold',
             alignment=TA_CENTER,
@@ -86,7 +86,7 @@ class DriverHandoutGenerator:
         self.styles.add(ParagraphStyle(
             name='TableCell',
             parent=self.styles['Normal'],
-            fontSize=7,
+            fontSize=6,
             textColor=self.COLOR_BLACK,
             fontName='Helvetica',
             alignment=TA_CENTER,
@@ -155,7 +155,7 @@ class DriverHandoutGenerator:
                 row1 = page_assignments[0:2]
                 row2 = page_assignments[2:4]
                 story.append(self._build_card_row(row1, route_lookup))
-                story.append(Spacer(1, 0.15*inch))
+                story.append(Spacer(1, self.CARD_SPACING))
                 story.append(self._build_card_row(row2, route_lookup))
             elif len(page_assignments) == 3:
                 # Row 1: 2 cards, Row 2: 1 card (becomes 2x1)
@@ -306,13 +306,13 @@ class DriverHandoutGenerator:
         header_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, -1), self.COLOR_LIGHT_GRAY),
             ('LINEBELOW', (0, 0), (-1, -1), 1.5, self.COLOR_BLUE),
-            ('LEFTPADDING', (0, 0), (-1, -1), 6),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-            ('TOPPADDING', (0, 0), (-1, -1), 4),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+            ('LEFTPADDING', (0, 0), (-1, -1), 4),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+            ('TOPPADDING', (0, 0), (-1, -1), 2),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
         ]))
         card_elements.append(header_table)
-        card_elements.append(Spacer(1, 0.08*inch))
+        card_elements.append(Spacer(1, 0.04*inch))
         
         # --- Route Code (Large) ---
         route_title = [
@@ -320,16 +320,16 @@ class DriverHandoutGenerator:
         ]
         route_table = Table(route_title, colWidths=[self.CARD_WIDTH - 0.1*inch])
         route_table.setStyle(TableStyle([
-            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+            ('LEFTPADDING', (0, 0), (-1, -1), 4),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ]))
         card_elements.append(route_table)
-        card_elements.append(Spacer(1, 0.06*inch))
+        card_elements.append(Spacer(1, 0.03*inch))
         
         # --- Service Type ---
         service_text = f"<b>Service:</b> {assignment.service_type}"
         card_elements.append(Paragraph(service_text, self.styles['CardLabel']))
-        card_elements.append(Spacer(1, 0.04*inch))
+        card_elements.append(Spacer(1, 0.02*inch))
         
         # --- Driver & Vehicle ---
         driver_text = f"<b>Driver:</b> {assignment.driver_name or 'TBD'}"
@@ -337,7 +337,7 @@ class DriverHandoutGenerator:
         
         vehicle_text = f"<b>Vehicle:</b> {assignment.vehicle_name}"
         card_elements.append(Paragraph(vehicle_text, self.styles['CardLabel']))
-        card_elements.append(Spacer(1, 0.08*inch))
+        card_elements.append(Spacer(1, 0.04*inch))
         
         # --- Load Manifest (Bags & Overflow) ---
         if route_sheet:
@@ -345,72 +345,70 @@ class DriverHandoutGenerator:
             if route_sheet.bags:
                 card_elements.append(Paragraph("<b>Bags</b>", ParagraphStyle(
                     name='ManifestHeader',
-                    fontSize=8,
+                    fontSize=7,
                     textColor=self.COLOR_BLUE,
                     fontName='Helvetica-Bold',
                 )))
                 
                 bag_data = [
-                    [Paragraph("Zone", self.styles['TableHeader']),
-                     Paragraph("Bag Code", self.styles['TableHeader'])],
+                    [Paragraph("Bag Code", self.styles['TableHeader'])],
                 ]
                 
-                for bag in route_sheet.bags[:5]:  # Max 5 bags to fit
+                for bag in route_sheet.bags[:8]:  # Max 8 bags to fit
                     bag_data.append([
-                        Paragraph(bag.sort_zone, self.styles['TableCell']),
                         Paragraph(bag.bag_id, self.styles['TableCell']),
                     ])
                 
-                bags_table = Table(bag_data, colWidths=[0.8*inch, 1.5*inch])
+                bags_table = Table(bag_data, colWidths=[2.0*inch])
                 bags_table.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), self.COLOR_BLUE),
                     ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                     ('BACKGROUND', (0, 1), (-1, -1), self.COLOR_LIGHT_GRAY),
                     ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
                     ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, -1), 7),
+                    ('FONTSIZE', (0, 0), (-1, -1), 6),
                     ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('LEFTPADDING', (0, 0), (-1, -1), 3),
-                    ('RIGHTPADDING', (0, 0), (-1, -1), 3),
-                    ('TOPPADDING', (0, 0), (-1, -1), 2),
-                    ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+                    ('LEFTPADDING', (0, 0), (-1, -1), 2),
+                    ('RIGHTPADDING', (0, 0), (-1, -1), 2),
+                    ('TOPPADDING', (0, 0), (-1, -1), 1),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
                 ]))
                 card_elements.append(bags_table)
-                card_elements.append(Spacer(1, 0.06*inch))
+                card_elements.append(Spacer(1, 0.03*inch))
             
             # Overflow table (right side)
             if route_sheet.overflow:
-                card_elements.append(Paragraph("<b>Overflow</b>", ParagraphStyle(
+                card_elements.append(Paragraph("<b>OV</b>", ParagraphStyle(
                     name='OverflowHeader',
-                    fontSize=8,
+                    fontSize=7,
                     textColor=self.COLOR_BLUE,
                     fontName='Helvetica-Bold',
                 )))
                 
                 overflow_data = [
                     [Paragraph("Zone", self.styles['TableHeader']),
-                     Paragraph("Bag Code", self.styles['TableHeader'])],
+                     Paragraph("Qty", self.styles['TableHeader'])],
                 ]
                 
-                for overflow in route_sheet.overflow[:5]:  # Max 5 overflow to fit
+                for overflow in route_sheet.overflow[:8]:  # Max 8 overflow to fit
                     overflow_data.append([
                         Paragraph(overflow.sort_zone, self.styles['TableCell']),
-                        Paragraph(overflow.bag_code, self.styles['TableCell']),
+                        Paragraph(str(overflow.package_count), self.styles['TableCell']),
                     ])
                 
-                overflow_table = Table(overflow_data, colWidths=[0.8*inch, 1.5*inch])
+                overflow_table = Table(overflow_data, colWidths=[0.7*inch, 0.6*inch])
                 overflow_table.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), self.COLOR_BLUE),
                     ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                     ('BACKGROUND', (0, 1), (-1, -1), self.COLOR_LIGHT_GRAY),
                     ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
                     ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, -1), 7),
+                    ('FONTSIZE', (0, 0), (-1, -1), 6),
                     ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('LEFTPADDING', (0, 0), (-1, -1), 3),
-                    ('RIGHTPADDING', (0, 0), (-1, -1), 3),
-                    ('TOPPADDING', (0, 0), (-1, -1), 2),
-                    ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+                    ('LEFTPADDING', (0, 0), (-1, -1), 2),
+                    ('RIGHTPADDING', (0, 0), (-1, -1), 2),
+                    ('TOPPADDING', (0, 0), (-1, -1), 1),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
                 ]))
                 card_elements.append(overflow_table)
         
@@ -423,10 +421,10 @@ class DriverHandoutGenerator:
         card_table.setStyle(TableStyle([
             ('BORDER', (0, 0), (-1, -1), 1.5, self.COLOR_BLUE),
             ('BACKGROUND', (0, 0), (-1, -1), colors.white),
-            ('LEFTPADDING', (0, 0), (-1, -1), 6),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
-            ('TOPPADDING', (0, 0), (-1, -1), 6),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ('LEFTPADDING', (0, 0), (-1, -1), 4),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ]))
         

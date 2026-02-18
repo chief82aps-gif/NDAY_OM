@@ -16,8 +16,6 @@ class RouteAssignment:
     dsp: Optional[str] = None
     wave_time: Optional[str] = None  # For sorting (e.g., "10:20 AM")
     route_duration: Optional[int] = None  # Route duration in minutes
-    wave_time: Optional[str] = None  # For sorting (e.g., "10:20 AM")
-    route_duration: Optional[int] = None  # Route duration in minutes
 
 
 class VehicleAssignmentEngine:

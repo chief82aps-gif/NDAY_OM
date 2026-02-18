@@ -231,6 +231,65 @@ class DriverHandoutGenerator:
         
         return wave_time_str
     
+    def _calculate_expected_return(
+        self,
+        wave_time: Optional[str],
+        route_duration_minutes: Optional[int],
+    ) -> str:
+        """
+        Calculate expected return time from wave time + route duration - 30 minutes.
+        
+        Args:
+            wave_time: Wave time string (e.g., "10:20 AM")
+            route_duration_minutes: Route duration in minutes
+        
+        Returns:
+            Expected return time as string (e.g., "6:41 PM") or "TBD" if cannot calculate
+        """
+        if not wave_time or not route_duration_minutes:
+            return "TBD"
+        
+        try:
+            from datetime import datetime, timedelta
+            
+            # Parse wave time
+            wave_str = wave_time.strip()
+            time_part = wave_str.replace("AM", "").replace("PM", "").replace("am", "").replace("pm", "").strip()
+            is_pm = "PM" in wave_str.upper() or "pm" in wave_str
+            
+            parts = time_part.split(":")
+            if len(parts) != 2:
+                return "TBD"
+            
+            hour = int(parts[0])
+            minute = int(parts[1])
+            
+            # Convert to 24-hour format
+            if is_pm and hour != 12:
+                hour += 12
+            elif not is_pm and hour == 12:
+                hour = 0
+            
+            # Create base time (arbitrary date for calculation)
+            base_time = datetime.strptime(f"{hour:02d}:{minute:02d}", "%H:%M")
+            
+            # Add route duration and subtract 30 minutes
+            return_time = base_time + timedelta(minutes=route_duration_minutes - 30)
+            
+            # Format as "H:MM AM/PM"
+            hour_ret = return_time.hour
+            minute_ret = return_time.minute
+            period = "AM" if hour_ret < 12 else "PM"
+            
+            if hour_ret > 12:
+                hour_ret -= 12
+            elif hour_ret == 0:
+                hour_ret = 12
+            
+            return f"{hour_ret}:{minute_ret:02d} {period}"
+        except Exception:
+            return "TBD"
+    
     def _build_title_page(self) -> List:
         """Build title page content."""
         story = []
@@ -314,154 +373,160 @@ class DriverHandoutGenerator:
         assignment: RouteAssignment,
         route_sheet: Optional[RouteSheet],
     ) -> Table:
-        """Build a single 3.75\" x 5.0\" handout card."""
-        card_elements = []
+        """Build a single 3.75\" x 5.0\" handout card with two-column layout."""
+        # --- Build Left Column: Route Code, Driver, Expected Return, Bags ---
+        left_elements = []
         
-        # --- Header Section with Staging Location ---
-        staging_text = route_sheet.staging_location if route_sheet else "TBD"
-        header_data = [
-            [Paragraph(staging_text, self.styles['CardHeader'])],
-        ]
-        header_table = Table(header_data, colWidths=[self.CARD_WIDTH - 0.1*inch])
-        header_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, -1), self.COLOR_LIGHT_GRAY),
-            ('LINEBELOW', (0, 0), (-1, -1), 1.5, self.COLOR_BLUE),
-            ('LEFTPADDING', (0, 0), (-1, -1), 4),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
-            ('TOPPADDING', (0, 0), (-1, -1), 2),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
-        ]))
-        card_elements.append(header_table)
-        card_elements.append(Spacer(1, 0.04*inch))
+        # Large route code (left justified)
+        route_style = ParagraphStyle(
+            name='LargeRouteCode',
+            fontSize=18,
+            textColor=self.COLOR_BLACK,
+            fontName='Helvetica-Bold',
+            alignment=TA_LEFT,
+        )
+        left_elements.append(Paragraph(assignment.route_code, route_style))
+        left_elements.append(Spacer(1, 0.04*inch))
         
-        # --- Route Code (Large) ---
-        route_title = [
-            [Paragraph(assignment.route_code, self.styles['CardTitle'])],
-        ]
-        route_table = Table(route_title, colWidths=[self.CARD_WIDTH - 0.1*inch])
-        route_table.setStyle(TableStyle([
-            ('LEFTPADDING', (0, 0), (-1, -1), 4),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ]))
-        card_elements.append(route_table)
-        card_elements.append(Spacer(1, 0.02*inch))
+        # Driver name (left justified)
+        driver_text = assignment.driver_name or "TBD"
+        driver_style = ParagraphStyle(
+            name='DriverName',
+            fontSize=8,
+            textColor=self.COLOR_BLACK,
+            fontName='Helvetica',
+            alignment=TA_LEFT,
+        )
+        left_elements.append(Paragraph(driver_text, driver_style))
+        left_elements.append(Spacer(1, 0.02*inch))
         
-        # --- Wave Time (in bold, larger) ---
-        wave_text = f"<b>{assignment.wave_time or 'TBD'}</b>"
-        card_elements.append(Paragraph(wave_text, self.styles['CardLabel']))
-        card_elements.append(Spacer(1, 0.01*inch))
+        # Expected return time (left justified, under driver)
+        expected_return = route_sheet.expected_return if route_sheet else "TBD"
+        expected_style = ParagraphStyle(
+            name='ExpectedReturn',
+            fontSize=7,
+            textColor=self.COLOR_BLACK,
+            fontName='Helvetica',
+            alignment=TA_LEFT,
+        )
+        left_elements.append(Paragraph("<b>Expected Return</b>", expected_style))
+        left_elements.append(Paragraph(f"<b>{expected_return}</b>", expected_style))
+        left_elements.append(Spacer(1, 0.06*inch))
         
-        # --- Service Type (condensed) ---
-        service_text = f"{assignment.service_type}"
-        card_elements.append(Paragraph(service_text, self.styles['CardLabel']))
-        card_elements.append(Spacer(1, 0.02*inch))
-        
-        # --- Driver & Vehicle (condensed) ---
-        driver_text = f"<b>Driver:</b> {assignment.driver_name or 'TBD'}"
-        card_elements.append(Paragraph(driver_text, self.styles['CardLabel']))
-        
-        vehicle_text = f"<b>Vehicle:</b> {assignment.vehicle_name}"
-        card_elements.append(Paragraph(vehicle_text, self.styles['CardLabel']))
-        card_elements.append(Spacer(1, 0.02*inch))
-        
-        # --- Load Manifest Header with Totals ---
-        load_header = ""
-        if route_sheet:
-            total_bags = len(route_sheet.bags) if route_sheet.bags else 0
-            total_overflow = len(route_sheet.overflow) if route_sheet.overflow else 0
-            load_header = f"<b>{total_bags} Bags</b> | <b>{total_overflow} OV</b>"
-            if load_header:
-                card_elements.append(Paragraph(load_header, ParagraphStyle(
-                    name='LoadHeader',
-                    fontSize=7,
-                    textColor=self.COLOR_BLUE,
-                    fontName='Helvetica-Bold',
-                    alignment=TA_CENTER,
-                )))
-                card_elements.append(Spacer(1, 0.02*inch))
-            # Bags table (left side)
-            if route_sheet.bags:
-                card_elements.append(Paragraph("<b>Bags</b>", ParagraphStyle(
-                    name='ManifestHeader',
-                    fontSize=7,
-                    textColor=self.COLOR_BLUE,
-                    fontName='Helvetica-Bold',
-                )))
-                
-                bag_data = [
-                    [Paragraph("Bag ID", self.styles['TableHeader'])],
-                ]
-                
-                for bag in route_sheet.bags[:8]:  # Max 8 bags to fit
-                    # Format: "GRN 056" (color abbreviation + last 3 digits of bag code)
-                    color_abbr = self._color_to_abbreviation(bag.color_code)
-                    # Extract numeric part from bag_id (e.g., "GRN056" -> "056")
-                    bag_num = ''.join(c for c in bag.bag_id if c.isdigit()) or bag.bag_id
-                    bag_display = f"{color_abbr} {bag_num}"
-                    bag_data.append([
-                        Paragraph(bag_display, self.styles['TableCell']),
-                    ])
-                
-                bags_table = Table(bag_data, colWidths=[2.0*inch])
-                bags_table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), self.COLOR_BLUE),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                    ('BACKGROUND', (0, 1), (-1, -1), self.COLOR_LIGHT_GRAY),
-                    ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, -1), 6),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('LEFTPADDING', (0, 0), (-1, -1), 2),
-                    ('RIGHTPADDING', (0, 0), (-1, -1), 2),
-                    ('TOPPADDING', (0, 0), (-1, -1), 1),
-                    ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
-                ]))
-                card_elements.append(bags_table)
-                card_elements.append(Spacer(1, 0.03*inch))
+        # Bags table
+        if route_sheet and route_sheet.bags:
+            bag_data = [
+                [Paragraph("<b>Bag</b>", self.styles['TableHeader'])],
+            ]
             
-            # Overflow table (right side)
-            if route_sheet.overflow:
-                card_elements.append(Paragraph("<b>OV</b>", ParagraphStyle(
-                    name='OverflowHeader',
-                    fontSize=7,
-                    textColor=self.COLOR_BLUE,
-                    fontName='Helvetica-Bold',
-                )))
-                
-                overflow_data = [
-                    [Paragraph("Zone", self.styles['TableHeader']),
-                     Paragraph("Qty", self.styles['TableHeader'])],
-                ]
-                
-                for overflow in route_sheet.overflow[:8]:  # Max 8 overflow to fit
-                    overflow_data.append([
-                        Paragraph(overflow.sort_zone, self.styles['TableCell']),
-                        Paragraph(str(overflow.package_count), self.styles['TableCell']),
-                    ])
-                
-                overflow_table = Table(overflow_data, colWidths=[0.7*inch, 0.6*inch])
-                overflow_table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), self.COLOR_BLUE),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                    ('BACKGROUND', (0, 1), (-1, -1), self.COLOR_LIGHT_GRAY),
-                    ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, -1), 6),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('LEFTPADDING', (0, 0), (-1, -1), 2),
-                    ('RIGHTPADDING', (0, 0), (-1, -1), 2),
-                    ('TOPPADDING', (0, 0), (-1, -1), 1),
-                    ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
-                ]))
-                card_elements.append(overflow_table)
+            for bag in route_sheet.bags[:8]:  # Max 8 bags to fit
+                color_abbr = self._color_to_abbreviation(bag.color_code)
+                bag_num = ''.join(c for c in bag.bag_id if c.isdigit()) or bag.bag_id
+                bag_display = f"{color_abbr} {bag_num}"
+                bag_data.append([
+                    Paragraph(bag_display, self.styles['TableCell']),
+                ])
+            
+            bags_table = Table(bag_data, colWidths=[1.4*inch])
+            bags_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), self.COLOR_BLUE),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('BACKGROUND', (0, 1), (-1, -1), self.COLOR_LIGHT_GRAY),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 6),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 2),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 2),
+                ('TOPPADDING', (0, 0), (-1, -1), 1),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
+            ]))
+            left_elements.append(bags_table)
         
-        # Create card container table
-        card_data = [[Spacer(1, 0.04*inch)] for _ in card_elements]
-        for i, element in enumerate(card_elements):
-            card_data[i] = [element]
+        # --- Build Right Column: Staging, Wave, Service, Vehicle, OV Table ---
+        right_elements = []
         
-        card_table = Table(card_data, colWidths=[self.CARD_WIDTH - 0.1*inch])
-        card_table.setStyle(TableStyle([
+        # Top right info (right justified)
+        info_style = ParagraphStyle(
+            name='RightInfo',
+            fontSize=7,
+            textColor=self.COLOR_BLACK,
+            fontName='Helvetica',
+            alignment=TA_RIGHT,
+        )
+        
+        # Staging location at top
+        staging_text = route_sheet.staging_location if route_sheet else "TBD"
+        right_elements.append(Paragraph(f"<b>{staging_text}</b>", info_style))
+        
+        # Wave time (right justified)
+        wave_text = assignment.wave_time or "TBD"
+        right_elements.append(Paragraph(f"<b>{wave_text}</b>", info_style))
+        
+        # Service type (right justified)
+        service_text = assignment.service_type or "TBD"
+        right_elements.append(Paragraph(service_text, info_style))
+        
+        # Vehicle name (right justified)
+        vehicle_text = assignment.vehicle_name or "TBD"
+        right_elements.append(Paragraph(f"<b>{vehicle_text}</b>", info_style))
+        
+        right_elements.append(Spacer(1, 0.08*inch))
+        
+        # Overflow table (right side)
+        if route_sheet and route_sheet.overflow:
+            overflow_data = [
+                [Paragraph("Zone", self.styles['TableHeader']),
+                 Paragraph("Qty", self.styles['TableHeader'])],
+            ]
+            
+            for overflow in route_sheet.overflow[:8]:  # Max 8 overflow to fit
+                overflow_data.append([
+                    Paragraph(overflow.sort_zone, self.styles['TableCell']),
+                    Paragraph(str(overflow.package_count), self.styles['TableCell']),
+                ])
+            
+            overflow_table = Table(overflow_data, colWidths=[0.6*inch, 0.5*inch])
+            overflow_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), self.COLOR_BLUE),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('BACKGROUND', (0, 1), (-1, -1), self.COLOR_LIGHT_GRAY),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 6),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 2),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 2),
+                ('TOPPADDING', (0, 0), (-1, -1), 1),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
+            ]))
+            right_elements.append(overflow_table)
+        
+        # --- Create two-column table for left and right content ---
+        left_col = Table(
+            [[elem] for elem in left_elements],
+            colWidths=[1.7*inch]
+        )
+        left_col.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ]))
+        
+        right_col = Table(
+            [[elem] for elem in right_elements],
+            colWidths=[1.85*inch]
+        )
+        right_col.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('ALIGN', (0, 0), (-1, -1), 'RIGHT'),
+        ]))
+        
+        # Create main two-column card layout
+        card_layout = Table(
+            [[left_col, right_col]],
+            colWidths=[1.7*inch, 1.85*inch]
+        )
+        card_layout.setStyle(TableStyle([
             ('BORDER', (0, 0), (-1, -1), 1.5, self.COLOR_BLUE),
             ('BACKGROUND', (0, 0), (-1, -1), colors.white),
             ('LEFTPADDING', (0, 0), (-1, -1), 4),
@@ -471,4 +536,4 @@ class DriverHandoutGenerator:
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ]))
         
-        return card_table
+        return card_layout

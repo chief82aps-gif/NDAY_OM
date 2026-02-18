@@ -56,6 +56,7 @@ class RouteSheet:
     overflow: List[RouteSheetOverflow] = field(default_factory=list)
     total_packages: int = 0
     total_bags: int = 0
+    expected_return: Optional[str] = None  # Calculated as wave_time + route_duration - 30 min
 
 
 @dataclass

@@ -59,10 +59,38 @@ class IngestOrchestrator:
         self.status.route_sheets = all_records
         self.status.validation_errors.extend(all_errors)
         self.status.route_sheets_uploaded = len(all_records) > 0
+        
+        # Enrich route sheets with expected return times
+        self._enrich_route_sheets_with_expected_return()
+        
         return self.status.route_sheets_uploaded
+    
+    def _enrich_route_sheets_with_expected_return(self):
+        """Calculate expected return times for route sheets."""
+        if not self.status.dop_records or not self.status.route_sheets:
+            return
+        
+        # Build DOP lookup by route code
+        dop_lookup = {r.route_code: r for r in self.status.dop_records}
+        
+        # Calculate expected return for each route sheet
+        from api.src.pdf_generator import DriverHandoutGenerator
+        gen = DriverHandoutGenerator()
+        
+        for route_sheet in self.status.route_sheets:
+            dop = dop_lookup.get(route_sheet.route_code)
+            if dop:
+                # Calculate expected return: wave_time + route_duration - 30 min
+                route_sheet.expected_return = gen._calculate_expected_return(
+                    route_sheet.wave_time,
+                    dop.route_duration
+                )
     
     def validate_cross_file_consistency(self) -> bool:
         """Validate DOP, Fleet, Cortex, and Route Sheets consistency."""
+        # Enrich route sheets with expected return times if both DOP and route sheets are loaded
+        if self.status.dop_records and self.status.route_sheets:
+            self._enrich_route_sheets_with_expected_return()
         # Clear previous cross-file validation messages (but keep parser errors)
         # Store original parser errors
         original_errors = [e for e in self.status.validation_errors if not any(keyword in e for keyword in ['Routes in', 'Service type', 'Route '])]
@@ -209,6 +237,10 @@ class IngestOrchestrator:
                 "success": False,
                 "message": "Route Sheets must be uploaded first.",
             }
+        
+        # Ensure expected return times are calculated
+        if self.status.dop_records:
+            self._enrich_route_sheets_with_expected_return()
         
         try:
             pdf_path = self.pdf_generator.generate_handouts(

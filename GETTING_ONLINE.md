@@ -7,15 +7,15 @@
 
 ## **3-Step Deployment Path**
 
-### **Step 1️⃣ Backend to Railway** (10 minutes)
+### **Step 1️⃣ Backend to Render** (5 minutes)
 ```
-1. Go to https://railway.app
-2. Sign up (or login)
-3. Click "New Project" → "Deploy from GitHub"
+1. Go to https://render.com
+2. Sign in with your existing account
+3. Click "New +" → "Web Service"
 4. Connect GitHub & select DSP_OM repo
-5. Railway auto-reads Procfile → Deploy starts
-6. Wait 2-3 minutes
-7. Copy your backend URL: https://[your-app].railway.app
+5. Render auto-reads Procfile → starts deploying
+6. Wait 2 minutes for deployment
+7. Copy your backend URL: https://[your-app].onrender.com
 ```
 
 ✅ **Result**: Backend live and accessible
@@ -25,13 +25,13 @@
 ### **Step 2️⃣ Frontend to Vercel** (10 minutes)
 ```
 1. Go to https://vercel.app
-2. Sign up (or login)
+2. Sign in with your account
 3. Click "New Project" → "Import Git Repository"
 4. Select DSP_OM repo
 5. In "Root Directory" field: type "frontend"
 6. Click "Environment Variables" → Add:
    Name: NEXT_PUBLIC_API_URL
-   Value: https://[your-app].railway.app  (from Step 1)
+   Value: https://[your-app].onrender.com  (from Step 1)
 7. Click "Deploy"
 8. Wait 1-2 minutes
 ```
@@ -109,10 +109,10 @@ B. At Your Domain Registrar (GoDaddy, Namecheap, etc):
 
 | Service | Cost | Notes |
 |---------|------|-------|
-| Railway | $5-20/mo | Pay-as-you-go, auto-scales |
+| Render | $7/mo | Free tier: 750 hrs/month (includes low traffic) |
 | Vercel | FREE | Hobby tier includes free deployments |
 | Domain | $12/yr | Your existing domain |
-| **TOTAL** | **~$70/year** | Includes everything |
+| **TOTAL** | **~$100/year** | Free tier covers most use cases, $84/year otherwise |
 
 ---
 
@@ -120,9 +120,9 @@ B. At Your Domain Registrar (GoDaddy, Namecheap, etc):
 
 After deployment, save these:
 
-1. **Backend URL** (from Railway): `https://[app].railway.app`
-   - Status endpoint: `https://[app].railway.app/upload/status`
-   - Admin: https://railway.app/dashboard
+1. **Backend URL** (from Render): `https://[app].onrender.com`
+   - Status endpoint: `https://[app].onrender.com/upload/status`
+   - Admin: https://dashboard.render.com
 
 2. **Frontend URL** (from Vercel): `https://[project].vercel.app`
    - Production: `https://newdaylogisticsllc.com`
@@ -140,9 +140,10 @@ After deployment, save these:
 → Verify backend URL is correct (with https://)
 
 ### ❌ Backend deployment fails
-→ Check Railway logs: "Application failed to start"  
+→ Check Render logs: "Application failed to start"  
 → Verify `Procfile` exists in root directory  
-→ Verify `requirements.txt` has all dependencies
+→ Verify `requirements.txt` has all dependencies  
+→ Render dashboard: Logs tab shows real-time errors
 
 ### ❌ PDF uploads fail
 → Check file size (limit 512MB on Railway)  
@@ -170,7 +171,7 @@ Currently data only persists during session (in-memory).
 
 ## **Support**
 
-- Railway Docs: https://docs.railway.app
+- Render Docs: https://docs.render.com
 - Vercel Docs: https://vercel.com/docs
 - FastAPI Docs: https://fastapi.tiangolo.com
 - Next.js Docs: https://nextjs.org/docs

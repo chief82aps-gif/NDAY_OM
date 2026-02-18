@@ -1,18 +1,17 @@
 # NDAY OM - DEPLOYMENT GUIDE
 
-## Quick Deploy (Railway.app + Vercel)
+## Quick Deploy (Render.com + Vercel)
 
-### **Backend Deployment to Railway (10 minutes)**
+### **Backend Deployment to Render (5 minutes)
 
-1. Go to https://railway.app
-2. Click "New Project" → "Deploy from GitHub"
-3. Connect your GitHub account
-4. Select `DSP_OM` repository
-5. Railway auto-detects Python + Procfile
-6. Add environment variables (if needed):
-   - `PYTHONUNBUFFERED=1`
-7. Click "Deploy"
-8. Get your Railway domain: `https://your-app.railway.app`
+1. Go to https://render.com
+2. Sign in with your account
+3. Click "New +" → "Web Service"
+4. Connect GitHub and select `DSP_OM` repository
+5. Render auto-detects Python + Procfile
+6. No env variables needed (uses defaults)
+7. Click "Create Web Service"
+8. Get your Render domain: `https://your-app.onrender.com`
 
 ### **Frontend Deployment to Vercel (10 minutes)**
 
@@ -25,7 +24,7 @@
    - **Build Command**: `npm run build`
    - **Output Directory**: `.next`
 5. Add environment variable:
-   - `NEXT_PUBLIC_API_URL=https://your-app.railway.app` (from Railway)
+   - `NEXT_PUBLIC_API_URL=https://your-app.onrender.com` (from Render)
 6. Click "Deploy"
 7. Get your Vercel domain (e.g., `dsp-om.vercel.app`)
 
@@ -42,10 +41,11 @@
 
 ### **Issues & Troubleshooting**
 
-**Backend not uploading to Railway:**
-- Check Python version matches `runtime.txt`
+**Backend not uploading to Render:**
+- Check Python version matches `runtime.txt` (3.11)
 - Ensure `Procfile` exists in root directory
 - Check `requirements.txt` has all dependencies
+- Render dashboard → Logs tab shows deployment progress
 
 **Frontend can't reach backend:**
 - Verify `NEXT_PUBLIC_API_URL` environment variable

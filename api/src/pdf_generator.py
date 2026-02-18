@@ -99,7 +99,10 @@ class DriverHandoutGenerator:
         output_path: str,
     ) -> str:
         """
-        Generate driver handout PDF with 2x2 card layout.
+        Generate driver handout PDF with 2x2 card layout on portrait.
+        
+        Sorts by wave_time (ascending) then route_code, fits 4 cards per page (2x2).
+        Spillover routes resort to 2x1 (2 columns, 1 row).
         
         Args:
             assignments: Dictionary of route_code → RouteAssignment
@@ -111,6 +114,15 @@ class DriverHandoutGenerator:
         """
         # Build route lookup
         route_lookup = {sheet.route_code: sheet for sheet in route_sheets}
+        
+        # Sort assignments by wave_time (ascending) then route_code
+        assignment_list = sorted(
+            assignments.items(),
+            key=lambda x: (
+                self._parse_wave_time(x[1].wave_time) if x[1].wave_time else "",
+                x[0]  # route_code
+            )
+        )
         
         # Create document
         doc = SimpleDocTemplate(
@@ -129,18 +141,76 @@ class DriverHandoutGenerator:
         story.extend(self._build_title_page())
         story.append(PageBreak())
         
-        # Group assignments into rows of 2 for 2x2 layout
-        assignment_list = list(assignments.items())
-        for i in range(0, len(assignment_list), 2):
-            if i > 0:  # Page break before new row (except first)
+        # Group assignments into 2x2 grids (4 per page)
+        for page_idx in range(0, len(assignment_list), 4):
+            if page_idx > 0:  # Page break before new page (except first)
                 story.append(PageBreak())
             
-            row_assignments = assignment_list[i:i+2]
-            story.append(self._build_card_row(row_assignments, route_lookup))
+            # Get up to 4 assignments for this page
+            page_assignments = assignment_list[page_idx:page_idx+4]
+            
+            # Create 2x2 grid, or 2x1 if fewer than 4 cards
+            if len(page_assignments) == 4:
+                # Full 2x2 grid
+                row1 = page_assignments[0:2]
+                row2 = page_assignments[2:4]
+                story.append(self._build_card_row(row1, route_lookup))
+                story.append(Spacer(1, 0.15*inch))
+                story.append(self._build_card_row(row2, route_lookup))
+            elif len(page_assignments) == 3:
+                # Row 1: 2 cards, Row 2: 1 card (becomes 2x1)
+                row1 = page_assignments[0:2]
+                row2 = page_assignments[2:3]
+                story.append(self._build_card_row(row1, route_lookup))
+                story.append(Spacer(1, 0.15*inch))
+                story.append(self._build_card_row(row2, route_lookup))
+            elif len(page_assignments) == 2:
+                # Single row: 2x1 layout
+                story.append(self._build_card_row(page_assignments, route_lookup))
+            else:
+                # Last card only: 2x1 layout with 1 card
+                story.append(self._build_card_row(page_assignments, route_lookup))
         
         # Build PDF
         doc.build(story)
         return output_path
+    
+    def _parse_wave_time(self, wave_time_str: Optional[str]) -> str:
+        """
+        Parse wave time string to sortable format.
+        Expects format like "10:20 AM" or "2:45 PM".
+        Returns 24-hour format for proper sorting.
+        """
+        if not wave_time_str:
+            return "00:00"
+        
+        try:
+            # Remove extra whitespace
+            wave_str = wave_time_str.strip()
+            
+            # Handle "10:20 AM" format
+            if "AM" in wave_str.upper() or "PM" in wave_str.upper():
+                # Extract time and period
+                time_part = wave_str.replace("AM", "").replace("PM", "").replace("am", "").replace("pm", "").strip()
+                is_pm = "PM" in wave_str.upper() or "pm" in wave_str
+                
+                # Parse hours:minutes
+                parts = time_part.split(":")
+                if len(parts) == 2:
+                    hour = int(parts[0])
+                    minute = parts[1]
+                    
+                    # Convert to 24-hour format
+                    if is_pm and hour != 12:
+                        hour += 12
+                    elif not is_pm and hour == 12:
+                        hour = 0
+                    
+                    return f"{hour:02d}:{minute}"
+        except Exception:
+            pass
+        
+        return wave_time_str
     
     def _build_title_page(self) -> List:
         """Build title page content."""
@@ -282,18 +352,16 @@ class DriverHandoutGenerator:
                 
                 bag_data = [
                     [Paragraph("Zone", self.styles['TableHeader']),
-                     Paragraph("Color", self.styles['TableHeader']),
-                     Paragraph("Qty", self.styles['TableHeader'])],
+                     Paragraph("Bag Code", self.styles['TableHeader'])],
                 ]
                 
-                for bag in route_sheet.bags[:4]:  # Max 4 bags to fit
+                for bag in route_sheet.bags[:5]:  # Max 5 bags to fit
                     bag_data.append([
                         Paragraph(bag.sort_zone, self.styles['TableCell']),
-                        Paragraph(bag.color_code[:3], self.styles['TableCell']),  # Truncate
-                        Paragraph(str(bag.package_count), self.styles['TableCell']),
+                        Paragraph(bag.bag_id, self.styles['TableCell']),
                     ])
                 
-                bags_table = Table(bag_data, colWidths=[0.9*inch, 1.2*inch, 0.7*inch])
+                bags_table = Table(bag_data, colWidths=[0.8*inch, 1.5*inch])
                 bags_table.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), self.COLOR_BLUE),
                     ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -321,16 +389,16 @@ class DriverHandoutGenerator:
                 
                 overflow_data = [
                     [Paragraph("Zone", self.styles['TableHeader']),
-                     Paragraph("Items", self.styles['TableHeader'])],
+                     Paragraph("Bag Code", self.styles['TableHeader'])],
                 ]
                 
-                for overflow in route_sheet.overflow[:4]:  # Max 4 overflow to fit
+                for overflow in route_sheet.overflow[:5]:  # Max 5 overflow to fit
                     overflow_data.append([
                         Paragraph(overflow.sort_zone, self.styles['TableCell']),
-                        Paragraph(str(overflow.package_count), self.styles['TableCell']),
+                        Paragraph(overflow.bag_code, self.styles['TableCell']),
                     ])
                 
-                overflow_table = Table(overflow_data, colWidths=[1.2*inch, 0.9*inch])
+                overflow_table = Table(overflow_data, colWidths=[0.8*inch, 1.5*inch])
                 overflow_table.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), self.COLOR_BLUE),
                     ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),

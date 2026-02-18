@@ -97,12 +97,14 @@ def parse_route_sheet_pdf(file_path: str) -> Tuple[List[RouteSheet], List[str]]:
                     # These don't have the ColorName + 4-digit-ID between BagCode and Qty
                     ov_pattern = r'(?:^|\s)(\d+)\s+([BE]-[\d\.]+[A-Z])\s+(\d+)(?:\s|$)'
                     for m in re.finditer(ov_pattern, text, re.MULTILINE):
-                        ov_id = m.group(2)
+                        zone = m.group(1)
+                        bag_code = m.group(2)
                         qty = int(m.group(3))
                         # Only add if not already in bags
-                        if not any(b.bag_id == ov_id for b in bags) and not any(o.sort_zone == ov_id for o in overflow):
+                        if not any(b.bag_id == bag_code for b in bags) and not any(o.bag_code == bag_code for o in overflow):
                             overflow.append(RouteSheetOverflow(
-                                sort_zone=ov_id.split('.')[0] if '.' in ov_id else ov_id,
+                                sort_zone=zone,
+                                bag_code=bag_code,
                                 package_count=qty,
                             ))
                             total_packages += qty

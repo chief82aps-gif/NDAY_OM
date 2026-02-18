@@ -40,6 +40,7 @@ class RouteSheetBag:
 class RouteSheetOverflow:
     """Overflow entry from route sheet PDF."""
     sort_zone: str
+    bag_code: str
     package_count: int
 
 

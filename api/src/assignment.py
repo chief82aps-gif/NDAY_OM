@@ -14,6 +14,10 @@ class RouteAssignment:
     driver_name: Optional[str] = None
     driver_id: Optional[str] = None
     dsp: Optional[str] = None
+    wave_time: Optional[str] = None  # For sorting (e.g., "10:20 AM")
+    route_duration: Optional[int] = None  # Route duration in minutes
+    wave_time: Optional[str] = None  # For sorting (e.g., "10:20 AM")
+    route_duration: Optional[int] = None  # Route duration in minutes
 
 
 class VehicleAssignmentEngine:
@@ -157,6 +161,8 @@ class VehicleAssignmentEngine:
                     driver_name=driver_name,
                     driver_id=driver_id,
                     dsp=dsp,
+                    wave_time=route.wave,
+                    route_duration=route.route_duration,
                 )
         
         # No vehicle found even with fallbacks

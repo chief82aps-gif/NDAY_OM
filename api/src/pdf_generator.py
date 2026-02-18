@@ -175,6 +175,25 @@ class DriverHandoutGenerator:
         doc.build(story)
         return output_path
     
+    def _color_to_abbreviation(self, color_name: str) -> str:
+        """Convert full color name to 3-letter abbreviation."""
+        color_map = {
+            "yellow": "YEL",
+            "black": "BLK",
+            "orange": "ORG",
+            "green": "GRN",
+            "navy": "NAV",
+            "red": "RED",
+            "blue": "BLU",
+            "white": "WHT",
+            "gray": "GRY",
+            "grey": "GRY",
+            "brown": "BRN",
+            "pink": "PNK",
+            "purple": "PUR",
+        }
+        return color_map.get(color_name.lower(), color_name[:3].upper())
+    
     def _parse_wave_time(self, wave_time_str: Optional[str]) -> str:
         """
         Parse wave time string to sortable format.
@@ -295,12 +314,13 @@ class DriverHandoutGenerator:
         assignment: RouteAssignment,
         route_sheet: Optional[RouteSheet],
     ) -> Table:
-        """Build a single 4.5\" x 6.5\" handout card."""
+        """Build a single 3.75\" x 5.0\" handout card."""
         card_elements = []
         
-        # --- Header Section ---
+        # --- Header Section with Staging Location ---
+        staging_text = route_sheet.staging_location if route_sheet else "TBD"
         header_data = [
-            [Paragraph(assignment.dsp or "NDAY", self.styles['CardHeader'])],
+            [Paragraph(staging_text, self.styles['CardHeader'])],
         ]
         header_table = Table(header_data, colWidths=[self.CARD_WIDTH - 0.1*inch])
         header_table.setStyle(TableStyle([
@@ -324,23 +344,41 @@ class DriverHandoutGenerator:
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ]))
         card_elements.append(route_table)
-        card_elements.append(Spacer(1, 0.03*inch))
+        card_elements.append(Spacer(1, 0.02*inch))
         
-        # --- Service Type ---
-        service_text = f"<b>Service:</b> {assignment.service_type}"
+        # --- Wave Time (in bold, larger) ---
+        wave_text = f"<b>{assignment.wave_time or 'TBD'}</b>"
+        card_elements.append(Paragraph(wave_text, self.styles['CardLabel']))
+        card_elements.append(Spacer(1, 0.01*inch))
+        
+        # --- Service Type (condensed) ---
+        service_text = f"{assignment.service_type}"
         card_elements.append(Paragraph(service_text, self.styles['CardLabel']))
         card_elements.append(Spacer(1, 0.02*inch))
         
-        # --- Driver & Vehicle ---
+        # --- Driver & Vehicle (condensed) ---
         driver_text = f"<b>Driver:</b> {assignment.driver_name or 'TBD'}"
         card_elements.append(Paragraph(driver_text, self.styles['CardLabel']))
         
         vehicle_text = f"<b>Vehicle:</b> {assignment.vehicle_name}"
         card_elements.append(Paragraph(vehicle_text, self.styles['CardLabel']))
-        card_elements.append(Spacer(1, 0.04*inch))
+        card_elements.append(Spacer(1, 0.02*inch))
         
-        # --- Load Manifest (Bags & Overflow) ---
+        # --- Load Manifest Header with Totals ---
+        load_header = ""
         if route_sheet:
+            total_bags = len(route_sheet.bags) if route_sheet.bags else 0
+            total_overflow = len(route_sheet.overflow) if route_sheet.overflow else 0
+            load_header = f"<b>{total_bags} Bags</b> | <b>{total_overflow} OV</b>"
+            if load_header:
+                card_elements.append(Paragraph(load_header, ParagraphStyle(
+                    name='LoadHeader',
+                    fontSize=7,
+                    textColor=self.COLOR_BLUE,
+                    fontName='Helvetica-Bold',
+                    alignment=TA_CENTER,
+                )))
+                card_elements.append(Spacer(1, 0.02*inch))
             # Bags table (left side)
             if route_sheet.bags:
                 card_elements.append(Paragraph("<b>Bags</b>", ParagraphStyle(
@@ -351,12 +389,17 @@ class DriverHandoutGenerator:
                 )))
                 
                 bag_data = [
-                    [Paragraph("Bag Code", self.styles['TableHeader'])],
+                    [Paragraph("Bag ID", self.styles['TableHeader'])],
                 ]
                 
                 for bag in route_sheet.bags[:8]:  # Max 8 bags to fit
+                    # Format: "GRN 056" (color abbreviation + last 3 digits of bag code)
+                    color_abbr = self._color_to_abbreviation(bag.color_code)
+                    # Extract numeric part from bag_id (e.g., "GRN056" -> "056")
+                    bag_num = ''.join(c for c in bag.bag_id if c.isdigit()) or bag.bag_id
+                    bag_display = f"{color_abbr} {bag_num}"
                     bag_data.append([
-                        Paragraph(bag.bag_id, self.styles['TableCell']),
+                        Paragraph(bag_display, self.styles['TableCell']),
                     ])
                 
                 bags_table = Table(bag_data, colWidths=[2.0*inch])

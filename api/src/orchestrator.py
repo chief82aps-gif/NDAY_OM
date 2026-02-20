@@ -138,29 +138,8 @@ class IngestOrchestrator:
                         f"Route {dop_record.route_code}: Service type '{dop_record.service_type}' not available in Fleet."
                     )
         
-        # Cross-check Cortex routes against DOP
-        if self.status.cortex_records and self.status.dop_records:
-            dop_route_codes = {r.route_code for r in self.status.dop_records}
-            cortex_route_codes = {r.route_code for r in self.status.cortex_records}
-            
-            cortex_not_in_dop = cortex_route_codes - dop_route_codes
-            if cortex_not_in_dop:
-                self.status.validation_warnings.append(
-                    f"Routes in Cortex but not in DOP: {', '.join(cortex_not_in_dop)}"
-                )
-        
-        # Cross-check Cortex service types against DOP
-        if self.status.cortex_records and self.status.dop_records:
-            dop_routes = {r.route_code: r for r in self.status.dop_records}
-            
-            for cortex_record in self.status.cortex_records:
-                if cortex_record.route_code in dop_routes:
-                    dop_route = dop_routes[cortex_record.route_code]
-                    if cortex_record.delivery_service_type != dop_route.service_type:
-                        self.status.validation_warnings.append(
-                            f"Route {cortex_record.route_code}: Cortex service type '{cortex_record.delivery_service_type}' "
-                            f"does not match DOP '{dop_route.service_type}'."
-                        )
+        # Cortex is used for driver enrichment only - service type matching is not needed
+        # (Assignment logic uses DOP service type + Fleet match)
         
         return True
     

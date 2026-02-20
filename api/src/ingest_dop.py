@@ -3,6 +3,43 @@ import pandas as pd
 from typing import List, Tuple
 from api.src.models import RouteDOP
 from api.src.normalization import normalize_route_code, normalize_service_type, validate_route_code
+from api.src.column_mapping import build_column_map
+
+
+DOP_COLUMN_ALIASES = {
+    "dsp": ["dsp", "company"],
+    "route_code": ["route", "route code", "routecode", "route id"],
+    "service_type": ["service", "service type", "delivery service type", "servicetype"],
+    "wave": ["wave", "wave time", "departure wave"],
+    "staging_location": ["staging", "staging location", "station"],
+    "route_duration": ["duration", "route duration", "route mins", "minutes"],
+    "num_zones": ["zones", "num zones", "number of zones"],
+    "num_packages": ["packages", "num packages", "package count", "total packages"],
+    "num_commercial_pkgs": [
+        "commercial",
+        "commercial pkgs",
+        "num commercial pkgs",
+        "commercial packages",
+    ],
+}
+
+DOP_FALLBACK_COLUMNS = {
+    "dsp": 0,
+    "route_code": 1,
+    "service_type": 2,
+    "wave": 3,
+    "staging_location": 4,
+    "route_duration": 5,
+    "num_zones": 6,
+    "num_packages": 7,
+    "num_commercial_pkgs": 8,
+}
+
+
+def _safe_cell(row: pd.Series, col_idx: int):
+    if col_idx < 0 or col_idx >= len(row):
+        return None
+    return row.iloc[col_idx]
 
 
 def parse_dop_excel(file_path: str) -> Tuple[List[RouteDOP], List[str]]:
@@ -18,28 +55,29 @@ def parse_dop_excel(file_path: str) -> Tuple[List[RouteDOP], List[str]]:
             errors.append("DOP file has insufficient columns or rows. Expected at least 7 columns.")
             return records, errors
         
-        # Detect if first row is a header by checking if it contains known header names
-        first_row_text = str(df.iloc[0, 0]).lower() if df.shape[0] > 0 else ""
-        start_idx = 0
-        header_keywords = ["dsp", "route", "service", "wave", "staging", "duration"]
-        if any(keyword in first_row_text for keyword in header_keywords):
-            start_idx = 1  # Skip header row
-        
-        # Expected column order per governance:
-        # 0: DSP, 1: Route Code, 2: Service Type, 3: Wave, 4: Staging Location, 
-        # 5: Route Duration, 6: Num Zones, 7: Num Packages, 8: Num Commercial Pkgs
+        column_map, start_idx = build_column_map(df, DOP_COLUMN_ALIASES, DOP_FALLBACK_COLUMNS)
         
         for idx, row in df.iloc[start_idx:].iterrows():
             try:
-                dsp = str(row[0]).strip() if pd.notna(row[0]) else ""
-                route_code_raw = str(row[1]).strip() if pd.notna(row[1]) else ""
-                service_type = str(row[2]).strip() if pd.notna(row[2]) else ""
-                wave = str(row[3]).strip() if pd.notna(row[3]) else ""
-                staging_location = str(row[4]).strip() if pd.notna(row[4]) else ""
-                route_duration_raw = row[5] if pd.notna(row[5]) else None
-                num_zones = int(row[6]) if pd.notna(row[6]) and isinstance(row[6], (int, float)) else None
-                num_packages = int(row[7]) if len(row) > 7 and pd.notna(row[7]) and isinstance(row[7], (int, float)) else None
-                num_commercial_pkgs = int(row[8]) if len(row) > 8 and pd.notna(row[8]) and isinstance(row[8], (int, float)) else None
+                dsp_cell = _safe_cell(row, column_map["dsp"])
+                route_code_cell = _safe_cell(row, column_map["route_code"])
+                service_type_cell = _safe_cell(row, column_map["service_type"])
+                wave_cell = _safe_cell(row, column_map["wave"])
+                staging_cell = _safe_cell(row, column_map["staging_location"])
+                route_duration_cell = _safe_cell(row, column_map["route_duration"])
+                num_zones_cell = _safe_cell(row, column_map["num_zones"])
+                num_packages_cell = _safe_cell(row, column_map["num_packages"])
+                num_commercial_cell = _safe_cell(row, column_map["num_commercial_pkgs"])
+
+                dsp = str(dsp_cell).strip() if pd.notna(dsp_cell) else ""
+                route_code_raw = str(route_code_cell).strip() if pd.notna(route_code_cell) else ""
+                service_type = str(service_type_cell).strip() if pd.notna(service_type_cell) else ""
+                wave = str(wave_cell).strip() if pd.notna(wave_cell) else ""
+                staging_location = str(staging_cell).strip() if pd.notna(staging_cell) else ""
+                route_duration_raw = route_duration_cell if pd.notna(route_duration_cell) else None
+                num_zones = int(num_zones_cell) if pd.notna(num_zones_cell) and isinstance(num_zones_cell, (int, float)) else None
+                num_packages = int(num_packages_cell) if pd.notna(num_packages_cell) and isinstance(num_packages_cell, (int, float)) else None
+                num_commercial_pkgs = int(num_commercial_cell) if pd.notna(num_commercial_cell) and isinstance(num_commercial_cell, (int, float)) else None
                 
                 # Normalize and validate
                 if not dsp:

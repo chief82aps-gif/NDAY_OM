@@ -2,6 +2,32 @@
 import pandas as pd
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
+from api.src.column_mapping import build_column_map
+
+
+CORTEX_COLUMN_ALIASES = {
+    "route_code": ["route", "route code", "routecode", "route id"],
+    "dsp": ["dsp", "company"],
+    "transporter_id": ["transporter", "transporter id", "driver id"],
+    "driver_name": ["driver", "driver name", "associate"],
+    "progress_status": ["progress", "route progress", "status"],
+    "service_type": ["service", "delivery service type", "service type"],
+}
+
+CORTEX_FALLBACK_COLUMNS = {
+    "route_code": 0,
+    "dsp": 1,
+    "transporter_id": 2,
+    "driver_name": 3,
+    "progress_status": 4,
+    "service_type": 5,
+}
+
+
+def _safe_cell(row: pd.Series, col_idx: int):
+    if col_idx < 0 or col_idx >= len(row):
+        return None
+    return row.iloc[col_idx]
 
 
 @dataclass
@@ -30,27 +56,25 @@ def parse_cortex_excel(file_path: str) -> Tuple[List[CortexRoute], List[str]]:
             errors.append("Cortex file has insufficient columns or rows. Expected at least 6 columns.")
             return records, errors
         
-        # Detect if first row is a header by checking for known header names
-        first_row_text = str(df.iloc[0, 0]).lower() if df.shape[0] > 0 else ""
-        start_idx = 0
-        header_keywords = ["route code", "transporter", "driver", "service"]
-        if any(keyword in first_row_text for keyword in header_keywords):
-            start_idx = 1  # Skip header row
-        
-        # Actual column order from sample file:
-        # 0: Route code, 1: DSP, 2: Transporter Id, 3: Driver name, 4: Route progress,
-        # 5: Delivery Service Type, 6: Route Duration, 7+: Optional (All stops, etc.)
+        column_map, start_idx = build_column_map(df, CORTEX_COLUMN_ALIASES, CORTEX_FALLBACK_COLUMNS)
         
         from api.src.normalization import normalize_route_code, normalize_service_type
         
         for idx, row in df.iloc[start_idx:].iterrows():
             try:
-                route_code_raw = str(row[0]).strip() if pd.notna(row[0]) else ""
-                dsp = str(row[1]).strip() if pd.notna(row[1]) else ""
-                transporter_id = str(row[2]).strip() if pd.notna(row[2]) else ""
-                driver_name = str(row[3]).strip() if pd.notna(row[3]) else ""
-                progress_status = str(row[4]).strip() if pd.notna(row[4]) else None
-                service_type_raw = str(row[5]).strip() if len(row) > 5 and pd.notna(row[5]) else ""
+                route_cell = _safe_cell(row, column_map["route_code"])
+                dsp_cell = _safe_cell(row, column_map["dsp"])
+                transporter_cell = _safe_cell(row, column_map["transporter_id"])
+                driver_cell = _safe_cell(row, column_map["driver_name"])
+                progress_cell = _safe_cell(row, column_map["progress_status"])
+                service_cell = _safe_cell(row, column_map["service_type"])
+
+                route_code_raw = str(route_cell).strip() if pd.notna(route_cell) else ""
+                dsp = str(dsp_cell).strip() if pd.notna(dsp_cell) else ""
+                transporter_id = str(transporter_cell).strip() if pd.notna(transporter_cell) else ""
+                driver_name = str(driver_cell).strip() if pd.notna(driver_cell) else ""
+                progress_status = str(progress_cell).strip() if pd.notna(progress_cell) else None
+                service_type_raw = str(service_cell).strip() if pd.notna(service_cell) else ""
                 
                 # Normalize and validate
                 if not transporter_id:

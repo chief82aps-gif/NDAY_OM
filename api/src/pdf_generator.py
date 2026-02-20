@@ -137,8 +137,8 @@ class DriverHandoutGenerator:
         # Build story (content elements)
         story = []
         
-        # Add title page
-        story.extend(self._build_title_page())
+        # Add summary page with all assignments sorted by wave time then route code
+        story.extend(self._build_summary_page(assignment_list, route_lookup))
         story.append(PageBreak())
         
         # Group assignments into 2x2 grids (4 per page)
@@ -290,53 +290,87 @@ class DriverHandoutGenerator:
         except Exception:
             return "TBD"
     
-    def _build_title_page(self) -> List:
-        """Build title page content."""
+    def _build_summary_page(self, assignment_list: List[Tuple[str, RouteAssignment]], route_lookup: dict) -> List:
+        """Build summary page with all drivers sorted by wave time then route code."""
         story = []
-        story.append(Spacer(1, 2 * inch))
         
         # Title
         title = Paragraph(
-            "<b>NDAY Driver Handouts</b>",
+            "<b>NDAY Daily Driver Assignment Summary</b>",
             ParagraphStyle(
-                name='Title',
-                fontSize=24,
+                name='SummaryTitle',
+                fontSize=14,
                 textColor=self.COLOR_BLUE,
                 fontName='Helvetica-Bold',
                 alignment=TA_CENTER,
-                spaceAfter=12,
+                spaceAfter=8,
             )
         )
         story.append(title)
         
         # Date
         date_text = Paragraph(
-            f"Generated: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}",
+            f"Date: {datetime.now().strftime('%B %d, %Y')}",
             ParagraphStyle(
-                name='Subtitle',
-                fontSize=12,
-                textColor=colors.grey,
+                name='SummaryDate',
+                fontSize=9,
+                textColor=self.COLOR_BLACK,
                 alignment=TA_CENTER,
-                spaceAfter=24,
+                spaceAfter=12,
             )
         )
         story.append(date_text)
         
-        # Instructions
-        instructions = Paragraph(
-            "<b>Instructions:</b><br/>"
-            "1. Verify route assignment and vehicle details on each card<br/>"
-            "2. Confirm load manifest (bags and overflow)<br/>"
-            "3. Proceed with delivery execution<br/>",
-            ParagraphStyle(
-                name='Instructions',
-                fontSize=10,
-                textColor=self.COLOR_BLACK,
-                spaceAfter=12,
-            )
-        )
-        story.append(instructions)
+        # Build table data
+        table_data = [[
+            Paragraph("<b>Name</b>", self.styles['TableHeader']),
+            Paragraph("<b>Van</b>", self.styles['TableHeader']),
+            Paragraph("<b>Route</b>", self.styles['TableHeader']),
+            Paragraph("<b>Wave</b>", self.styles['TableHeader']),
+            Paragraph("<b>Expected RTS</b>", self.styles['TableHeader']),
+            Paragraph("<b>Service Type</b>", self.styles['TableHeader']),
+            Paragraph("<b>DSP</b>", self.styles['TableHeader']),
+        ]]
         
+        # Add rows for each assignment (already sorted by wave_time then route_code)
+        for route_code, assignment in assignment_list:
+            route_sheet = route_lookup.get(route_code)
+            expected_rts = ""
+            if route_sheet and route_sheet.expected_return:
+                expected_rts = route_sheet.expected_return
+            elif assignment.wave_time and assignment.route_duration:
+                expected_rts = self._calculate_expected_return(assignment.wave_time, assignment.route_duration)
+            
+            table_data.append([
+                Paragraph(assignment.driver_name or "", self.styles['TableCell']),
+                Paragraph(assignment.vehicle_name or "", self.styles['TableCell']),
+                Paragraph(route_code or "", self.styles['TableCell']),
+                Paragraph(assignment.wave_time or "", self.styles['TableCell']),
+                Paragraph(expected_rts or "", self.styles['TableCell']),
+                Paragraph(assignment.service_type[:20] if assignment.service_type else "", self.styles['TableCell']),
+                Paragraph(assignment.dsp or "", self.styles['TableCell']),
+            ])
+        
+        # Create table
+        table = Table(
+            table_data,
+            colWidths=[1.0*inch, 0.9*inch, 0.65*inch, 0.65*inch, 0.85*inch, 1.1*inch, 0.65*inch],
+            style=TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), self.COLOR_BLUE),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 7),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 4),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ('FONTSIZE', (0, 1), (-1, -1), 6),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F9F9F9')]),
+                ('TOPPADDING', (0, 1), (-1, -1), 2),
+                ('BOTTOMPADDING', (0, 1), (-1, -1), 2),
+            ])
+        )
+        
+        story.append(table)
         return story
     
     def _build_card_row(

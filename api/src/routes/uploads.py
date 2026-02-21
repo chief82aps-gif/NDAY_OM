@@ -161,3 +161,38 @@ def get_assignments():
         return {"assignments": assignments_list}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve assignments: {str(e)}")
+
+
+@router.get("/affinity-stats")
+def get_affinity_stats():
+    """Get driver-van affinity statistics."""
+    try:
+        from api.src.driver_van_affinity import affinity_tracker
+        
+        # Build comprehensive affinity view
+        affinity_summary = {}
+        driver_names = set()
+        
+        for affinity_key, affinities_list in affinity_tracker.affinities.items():
+            driver_name, service_type = affinity_key.split('|', 1)
+            driver_names.add(driver_name)
+            
+            if driver_name not in affinity_summary:
+                affinity_summary[driver_name] = []
+            
+            for affinity in affinities_list:
+                affinity_summary[driver_name].append({
+                    'vehicle_name': affinity['vehicle_name'],
+                    'service_type': service_type,
+                    'frequency': affinity['frequency'],
+                    'last_used': affinity['last_used'],
+                    'routes_assigned': len(affinity['routes']),
+                })
+        
+        return {
+            "total_drivers": len(driver_names),
+            "total_affinities": sum(len(v) for v in affinity_summary.values()),
+            "drivers": affinity_summary,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve affinity stats: {str(e)}")

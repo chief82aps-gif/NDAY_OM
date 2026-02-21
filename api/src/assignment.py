@@ -2,6 +2,7 @@
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 from api.src.models import RouteDOP, Vehicle, CortexRoute
+from api.src.driver_van_affinity import affinity_tracker
 
 
 @dataclass
@@ -126,7 +127,7 @@ class VehicleAssignmentEngine:
         route: RouteDOP,
         driver_lookup: Dict[str, CortexRoute],
     ) -> Optional[RouteAssignment]:
-        """Assign a single route to a vehicle with fallback logic."""
+        """Assign a single route to a vehicle with affinity and fallback logic."""
         
         # Get driver info if available from Cortex
         driver_record = driver_lookup.get(route.route_code)
@@ -134,7 +135,40 @@ class VehicleAssignmentEngine:
         driver_id = driver_record.transporter_id if driver_record else None
         dsp = driver_record.dsp if driver_record else None
         
-        # Get fallback chain for this service type
+        # FIRST: Try driver-van affinity (if driver is available)
+        if driver_name:
+            preferred_vehicle_name = affinity_tracker.get_preferred_vehicle(
+                driver_name, route.service_type, days_back=7
+            )
+            
+            if preferred_vehicle_name:
+                # Check if this vehicle is still available
+                available_vehicles = self.vehicle_pool.get(route.service_type, [])
+                for idx, vehicle in enumerate(available_vehicles):
+                    if vehicle.vehicle_name == preferred_vehicle_name:
+                        # Found the preferred vehicle! Use it with affinity priority
+                        assigned_vehicle = available_vehicles.pop(idx)
+                        
+                        assignment = RouteAssignment(
+                            route_code=route.route_code,
+                            vehicle_vin=assigned_vehicle.vin,
+                            vehicle_name=assigned_vehicle.vehicle_name,
+                            service_type=route.service_type,
+                            driver_name=driver_name,
+                            driver_id=driver_id,
+                            dsp=dsp,
+                            wave_time=route.wave,
+                            route_duration=route.route_duration,
+                        )
+                        
+                        # Record this assignment for future affinity tracking
+                        affinity_tracker.record_assignment(
+                            driver_name, assigned_vehicle.vehicle_name, route.service_type, route.route_code
+                        )
+                        
+                        return assignment
+        
+        # SECOND: Try normal fallback chain
         fallback_chain = self.FALLBACK_CHAIN.get(route.service_type, self.DEFAULT_FALLBACK)
         
         # Try each fallback option in order
@@ -154,7 +188,7 @@ class VehicleAssignmentEngine:
                         (route.route_code, route.service_type, fallback_service_type)
                     )
                 
-                return RouteAssignment(
+                assignment = RouteAssignment(
                     route_code=route.route_code,
                     vehicle_vin=vehicle.vin,
                     vehicle_name=vehicle.vehicle_name,
@@ -165,6 +199,14 @@ class VehicleAssignmentEngine:
                     wave_time=route.wave,
                     route_duration=route.route_duration,
                 )
+                
+                # Record this assignment for future affinity tracking (if driver available)
+                if driver_name:
+                    affinity_tracker.record_assignment(
+                        driver_name, vehicle.vehicle_name, fallback_service_type, route.route_code
+                    )
+                
+                return assignment
         
         # No vehicle found even with fallbacks
         return None

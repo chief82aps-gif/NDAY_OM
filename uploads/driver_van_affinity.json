@@ -1,0 +1,374 @@
+{
+  "Austin Spitzer|4WD P31 Delivery Truck": [
+    {
+      "vehicle_name": "4534 LMR 4x4",
+      "service_type": "4WD P31 Delivery Truck",
+      "first_used": "2026-02-20T17:05:34.549387",
+      "last_used": "2026-02-20T17:05:34.549395",
+      "frequency": 1,
+      "routes": [
+        "CX105"
+      ]
+    }
+  ],
+  "Devin Padilla|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "6978 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.550088",
+      "last_used": "2026-02-20T17:05:34.550093",
+      "frequency": 1,
+      "routes": [
+        "CX126"
+      ]
+    }
+  ],
+  "Noah Arrance|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "6365 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.550543",
+      "last_used": "2026-02-20T17:05:34.550548",
+      "frequency": 1,
+      "routes": [
+        "CX125"
+      ]
+    }
+  ],
+  "Joseph Hogan|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "9770 AWD",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.550895",
+      "last_used": "2026-02-20T17:05:34.550898",
+      "frequency": 1,
+      "routes": [
+        "CX130"
+      ]
+    }
+  ],
+  "Beau Dietmeier|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "2078 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.551217",
+      "last_used": "2026-02-20T17:05:34.551221",
+      "frequency": 1,
+      "routes": [
+        "CX123"
+      ]
+    }
+  ],
+  "Krista Randall|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "6304 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.551649",
+      "last_used": "2026-02-20T17:05:34.551652",
+      "frequency": 1,
+      "routes": [
+        "CX116"
+      ]
+    }
+  ],
+  "Naoluong Thao|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "2075 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.552027",
+      "last_used": "2026-02-20T17:05:34.552030",
+      "frequency": 1,
+      "routes": [
+        "CX117"
+      ]
+    }
+  ],
+  "Brandon Urtusuastegui-Quintero|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "2147 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.552434",
+      "last_used": "2026-02-20T17:05:34.552437",
+      "frequency": 1,
+      "routes": [
+        "CX124"
+      ]
+    }
+  ],
+  "Rui Qian|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "2149 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.552790",
+      "last_used": "2026-02-20T17:05:34.552792",
+      "frequency": 1,
+      "routes": [
+        "CX121"
+      ]
+    }
+  ],
+  "Garrett Parker|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "0164 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.553186",
+      "last_used": "2026-02-20T17:05:34.553188",
+      "frequency": 1,
+      "routes": [
+        "CX132"
+      ]
+    }
+  ],
+  "William Wardrobe|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "1858 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.554088",
+      "last_used": "2026-02-20T17:05:34.554098",
+      "frequency": 1,
+      "routes": [
+        "CX113"
+      ]
+    }
+  ],
+  "Henry Cook|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "6309 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.554523",
+      "last_used": "2026-02-20T17:05:34.554525",
+      "frequency": 1,
+      "routes": [
+        "CX119"
+      ]
+    }
+  ],
+  "Ray Page|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "9790 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.554922",
+      "last_used": "2026-02-20T17:05:34.554924",
+      "frequency": 1,
+      "routes": [
+        "CX118"
+      ]
+    }
+  ],
+  "Brock Shoemaker|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "9832 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.555304",
+      "last_used": "2026-02-20T17:05:34.555307",
+      "frequency": 1,
+      "routes": [
+        "CX115"
+      ]
+    }
+  ],
+  "Arnell Laporte|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "9784 AWD",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.555688",
+      "last_used": "2026-02-20T17:05:34.555690",
+      "frequency": 1,
+      "routes": [
+        "CX131"
+      ]
+    }
+  ],
+  "Angel Somoza|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "1864 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.556211",
+      "last_used": "2026-02-20T17:05:34.556214",
+      "frequency": 1,
+      "routes": [
+        "CX128"
+      ]
+    }
+  ],
+  "Ethan Boston|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "2179 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.556650",
+      "last_used": "2026-02-20T17:05:34.556653",
+      "frequency": 1,
+      "routes": [
+        "CX120"
+      ]
+    }
+  ],
+  "Zachary Syth|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "6301 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.557093",
+      "last_used": "2026-02-20T17:05:34.557095",
+      "frequency": 1,
+      "routes": [
+        "CX122"
+      ]
+    }
+  ],
+  "Pedro Ibarra jr|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "1295",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.557572",
+      "last_used": "2026-02-20T17:05:34.557574",
+      "frequency": 1,
+      "routes": [
+        "CX127"
+      ]
+    }
+  ],
+  "Brett Self|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "9615 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.558055",
+      "last_used": "2026-02-20T17:05:34.558057",
+      "frequency": 1,
+      "routes": [
+        "CX129"
+      ]
+    }
+  ],
+  "Ronan Cichelli|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "2115 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.558544",
+      "last_used": "2026-02-20T17:05:34.558547",
+      "frequency": 1,
+      "routes": [
+        "CX112"
+      ]
+    }
+  ],
+  "Michael Spadino|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "1884 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.559161",
+      "last_used": "2026-02-20T17:05:34.559164",
+      "frequency": 1,
+      "routes": [
+        "CX110"
+      ]
+    }
+  ],
+  "Jaren Sunier|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "2070 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.559699",
+      "last_used": "2026-02-20T17:05:34.559701",
+      "frequency": 1,
+      "routes": [
+        "CX148"
+      ]
+    }
+  ],
+  "Chris Espejo|Standard Parcel - Custom Delivery Van 16ft": [
+    {
+      "vehicle_name": "3355 CDV 16'",
+      "service_type": "Standard Parcel - Custom Delivery Van 16ft",
+      "first_used": "2026-02-20T17:05:34.560221",
+      "last_used": "2026-02-20T17:05:34.560223",
+      "frequency": 1,
+      "routes": [
+        "CX149"
+      ]
+    }
+  ],
+  "Brent Dadey|Standard Parcel - Custom Delivery Van 16ft": [
+    {
+      "vehicle_name": "1460 CDV 16'",
+      "service_type": "Standard Parcel - Custom Delivery Van 16ft",
+      "first_used": "2026-02-20T17:05:34.560755",
+      "last_used": "2026-02-20T17:05:34.560757",
+      "frequency": 1,
+      "routes": [
+        "CX99"
+      ]
+    }
+  ],
+  "Ethan Hashimoto|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "2143 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.561289",
+      "last_used": "2026-02-20T17:05:34.561291",
+      "frequency": 1,
+      "routes": [
+        "CX103"
+      ]
+    }
+  ],
+  "Loren Ledrew|Standard Parcel - Custom Delivery Van 14ft": [
+    {
+      "vehicle_name": "3328 CDV 14'",
+      "service_type": "Standard Parcel - Custom Delivery Van 14ft",
+      "first_used": "2026-02-20T17:05:34.561839",
+      "last_used": "2026-02-20T17:05:34.561841",
+      "frequency": 1,
+      "routes": [
+        "CX104"
+      ]
+    }
+  ],
+  "Eli Fraser|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "9798 AWD",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.563191",
+      "last_used": "2026-02-20T17:05:34.563193",
+      "frequency": 1,
+      "routes": [
+        "CX101"
+      ]
+    }
+  ],
+  "Christopher Hampton|Standard Parcel - Custom Delivery Van 16ft": [
+    {
+      "vehicle_name": "1481 CDV 16'",
+      "service_type": "Standard Parcel - Custom Delivery Van 16ft",
+      "first_used": "2026-02-20T17:05:34.563769",
+      "last_used": "2026-02-20T17:05:34.563772",
+      "frequency": 1,
+      "routes": [
+        "CX98"
+      ]
+    }
+  ],
+  "Roniel Tapado|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "1901 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.564422",
+      "last_used": "2026-02-20T17:05:34.564425",
+      "frequency": 1,
+      "routes": [
+        "CX114"
+      ]
+    }
+  ],
+  "Rochelle Carey|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "9628 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-20T17:05:34.565296",
+      "last_used": "2026-02-20T17:05:34.565299",
+      "frequency": 1,
+      "routes": [
+        "CX108"
+      ]
+    }
+  ]
+}

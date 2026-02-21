@@ -339,7 +339,10 @@ class DriverHandoutGenerator:
             return 1
     
     def _build_summary_page(self, assignment_list: List[Tuple[str, RouteAssignment]], route_lookup: dict) -> List:
-        """Build summary page with all drivers sorted by wave time then route code."""
+        """Build summary page with all drivers sorted by wave time then route code.
+        
+        If < 50 routes, fits on single page. Otherwise paginate to next page.
+        """
         story = []
         
         # Title
@@ -347,11 +350,11 @@ class DriverHandoutGenerator:
             "<b>NDAY Daily Driver Assignment Summary</b>",
             ParagraphStyle(
                 name='SummaryTitle',
-                fontSize=14,
+                fontSize=12,
                 textColor=self.COLOR_BLUE,
                 fontName='Helvetica-Bold',
                 alignment=TA_CENTER,
-                spaceAfter=8,
+                spaceAfter=4,
             )
         )
         story.append(title)
@@ -361,10 +364,10 @@ class DriverHandoutGenerator:
             f"Date: {datetime.now().strftime('%B %d, %Y')}",
             ParagraphStyle(
                 name='SummaryDate',
-                fontSize=9,
+                fontSize=8,
                 textColor=self.COLOR_BLACK,
                 alignment=TA_CENTER,
-                spaceAfter=12,
+                spaceAfter=6,
             )
         )
         story.append(date_text)
@@ -380,8 +383,8 @@ class DriverHandoutGenerator:
             Paragraph("<b>DSP</b>", self.styles['TableHeader']),
         ]]
         
-        # Track wave times for coloring
-        wave_info = []  # List of (row_idx, wave_time) for styling
+        # Build row background colors based on wave timing
+        row_backgrounds = [self.COLOR_BLUE]  # Header row is blue
         
         # Add rows for each assignment (already sorted by wave_time then route_code)
         for route_code, assignment in assignment_list:
@@ -401,7 +404,18 @@ class DriverHandoutGenerator:
                 Paragraph(assignment.service_type[:20] if assignment.service_type else "", self.styles['TableCell']),
                 Paragraph(assignment.dsp or "", self.styles['TableCell']),
             ])
-            wave_info.append((len(table_data) - 1, assignment.wave_time))
+            
+            # Determine background color based on wave
+            if assignment.wave_time:
+                wave_num = self._extract_wave_number(assignment.wave_time)
+                if wave_num == 2:
+                    row_backgrounds.append(colors.HexColor('#D3D3D3'))  # Medium gray
+                elif wave_num == 4:
+                    row_backgrounds.append(colors.HexColor('#F0F0F0'))  # Light gray
+                else:
+                    row_backgrounds.append(colors.white)  # Wave 1 and 3: white
+            else:
+                row_backgrounds.append(colors.white)
         
         # Create table with wave-based row shading
         table_style_list = [
@@ -409,33 +423,31 @@ class DriverHandoutGenerator:
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 7),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 4),
+            ('FONTSIZE', (0, 0), (-1, 0), 6),
+            ('TOPPADDING', (0, 0), (-1, 0), 1),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 1),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-            ('FONTSIZE', (0, 1), (-1, -1), 6),
-            ('TOPPADDING', (0, 1), (-1, -1), 2),
-            ('BOTTOMPADDING', (0, 1), (-1, -1), 2),
+            ('FONTSIZE', (0, 1), (-1, -1), 5),
+            ('TOPPADDING', (0, 1), (-1, -1), 1),
+            ('BOTTOMPADDING', (0, 1), (-1, -1), 1),
+            ('LEFTPADDING', (0, 0), (-1, -1), 2),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 2),
+            ('ROWBACKGROUNDS', (0, 0), (-1, -1), row_backgrounds),
         ]
-        
-        # Apply wave-based shading: W-1 (white), W-2 (gray), W-3 (white), W-4 (light gray)
-        for row_idx, wave_time in wave_info:
-            if wave_time:
-                wave_num = self._extract_wave_number(wave_time)
-                if wave_num == 2:
-                    # Wave 2: Medium gray
-                    table_style_list.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#D3D3D3')))
-                elif wave_num == 4:
-                    # Wave 4: Light gray
-                    table_style_list.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#F0F0F0')))
-                # Wave 1 and 3 remain white (default)
         
         table = Table(
             table_data,
-            colWidths=[1.0*inch, 0.9*inch, 0.65*inch, 0.65*inch, 0.85*inch, 1.1*inch, 0.65*inch],
+            colWidths=[0.85*inch, 0.75*inch, 0.55*inch, 0.55*inch, 0.75*inch, 0.95*inch, 0.55*inch],
             style=TableStyle(table_style_list)
         )
         
         story.append(table)
+        
+        # If >= 50 routes, add page break to keep summary on one page
+        if len(assignment_list) >= 50:
+            from reportlab.platypus import PageBreak
+            story.append(PageBreak())
+        
         return story
     
     def _build_card_row(

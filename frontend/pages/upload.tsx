@@ -1,11 +1,59 @@
 'use client';
 
-import Dashboard from '../components/Dashboard';
+import { useState, useCallback } from 'react';
+import { useRouter } from 'next/router';
+import UploadZone from '../components/UploadZone';
+import StatusDisplay from '../components/StatusDisplay';
 
-export default function Home() {
-  return <Dashboard />;
+interface IngestStatus {
+  dop_uploaded: boolean;
+  fleet_uploaded: boolean;
+  cortex_uploaded: boolean;
+  route_sheets_uploaded: boolean;
+  dop_record_count: number;
+  fleet_record_count: number;
+  cortex_record_count: number;
+  route_sheets_count: number;
+  assignments_count: number;
+  validation_errors: string[];
+  validation_warnings: string[];
 }
 
+interface StatusMessage {
+  type: 'success' | 'error' | 'info' | 'warning';
+  text: string;
+}
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+
+export default function Upload() {
+  const router = useRouter();
+  const [status, setStatus] = useState<IngestStatus>({
+    dop_uploaded: false,
+    fleet_uploaded: false,
+    cortex_uploaded: false,
+    route_sheets_uploaded: false,
+    dop_record_count: 0,
+    fleet_record_count: 0,
+    cortex_record_count: 0,
+    route_sheets_count: 0,
+    assignments_count: 0,
+    validation_errors: [],
+    validation_warnings: [],
+  });
+
+  const [messages, setMessages] = useState<StatusMessage[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [pdfGenerated, setPdfGenerated] = useState(false);
+
+  const showMessage = (type: 'success' | 'error' | 'info' | 'warning', text: string) => {
+    const msg: StatusMessage = { type, text };
+    setMessages([msg]);
+  };
+
+  const handleUpload = useCallback(
+    async (endpoint: string, files: File[]) => {
+      setIsLoading(true);
       try {
         const formData = new FormData();
         // Route-sheets endpoint uses "files" (plural) for List[UploadFile]
@@ -112,14 +160,22 @@ export default function Home() {
       {/* Header */}
       <header className="bg-ndl-blue text-white py-6 shadow-md">
         <div className="max-w-6xl mx-auto px-4">
-          <div className="flex items-center mb-2">
-            <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center mr-3">
-              <span className="text-ndl-blue font-bold text-xl">N</span>
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center">
+              <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center mr-3">
+                <span className="text-ndl-blue font-bold text-xl">N</span>
+              </div>
+              <div>
+                <h1 className="text-3xl font-bold">NDAY Route Manager</h1>
+                <p className="text-blue-100">Upload and manage delivery routes</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-3xl font-bold">NDAY Route Manager</h1>
-              <p className="text-blue-100">Upload and manage delivery routes</p>
-            </div>
+            <button
+              onClick={() => router.push('/')}
+              className="bg-white text-ndl-blue px-4 py-2 rounded font-semibold hover:bg-blue-50 transition"
+            >
+              ← Back to Dashboard
+            </button>
           </div>
         </div>
       </header>
@@ -131,7 +187,7 @@ export default function Home() {
 
         {/* Upload Section */}
         <div className="mt-8">
-          <h2 className="text-2xl font-bold text-ndl-blue mb-6">Upload Files</h2>
+          <h2 className="text-2xl font-bold text-ndl-blue mb-6">Daily Driver Assignment</h2>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
             {/* DOP Upload */}

@@ -351,23 +351,29 @@ class DriverHandoutGenerator:
                 Paragraph(assignment.dsp or "", self.styles['TableCell']),
             ])
         
-        # Create table
+        # Create table with alternating row colors
+        table_style_list = [
+            ('BACKGROUND', (0, 0), (-1, 0), self.COLOR_BLUE),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 7),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 4),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('FONTSIZE', (0, 1), (-1, -1), 6),
+            ('TOPPADDING', (0, 1), (-1, -1), 2),
+            ('BOTTOMPADDING', (0, 1), (-1, -1), 2),
+        ]
+        
+        # Add alternating row background colors
+        for row_idx in range(1, len(table_data)):
+            if row_idx % 2 == 0:
+                table_style_list.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#F9F9F9')))
+        
         table = Table(
             table_data,
             colWidths=[1.0*inch, 0.9*inch, 0.65*inch, 0.65*inch, 0.85*inch, 1.1*inch, 0.65*inch],
-            style=TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), self.COLOR_BLUE),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 7),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 4),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                ('FONTSIZE', (0, 1), (-1, -1), 6),
-                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F9F9F9')]),
-                ('TOPPADDING', (0, 1), (-1, -1), 2),
-                ('BOTTOMPADDING', (0, 1), (-1, -1), 2),
-            ])
+            style=TableStyle(table_style_list)
         )
         
         story.append(table)

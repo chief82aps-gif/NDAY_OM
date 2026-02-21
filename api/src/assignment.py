@@ -145,6 +145,9 @@ class VehicleAssignmentEngine:
                 # Pick first available vehicle (FIFO)
                 vehicle = available_vehicles[0]
                 
+                # REMOVE vehicle from pool so it won't be assigned again
+                available_vehicles.pop(0)
+                
                 # Track if this was a fallback assignment
                 if fallback_service_type != route.service_type:
                     self.fallback_assignments.append(

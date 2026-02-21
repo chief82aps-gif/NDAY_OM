@@ -30,6 +30,14 @@ const FEATURES: FeatureCard[] = [
     color: 'from-purple-500 to-purple-600',
   },
   {
+    id: 'admin',
+    title: 'Admin Panel',
+    description: 'Manage system users, create new accounts, and delete unused user accounts. Requires admin credentials.',
+    icon: '⚙️',
+    href: '/admin',
+    color: 'from-red-500 to-red-600',
+  },
+  {
     id: 'reporting',
     title: 'Reports & Analytics',
     description: 'View detailed reports on vehicle utilization, driver assignments, route performance, and delivery metrics.',
@@ -64,7 +72,7 @@ export default function Dashboard() {
         </div>
 
         {/* Feature Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
           {FEATURES.map((feature) => (
             <div
               key={feature.id}

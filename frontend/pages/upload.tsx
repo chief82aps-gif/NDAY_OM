@@ -110,6 +110,17 @@ export default function Upload() {
         const statusResponse = await fetch(`${API_URL}/upload/status`);
         const statusData = await statusResponse.json();
         setStatus(statusData);
+        
+        // Fetch and store assignment details in sessionStorage for database view
+        try {
+          const detailsResponse = await fetch(`${API_URL}/upload/assignments`);
+          const detailsData = await detailsResponse.json();
+          if (detailsData.assignments) {
+            sessionStorage.setItem('assignments', JSON.stringify(detailsData.assignments));
+          }
+        } catch (e) {
+          console.error('Failed to fetch assignment details:', e);
+        }
       } else {
         showMessage('error', result.message || 'Assignment failed');
       }

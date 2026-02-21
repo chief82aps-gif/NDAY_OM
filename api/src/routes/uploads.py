@@ -139,3 +139,25 @@ def download_handouts():
         filename="NDAY_Driver_Handouts.pdf",
         media_type="application/pdf",
     )
+
+
+@router.get("/assignments")
+def get_assignments():
+    """Get all current assignments for database view."""
+    try:
+        assignments_list = []
+        for route_code, assignment in sorted(orchestrator.assignments.items()):
+            assignments_list.append({
+                "id": route_code,
+                "route_code": route_code,
+                "driver_name": assignment.driver_name or "N/A",
+                "vehicle_name": assignment.vehicle_name or "N/A",
+                "wave_time": assignment.wave_time or "N/A",
+                "service_type": assignment.service_type or "N/A",
+                "dsp": assignment.dsp or "N/A",
+                "assignment_date": assignment.assignment_date.isoformat() if hasattr(assignment, 'assignment_date') and assignment.assignment_date else "",
+            })
+        
+        return {"assignments": assignments_list}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve assignments: {str(e)}")

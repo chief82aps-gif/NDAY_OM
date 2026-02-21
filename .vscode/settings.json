@@ -1,0 +1,9 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "C:/Users/chief/NDAY_OM/.venv/Scripts/python.exe": true,
+        "/^python test_format\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

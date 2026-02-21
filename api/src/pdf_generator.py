@@ -290,6 +290,54 @@ class DriverHandoutGenerator:
         except Exception:
             return "TBD"
     
+    def _extract_wave_number(self, wave_time: Optional[str]) -> int:
+        """
+        Extract wave number (1-4) from wave time string.
+        
+        Maps wave times to wave numbers:
+        - Early morning (before 8 AM) -> Wave 1
+        - Morning (8-10 AM) -> Wave 2
+        - Late morning (10 AM-12 PM) -> Wave 3
+        - Afternoon (after 12 PM) -> Wave 4
+        
+        Args:
+            wave_time: Wave time string (e.g., "10:20 AM")
+        
+        Returns:
+            Wave number (1-4), defaults to 1 if cannot parse
+        """
+        if not wave_time:
+            return 1
+        
+        try:
+            wave_str = wave_time.strip().upper()
+            time_part = wave_str.replace("AM", "").replace("PM", "").strip()
+            is_pm = "PM" in wave_str
+            
+            parts = time_part.split(":")
+            if len(parts) != 2:
+                return 1
+            
+            hour = int(parts[0])
+            
+            # Convert to 24-hour format for comparison
+            if is_pm and hour != 12:
+                hour += 12
+            elif not is_pm and hour == 12:
+                hour = 0
+            
+            # Map wave based on time
+            if hour < 8:  # Before 8 AM
+                return 1
+            elif hour < 10:  # 8-10 AM
+                return 2
+            elif hour < 12:  # 10 AM-12 PM
+                return 3
+            else:  # After 12 PM
+                return 4
+        except Exception:
+            return 1
+    
     def _build_summary_page(self, assignment_list: List[Tuple[str, RouteAssignment]], route_lookup: dict) -> List:
         """Build summary page with all drivers sorted by wave time then route code."""
         story = []
@@ -321,7 +369,7 @@ class DriverHandoutGenerator:
         )
         story.append(date_text)
         
-        # Build table data
+        # Build table data with wave tracking
         table_data = [[
             Paragraph("<b>Name</b>", self.styles['TableHeader']),
             Paragraph("<b>Van</b>", self.styles['TableHeader']),
@@ -331,6 +379,9 @@ class DriverHandoutGenerator:
             Paragraph("<b>Service Type</b>", self.styles['TableHeader']),
             Paragraph("<b>DSP</b>", self.styles['TableHeader']),
         ]]
+        
+        # Track wave times for coloring
+        wave_info = []  # List of (row_idx, wave_time) for styling
         
         # Add rows for each assignment (already sorted by wave_time then route_code)
         for route_code, assignment in assignment_list:
@@ -350,8 +401,9 @@ class DriverHandoutGenerator:
                 Paragraph(assignment.service_type[:20] if assignment.service_type else "", self.styles['TableCell']),
                 Paragraph(assignment.dsp or "", self.styles['TableCell']),
             ])
+            wave_info.append((len(table_data) - 1, assignment.wave_time))
         
-        # Create table with alternating row colors
+        # Create table with wave-based row shading
         table_style_list = [
             ('BACKGROUND', (0, 0), (-1, 0), self.COLOR_BLUE),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -365,10 +417,17 @@ class DriverHandoutGenerator:
             ('BOTTOMPADDING', (0, 1), (-1, -1), 2),
         ]
         
-        # Add alternating row background colors
-        for row_idx in range(1, len(table_data)):
-            if row_idx % 2 == 0:
-                table_style_list.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#F9F9F9')))
+        # Apply wave-based shading: W-1 (white), W-2 (gray), W-3 (white), W-4 (light gray)
+        for row_idx, wave_time in wave_info:
+            if wave_time:
+                wave_num = self._extract_wave_number(wave_time)
+                if wave_num == 2:
+                    # Wave 2: Medium gray
+                    table_style_list.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#D3D3D3')))
+                elif wave_num == 4:
+                    # Wave 4: Light gray
+                    table_style_list.append(('BACKGROUND', (0, row_idx), (-1, row_idx), colors.HexColor('#F0F0F0')))
+                # Wave 1 and 3 remain white (default)
         
         table = Table(
             table_data,

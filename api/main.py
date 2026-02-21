@@ -2,7 +2,7 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.src.routes import uploads
+from api.src.routes import uploads, auth
 
 app = FastAPI()
 
@@ -27,6 +27,7 @@ app.add_middleware(
 )
 
 app.include_router(uploads.router, prefix="/upload")
+app.include_router(auth.router, prefix="/auth")
 
 @app.get("/")
 def root():

@@ -4,6 +4,8 @@ import { useState, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import UploadZone from '../components/UploadZone';
 import StatusDisplay from '../components/StatusDisplay';
+import PageHeader from '../components/PageHeader';
+import { ProtectedRoute } from '../components/ProtectedRoute';
 
 interface IngestStatus {
   dop_uploaded: boolean;
@@ -167,29 +169,10 @@ export default function Upload() {
   };
 
   return (
-    <div className="min-h-screen bg-white">
+    <ProtectedRoute>
+      <div className="min-h-screen bg-white">
       {/* Header */}
-      <header className="bg-ndl-blue text-white py-6 shadow-md">
-        <div className="max-w-6xl mx-auto px-4">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center">
-              <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center mr-3">
-                <span className="text-ndl-blue font-bold text-xl">N</span>
-              </div>
-              <div>
-                <h1 className="text-3xl font-bold">NDAY Route Manager</h1>
-                <p className="text-blue-100">Upload and manage delivery routes</p>
-              </div>
-            </div>
-            <button
-              onClick={() => router.push('/')}
-              className="bg-white text-ndl-blue px-4 py-2 rounded font-semibold hover:bg-blue-50 transition"
-            >
-              ← Back to Dashboard
-            </button>
-          </div>
-        </div>
-      </header>
+      <PageHeader title="Daily Driver Assignment" showBack={true} />
 
       {/* Main Content */}
       <main className="max-w-6xl mx-auto px-4 py-8">
@@ -358,6 +341,7 @@ export default function Upload() {
           <p>NDAY Route Manager © 2026. All rights reserved.</p>
         </div>
       </footer>
-    </div>
+      </div>
+    </ProtectedRoute>
   );
 }

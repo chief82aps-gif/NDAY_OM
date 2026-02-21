@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/router';
+import PageHeader from './PageHeader';
 
 interface FeatureCard {
   id: string;
@@ -50,19 +51,7 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
       {/* Header */}
-      <header className="bg-ndl-blue text-white py-8 shadow-lg">
-        <div className="max-w-6xl mx-auto px-4">
-          <div className="flex items-center mb-4">
-            <div className="w-14 h-14 bg-white rounded-lg flex items-center justify-center mr-4">
-              <span className="text-ndl-blue font-bold text-2xl">N</span>
-            </div>
-            <div>
-              <h1 className="text-4xl font-bold">NDAY Route Manager</h1>
-              <p className="text-blue-100 text-lg">Select a feature to get started</p>
-            </div>
-          </div>
-        </div>
-      </header>
+      <PageHeader title="NDAY Route Manager" showBack={false} />
 
       {/* Main Content */}
       <main className="max-w-6xl mx-auto px-4 py-12">

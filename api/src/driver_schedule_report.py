@@ -1,6 +1,7 @@
 """Driver schedule report generation - creates formatted report with show times and sweepers."""
 from typing import Dict, List, Tuple
 from datetime import datetime
+import re
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
@@ -154,9 +155,37 @@ class DriverScheduleReportGenerator:
         ]]
         
         row_colors = [self.COLOR_BLUE]  # Header
+
+        def parse_wave_minutes(value: str) -> int:
+            if not value:
+                return 10**9
+
+            trimmed = value.strip()
+            match = re.match(r"^(\d{1,2}):(\d{2})(?:\s*([AaPp][Mm]))?$", trimmed)
+            if not match:
+                return 10**9
+
+            hours = int(match.group(1))
+            minutes = int(match.group(2))
+            meridiem = match.group(3).upper() if match.group(3) else None
+
+            if meridiem == "PM" and hours < 12:
+                hours += 12
+            if meridiem == "AM" and hours == 12:
+                hours = 0
+
+            return hours * 60 + minutes
+
+        sorted_assignments = sorted(
+            schedule.assignments,
+            key=lambda assignment: (
+                parse_wave_minutes(assignment.wave_time or ""),
+                (assignment.driver_name or "").casefold(),
+            ),
+        )
         
         # Add rows for each driver
-        for assignment in sorted(schedule.assignments, key=lambda a: a.driver_name):
+        for assignment in sorted_assignments:
             table_data.append([
                 Paragraph(assignment.driver_name, self.styles['TableCell']),
                 Paragraph(assignment.show_time or "", self.styles['TableCell']),

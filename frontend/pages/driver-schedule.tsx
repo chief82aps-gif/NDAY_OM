@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import PageHeader from '../components/PageHeader';
 import UploadZone from '../components/UploadZone';
 import StatusDisplay from '../components/StatusDisplay';
@@ -37,12 +37,51 @@ interface UploadResponse {
   errors: string[];
 }
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+
 export default function DriverSchedulePage() {
   const [isLoading, setIsLoading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [schedule, setSchedule] = useState<DriverScheduleSummary | null>(null);
   const [reportDownloading, setReportDownloading] = useState(false);
+
+  const sortedAssignments = useMemo(() => {
+    if (!schedule?.assignments) return [];
+
+    const parseTimeToMinutes = (value: string) => {
+      const trimmed = value.trim();
+      const match = trimmed.match(/^(\d{1,2}):(\d{2})(?:\s*([AaPp][Mm]))?$/);
+
+      if (!match) {
+        return Number.MAX_SAFE_INTEGER;
+      }
+
+      let hours = Number.parseInt(match[1], 10);
+      const minutes = Number.parseInt(match[2], 10);
+      const meridiem = match[3]?.toUpperCase();
+
+      if (meridiem === 'PM' && hours < 12) {
+        hours += 12;
+      }
+
+      if (meridiem === 'AM' && hours === 12) {
+        hours = 0;
+      }
+
+      return hours * 60 + minutes;
+    };
+
+    return [...schedule.assignments].sort((first, second) => {
+      const timeDifference = parseTimeToMinutes(first.wave_time) - parseTimeToMinutes(second.wave_time);
+
+      if (timeDifference !== 0) {
+        return timeDifference;
+      }
+
+      return first.driver_name.localeCompare(second.driver_name);
+    });
+  }, [schedule]);
 
   const handleDrop = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
@@ -55,7 +94,7 @@ export default function DriverSchedulePage() {
       const formData = new FormData();
       formData.append('file', files[0]);
 
-      const response = await fetch('/upload/driver-schedule', {
+      const response = await fetch(`${API_URL}/upload/driver-schedule`, {
         method: 'POST',
         body: formData,
         headers: {
@@ -87,7 +126,7 @@ export default function DriverSchedulePage() {
 
   const fetchScheduleSummary = async () => {
     try {
-      const response = await fetch('/upload/driver-schedule-summary', {
+      const response = await fetch(`${API_URL}/upload/driver-schedule-summary`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
         },
@@ -107,7 +146,7 @@ export default function DriverSchedulePage() {
   const handleDownloadReport = async () => {
     setReportDownloading(true);
     try {
-      const response = await fetch('/upload/download-schedule-report', {
+      const response = await fetch(`${API_URL}/upload/download-schedule-report`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
         },
@@ -185,11 +224,11 @@ export default function DriverSchedulePage() {
             )}
 
             {uploadStatus && (
-              <StatusDisplay status={uploadStatus} type="success" />
+              <StatusDisplay messages={[{ type: 'success', text: uploadStatus }]} />
             )}
 
             {uploadError && (
-              <StatusDisplay status={uploadError} type="error" />
+              <StatusDisplay messages={[{ type: 'error', text: uploadError }]} />
             )}
           </div>
 
@@ -271,7 +310,7 @@ export default function DriverSchedulePage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {schedule.assignments.map((assignment, idx) => (
+                      {sortedAssignments.map((assignment, idx) => (
                         <tr key={idx} className="border-b hover:bg-gray-50">
                           <td className="px-4 py-3 text-sm text-gray-800">{assignment.driver_name}</td>
                           <td className="px-4 py-3 text-sm text-gray-800">{assignment.wave_time}</td>

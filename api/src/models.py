@@ -73,16 +73,47 @@ class CortexRoute:
 
 
 @dataclass
+class DriverAssignment:
+    """Driver assignment from 'Rostered Work Blocks' tab."""
+    driver_name: str
+    date: str
+    wave_time: Optional[str] = None  # e.g., "10:20 AM"
+    service_type: Optional[str] = None
+    show_time: Optional[str] = None  # Calculated: 25 min before wave_time
+
+
+@dataclass
+class DriverAvailability:
+    """Driver availability from 'Shifts & Availability' tab."""
+    driver_name: str
+    date: str
+    availability: str  # e.g., "Group 1", "Unavailable", "Donut", etc.
+
+
+@dataclass
+class DriverScheduleSummary:
+    """Summary of driver assignments and show times."""
+    timestamp: str  # From A2 of the file
+    date: str  # The date being scheduled for (next day)
+    assignments: List[DriverAssignment] = field(default_factory=list)  # Rostered drivers
+    sweepers: List[str] = field(default_factory=list)  # Scheduled but not assigned
+    show_times: Dict[str, str] = field(default_factory=dict)  # driver_name -> show_time
+
+
+@dataclass
 class IngestStatus:
     """Overall ingest status and validation results."""
     dop_uploaded: bool = False
     fleet_uploaded: bool = False
     cortex_uploaded: bool = False
     route_sheets_uploaded: bool = False
+    driver_schedule_uploaded: bool = False
     dop_records: List[RouteDOP] = field(default_factory=list)
     fleet_records: List[Vehicle] = field(default_factory=list)
     cortex_records: List[CortexRoute] = field(default_factory=list)
     route_sheets: List[RouteSheet] = field(default_factory=list)
+    driver_schedule: Optional['DriverScheduleSummary'] = None
+    driver_schedule_report_path: Optional[str] = None  # Path to generated PDF report
     validation_errors: List[str] = field(default_factory=list)
     validation_warnings: List[str] = field(default_factory=list)
     last_updated: datetime = field(default_factory=datetime.now)

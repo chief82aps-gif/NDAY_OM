@@ -13,7 +13,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 @router.post("/dop")
 def upload_dop(file: UploadFile = File(...)):
-    """Upload DOP Excel file and parse."""
+    """Upload DOP Excel or CSV file and parse."""
     try:
         file_path = os.path.join(UPLOAD_DIR, f"dop_{file.filename}")
         with open(file_path, "wb") as f:
@@ -34,7 +34,7 @@ def upload_dop(file: UploadFile = File(...)):
 
 @router.post("/fleet")
 def upload_fleet(file: UploadFile = File(...)):
-    """Upload Fleet Excel file and parse."""
+    """Upload Fleet Excel or CSV file and parse."""
     try:
         file_path = os.path.join(UPLOAD_DIR, f"fleet_{file.filename}")
         with open(file_path, "wb") as f:
@@ -55,7 +55,7 @@ def upload_fleet(file: UploadFile = File(...)):
 
 @router.post("/cortex")
 def upload_cortex(file: UploadFile = File(...)):
-    """Upload Cortex Excel file and parse."""
+    """Upload Cortex Excel or CSV file and parse."""
     try:
         file_path = os.path.join(UPLOAD_DIR, f"cortex_{file.filename}")
         with open(file_path, "wb") as f:
@@ -98,6 +98,86 @@ def upload_route_sheets(files: List[UploadFile] = File(...)):
         raise HTTPException(status_code=500, detail=f"Failed to upload Route Sheets: {str(e)}")
 
 
+@router.post("/driver-schedule")
+def upload_driver_schedule(file: UploadFile = File(...)):
+    """Upload Driver Schedule Excel file (Rostered Work Blocks and Shifts & Availability tabs)."""
+    try:
+        file_path = os.path.join(UPLOAD_DIR, f"driver_schedule_{file.filename}")
+        with open(file_path, "wb") as f:
+            f.write(file.file.read())
+        
+        # Parse and validate
+        orchestrator.ingest_driver_schedule(file_path)
+        
+        # Generate report
+        report_generated = orchestrator.generate_driver_schedule_report()
+        
+        schedule = orchestrator.status.driver_schedule
+        return {
+            "filename": file.filename,
+            "status": "uploaded",
+            "timestamp": schedule.timestamp if schedule else "",
+            "scheduled_date": schedule.date if schedule else "",
+            "assignments_count": len(schedule.assignments) if schedule else 0,
+            "sweepers_count": len(schedule.sweepers) if schedule else 0,
+            "report_generated": report_generated,
+            "report_path": orchestrator.status.driver_schedule_report_path,
+            "errors": orchestrator.status.validation_errors[-5:],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload Driver Schedule: {str(e)}")
+
+
+@router.get("/driver-schedule-summary")
+def get_driver_schedule_summary():
+    """Get the current driver schedule summary with show times and sweepers."""
+    try:
+        if not orchestrator.status.driver_schedule:
+            return {"error": "No driver schedule uploaded"}
+        
+        schedule = orchestrator.status.driver_schedule
+        
+        # Format assignments
+        assignments = []
+        for assignment in schedule.assignments:
+            assignments.append({
+                "driver_name": assignment.driver_name,
+                "date": assignment.date,
+                "wave_time": assignment.wave_time or "",
+                "service_type": assignment.service_type or "",
+                "show_time": assignment.show_time or "",
+            })
+        
+        return {
+            "timestamp": schedule.timestamp,
+            "scheduled_date": schedule.date,
+            "assignments": assignments,
+            "sweepers": schedule.sweepers,
+            "show_times": schedule.show_times,
+            "summary": {
+                "total_assigned": len(schedule.assignments),
+                "total_sweepers": len(schedule.sweepers),
+                "total_drivers": len(schedule.assignments) + len(schedule.sweepers),
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve driver schedule: {str(e)}")
+
+
+@router.get("/download-schedule-report")
+def download_schedule_report():
+    """Download generated driver schedule report PDF."""
+    pdf_path = orchestrator.status.driver_schedule_report_path
+    
+    if not pdf_path or not os.path.exists(pdf_path):
+        raise HTTPException(status_code=404, detail="Schedule report PDF not found. Upload and process a driver schedule first.")
+    
+    return FileResponse(
+        path=pdf_path,
+        filename="NDAY_Driver_Schedule_Report.pdf",
+        media_type="application/pdf",
+    )
+
 @router.get("/status")
 def get_upload_status():
     """Get current ingest status and validation results."""
@@ -113,6 +193,36 @@ def assign_vehicles():
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to assign vehicles: {str(e)}")
+
+
+@router.get("/capacity-status")
+def get_capacity_status():
+    """Get van capacity utilization and alerts for service types at 80%+ capacity."""
+    try:
+        capacity_status = orchestrator.get_capacity_status()
+        return capacity_status
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get capacity status: {str(e)}")
+
+
+@router.get("/electric-van-violations")
+def get_electric_van_violations():
+    """Get electric van constraint violations that need user approval."""
+    try:
+        violations = orchestrator.get_electric_van_violations()
+        return violations
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve violations: {str(e)}")
+
+
+@router.post("/authorize-electric-van")
+def authorize_electric_van(route_code: str, van_vin: str, reason: str = ""):
+    """Authorize using an electric van on a non-electric route."""
+    try:
+        result = orchestrator.authorize_electric_van_assignment(route_code, van_vin, reason)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to authorize electric van: {str(e)}")
 
 
 @router.post("/generate-handouts")

@@ -22,6 +22,14 @@ const FEATURES: FeatureCard[] = [
     color: 'from-blue-500 to-blue-600',
   },
   {
+    id: 'driver-schedule',
+    title: 'Driver Schedule',
+    description: 'Upload driver work schedules and rosters to calculate show times and identify sweepers for daily operations.',
+    icon: '📅',
+    href: '/driver-schedule',
+    color: 'from-indigo-500 to-indigo-600',
+  },
+  {
     id: 'database',
     title: 'Assignment Database',
     description: 'View, search, and analyze all historical assignment records. Filter by driver, route, or vehicle and export data to CSV.',

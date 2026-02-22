@@ -1,14 +1,16 @@
 """Ingest validation and orchestration."""
 import os
 from typing import Optional, Dict
-from api.src.models import IngestStatus, RouteDOP, Vehicle, RouteSheet, CortexRoute
+from api.src.models import IngestStatus, RouteDOP, Vehicle, RouteSheet, CortexRoute, DriverScheduleSummary
 from api.src.ingest_dop import parse_dop_excel
 from api.src.ingest_fleet import parse_fleet_excel
 from api.src.ingest_cortex import parse_cortex_excel
 from api.src.ingest_route_sheets import parse_route_sheet_pdf
+from api.src.ingest_driver_schedule import parse_driver_schedule_excel
 from api.src.normalization import normalize_route_code, normalize_service_type
 from api.src.assignment import VehicleAssignmentEngine
 from api.src.pdf_generator import DriverHandoutGenerator
+from api.src.driver_schedule_report import DriverScheduleReportGenerator
 
 
 class IngestOrchestrator:
@@ -16,11 +18,14 @@ class IngestOrchestrator:
     
     def __init__(self):
         self.status = IngestStatus()
-        self.upload_dir = os.path.join(os.path.dirname(__file__), '../../uploads')
+        # Use absolute path or create in a temp location if not available
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        self.upload_dir = os.path.join(base_dir, 'uploads')
         os.makedirs(self.upload_dir, exist_ok=True)
         self.assignment_engine: Optional[VehicleAssignmentEngine] = None
         self.assignments: Dict = {}
         self.pdf_generator = DriverHandoutGenerator()
+        self.schedule_report_generator = DriverScheduleReportGenerator()
     
     def ingest_dop(self, file_path: str) -> bool:
         """Ingest DOP Excel file."""
@@ -64,6 +69,32 @@ class IngestOrchestrator:
         self._enrich_route_sheets_with_expected_return()
         
         return self.status.route_sheets_uploaded
+    
+    def ingest_driver_schedule(self, file_path: str) -> bool:
+        """Ingest driver schedule Excel file (Rostered Work Blocks and Shifts & Availability)."""
+        schedule, errors = parse_driver_schedule_excel(file_path)
+        self.status.driver_schedule = schedule
+        self.status.validation_errors.extend(errors)
+        self.status.driver_schedule_uploaded = True
+        return True
+    
+    def generate_driver_schedule_report(self) -> bool:
+        """Generate PDF report for current driver schedule."""
+        if not self.status.driver_schedule:
+            self.status.validation_errors.append("No driver schedule data available for report generation")
+            return False
+        
+        output_path = os.path.join(self.upload_dir, "driver_schedule_report.pdf")
+        try:
+            self.schedule_report_generator.generate_schedule_report(
+                self.status.driver_schedule,
+                output_path
+            )
+            self.status.driver_schedule_report_path = output_path
+            return True
+        except Exception as e:
+            self.status.validation_errors.append(f"Failed to generate report: {str(e)}")
+            return False
     
     def _enrich_route_sheets_with_expected_return(self):
         """Calculate expected return times for route sheets."""
@@ -193,6 +224,93 @@ class IngestOrchestrator:
             "fallback_used": assignment_status["fallback_used"],
             "success_rate": assignment_status["success_rate"],
             "failed_routes": assignment_status["failed_routes"],
+        }
+    
+    def get_capacity_status(self) -> Dict:
+        """
+        Get van capacity utilization and alerts.
+        
+        Returns:
+            Dictionary with capacity status by service type and alerts for types at 80%+
+        """
+        if not self.assignment_engine:
+            return {
+                "error": "No assignments made yet. Run assign_vehicles first.",
+                "by_service_type": {},
+                "alerts": [],
+                "has_alerts": False,
+                "alert_count": 0,
+            }
+        
+        return self.assignment_engine.get_capacity_status()
+    
+    def authorize_electric_van_assignment(self, route_code: str, van_vin: str, reason: str = "") -> Dict:
+        """
+        Authorize using an electric van on a non-electric route.
+        
+        Args:
+            route_code: The route code to authorize
+            van_vin: The vehicle VIN (for audit purposes)
+            reason: Optional reason for the authorization
+        
+        Returns:
+            Dictionary with authorization status
+        """
+        if not self.assignment_engine:
+            return {
+                "success": False,
+                "message": "No assignments made yet. Run assign_vehicles first.",
+            }
+        
+        # Add to authorized set
+        self.assignment_engine.authorized_electric_assignments.add(route_code)
+        
+        # Get updated violations
+        assignment_status = self.assignment_engine.get_assignment_status()
+        
+        return {
+            "success": True,
+            "message": f"Electric van authorization approved for route {route_code}",
+            "route_code": route_code,
+            "van_vin": van_vin,
+            "reason": reason,
+            "remaining_violations": assignment_status.get("electric_van_violations", []),
+            "violation_count": assignment_status.get("electric_violation_count", 0),
+        }
+    
+    def get_electric_van_violations(self) -> Dict:
+        """
+        Get all electric van constraint violations.
+        
+        Returns:
+            Dictionary with violations and authorization status
+        """
+        if not self.assignment_engine:
+            return {
+                "error": "No assignments made yet. Run assign_vehicles first.",
+                "violations": [],
+                "pending_violations": [],
+                "authorized_routes": [],
+                "total_violations": 0,
+                "pending_count": 0,
+            }
+        
+        assignment_status = self.assignment_engine.get_assignment_status()
+        all_violations = assignment_status.get("electric_van_violations", [])
+        authorized = self.assignment_engine.authorized_electric_assignments
+        
+        # Split violations into pending and authorized
+        pending = [v for v in all_violations if v["route_code"] not in authorized]
+        authorized_violations = [v for v in all_violations if v["route_code"] in authorized]
+        
+        return {
+            "violations": all_violations,
+            "pending_violations": pending,
+            "authorized_violations": authorized_violations,
+            "authorized_routes": list(authorized),
+            "total_violations": len(all_violations),
+            "pending_count": len(pending),
+            "has_pending": len(pending) > 0,
         }
     
     def generate_handouts(self, output_path: str) -> Dict:

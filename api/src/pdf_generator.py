@@ -141,35 +141,40 @@ class DriverHandoutGenerator:
         story.extend(self._build_summary_page(assignment_list, route_lookup))
         story.append(PageBreak())
         
-        # Group assignments into 2x2 grids (4 per page)
-        for page_idx in range(0, len(assignment_list), 4):
+        def route_has_overflow(route_code: str) -> bool:
+            route_sheet = route_lookup.get(route_code)
+            return bool(route_sheet and route_sheet.overflow)
+
+        # Build pages with overflow-aware layout:
+        # any page containing overflow routes is forced to 2x1 portrait (max 2 cards)
+        page_idx = 0
+        while page_idx < len(assignment_list):
             if page_idx > 0:  # Page break before new page (except first)
                 story.append(PageBreak())
-            
-            # Get up to 4 assignments for this page
-            page_assignments = assignment_list[page_idx:page_idx+4]
-            
-            # Create 2x2 grid, or 2x1 if fewer than 4 cards
-            if len(page_assignments) == 4:
-                # Full 2x2 grid
+
+            lookahead_four = assignment_list[page_idx:page_idx + 4]
+            lookahead_two = assignment_list[page_idx:page_idx + 2]
+
+            has_overflow_in_next_two = any(route_has_overflow(route_code) for route_code, _ in lookahead_two)
+            has_overflow_in_next_four = any(route_has_overflow(route_code) for route_code, _ in lookahead_four)
+
+            if has_overflow_in_next_two or has_overflow_in_next_four:
+                page_size = 2
+            else:
+                page_size = 4
+
+            page_assignments = assignment_list[page_idx:page_idx + page_size]
+
+            if page_size == 4 and len(page_assignments) == 4:
                 row1 = page_assignments[0:2]
                 row2 = page_assignments[2:4]
                 story.append(self._build_card_row(row1, route_lookup))
                 story.append(Spacer(1, self.CARD_SPACING))
                 story.append(self._build_card_row(row2, route_lookup))
-            elif len(page_assignments) == 3:
-                # Row 1: 2 cards, Row 2: 1 card (becomes 2x1)
-                row1 = page_assignments[0:2]
-                row2 = page_assignments[2:3]
-                story.append(self._build_card_row(row1, route_lookup))
-                story.append(Spacer(1, 0.15*inch))
-                story.append(self._build_card_row(row2, route_lookup))
-            elif len(page_assignments) == 2:
-                # Single row: 2x1 layout
-                story.append(self._build_card_row(page_assignments, route_lookup))
             else:
-                # Last card only: 2x1 layout with 1 card
-                story.append(self._build_card_row(page_assignments, route_lookup))
+                story.append(self._build_card_row(page_assignments[0:2], route_lookup))
+
+            page_idx += page_size
         
         # Build PDF
         doc.build(story)
@@ -402,7 +407,7 @@ class DriverHandoutGenerator:
                 Paragraph(assignment.wave_time or "", self.styles['TableCell']),
                 Paragraph(expected_rts or "", self.styles['TableCell']),
                 Paragraph(assignment.service_type[:20] if assignment.service_type else "", self.styles['TableCell']),
-                Paragraph(assignment.dsp or "", self.styles['TableCell']),
+                Paragraph("NDAY", self.styles['TableCell']),
             ])
             
             # Determine background color based on wave
@@ -437,7 +442,7 @@ class DriverHandoutGenerator:
         
         table = Table(
             table_data,
-            colWidths=[0.85*inch, 0.75*inch, 0.55*inch, 0.55*inch, 0.75*inch, 0.95*inch, 0.55*inch],
+            colWidths=[0.85*inch, 0.70*inch, 0.55*inch, 0.65*inch, 0.75*inch, 0.80*inch, 0.70*inch],
             style=TableStyle(table_style_list)
         )
         
@@ -475,6 +480,8 @@ class DriverHandoutGenerator:
             ('TOPPADDING', (0, 0), (-1, -1), 0),
             ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('BOX', (0, 0), (0, 0), 1.5, self.COLOR_BLUE),
+            ('BOX', (1, 0), (1, 0), 1.5, self.COLOR_BLUE),
         ]))
         
         return row_table
@@ -491,54 +498,82 @@ class DriverHandoutGenerator:
         # Large route code (left justified)
         route_style = ParagraphStyle(
             name='LargeRouteCode',
-            fontSize=18,
+            fontSize=16,
+            leading=16,
             textColor=self.COLOR_BLACK,
             fontName='Helvetica-Bold',
             alignment=TA_LEFT,
         )
         left_elements.append(Paragraph(assignment.route_code, route_style))
-        left_elements.append(Spacer(1, 0.04*inch))
+        left_elements.append(Spacer(1, 0.01*inch))
         
-        # Driver name (left justified)
-        driver_text = assignment.driver_name or "TBD"
-        driver_style = ParagraphStyle(
-            name='DriverName',
+        # Staging location directly under route code (left justified)
+        staging_text = route_sheet.staging_location if route_sheet else "TBD"
+        staging_style = ParagraphStyle(
+            name='StagingLocation',
             fontSize=8,
+            leading=8,
             textColor=self.COLOR_BLACK,
-            fontName='Helvetica',
+            fontName='Helvetica-Bold',
             alignment=TA_LEFT,
         )
-        left_elements.append(Paragraph(driver_text, driver_style))
-        left_elements.append(Spacer(1, 0.02*inch))
+        left_elements.append(Paragraph(f"Staging: {staging_text}", staging_style))
+        left_elements.append(Spacer(1, 0.01*inch))
         
         # Expected return time (left justified, under driver)
         expected_return = route_sheet.expected_return if route_sheet else "TBD"
         expected_style = ParagraphStyle(
             name='ExpectedReturn',
             fontSize=7,
+            leading=7,
             textColor=self.COLOR_BLACK,
             fontName='Helvetica',
             alignment=TA_LEFT,
         )
         left_elements.append(Paragraph("<b>Expected Return</b>", expected_style))
         left_elements.append(Paragraph(f"<b>{expected_return}</b>", expected_style))
-        left_elements.append(Spacer(1, 0.06*inch))
+        left_elements.append(Spacer(1, 0.02*inch))
         
         # Bags table
         if route_sheet and route_sheet.bags:
-            bag_data = [
-                [Paragraph("<b>Bag</b>", self.styles['TableHeader'])],
-            ]
+            # Determine if we need 2-column layout for many bags
+            num_bags = len(route_sheet.bags)
+            use_two_columns = num_bags > 12
             
-            for bag in route_sheet.bags[:8]:  # Max 8 bags to fit
-                color_abbr = self._color_to_abbreviation(bag.color_code)
-                bag_num = ''.join(c for c in bag.bag_id if c.isdigit()) or bag.bag_id
-                bag_display = f"{color_abbr} {bag_num}"
-                bag_data.append([
-                    Paragraph(bag_display, self.styles['TableCell']),
-                ])
-            
-            bags_table = Table(bag_data, colWidths=[1.4*inch])
+            if use_two_columns:
+                # Split bags into two columns
+                mid_point = (num_bags + 1) // 2
+                left_bags = route_sheet.bags[:mid_point]
+                right_bags = route_sheet.bags[mid_point:]
+                
+                bag_data = [
+                    [Paragraph("<b>Bag</b>", self.styles['TableHeader']), 
+                     Paragraph("<b>Bag</b>", self.styles['TableHeader'])],
+                ]
+                
+                # Pad to same length
+                max_rows = max(len(left_bags), len(right_bags))
+                for i in range(max_rows):
+                    left_cell = Paragraph(left_bags[i].bag_id, self.styles['TableCell']) if i < len(left_bags) else ""
+                    right_cell = Paragraph(right_bags[i].bag_id, self.styles['TableCell']) if i < len(right_bags) else ""
+                    bag_data.append([left_cell, right_cell])
+                
+                bags_table = Table(bag_data, colWidths=[0.7*inch, 0.7*inch])
+            else:
+                # Single column layout
+                bag_data = [
+                    [Paragraph("<b>Bag</b>", self.styles['TableHeader'])],
+                ]
+                
+                # Show all bags (no limit)
+                for bag in route_sheet.bags:
+                    # bag_id is already in format "Orange 546", just display it
+                    bag_display = bag.bag_id
+                    bag_data.append([
+                        Paragraph(bag_display, self.styles['TableCell']),
+                    ])
+                
+                bags_table = Table(bag_data, colWidths=[1.4*inch])
             bags_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), self.COLOR_BLUE),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -561,28 +596,34 @@ class DriverHandoutGenerator:
         info_style = ParagraphStyle(
             name='RightInfo',
             fontSize=7,
+            leading=7,
             textColor=self.COLOR_BLACK,
             fontName='Helvetica',
             alignment=TA_RIGHT,
         )
-        
-        # Staging location at top
-        staging_text = route_sheet.staging_location if route_sheet else "TBD"
-        right_elements.append(Paragraph(f"<b>{staging_text}</b>", info_style))
+
+        # Driver name opposite route code, same size as route code
+        driver_text = assignment.driver_name or "TBD"
+        driver_style = ParagraphStyle(
+            name='DriverNameTopRight',
+            fontSize=16,
+            leading=16,
+            textColor=self.COLOR_BLACK,
+            fontName='Helvetica-Bold',
+            alignment=TA_RIGHT,
+        )
+        right_elements.append(Paragraph(driver_text, driver_style))
+        right_elements.append(Spacer(1, 0.01*inch))
         
         # Wave time (right justified)
         wave_text = assignment.wave_time or "TBD"
-        right_elements.append(Paragraph(f"<b>{wave_text}</b>", info_style))
-        
-        # Service type (right justified)
-        service_text = assignment.service_type or "TBD"
-        right_elements.append(Paragraph(service_text, info_style))
+        right_elements.append(Paragraph(f"<b>Wave {wave_text}</b>", info_style))
         
         # Vehicle name (right justified)
         vehicle_text = assignment.vehicle_name or "TBD"
         right_elements.append(Paragraph(f"<b>{vehicle_text}</b>", info_style))
         
-        right_elements.append(Spacer(1, 0.08*inch))
+        right_elements.append(Spacer(1, 0.02*inch))
         
         # Overflow table (right side)
         if route_sheet and route_sheet.overflow:
@@ -591,7 +632,8 @@ class DriverHandoutGenerator:
                  Paragraph("Qty", self.styles['TableHeader'])],
             ]
             
-            for overflow in route_sheet.overflow[:8]:  # Max 8 overflow to fit
+            # Show all overflow (no limit)
+            for overflow in route_sheet.overflow:
                 overflow_data.append([
                     Paragraph(overflow.sort_zone, self.styles['TableCell']),
                     Paragraph(str(overflow.package_count), self.styles['TableCell']),
@@ -616,7 +658,7 @@ class DriverHandoutGenerator:
         # --- Create two-column table for left and right content ---
         left_col = Table(
             [[elem] for elem in left_elements],
-            colWidths=[1.7*inch]
+            colWidths=[2.15*inch]
         )
         left_col.setStyle(TableStyle([
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
@@ -625,26 +667,63 @@ class DriverHandoutGenerator:
         
         right_col = Table(
             [[elem] for elem in right_elements],
-            colWidths=[1.85*inch]
+            colWidths=[1.40*inch]
         )
         right_col.setStyle(TableStyle([
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ('ALIGN', (0, 0), (-1, -1), 'RIGHT'),
         ]))
         
-        # Create main two-column card layout
-        card_layout = Table(
+        # Create main two-column body layout
+        card_body = Table(
             [[left_col, right_col]],
-            colWidths=[1.7*inch, 1.85*inch]
+            colWidths=[2.15*inch, 1.40*inch]
+        )
+        card_body.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), colors.white),
+            ('LEFTPADDING', (0, 0), (-1, -1), 4),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ]))
+
+        footer_style = ParagraphStyle(
+            name='CardFooter',
+            parent=self.styles['Normal'],
+            fontSize=6,
+            leading=7,
+            textColor=colors.HexColor("#444444"),
+            fontName='Helvetica-Oblique',
+            alignment=TA_CENTER,
+        )
+        footer_text = self._get_footer_message(assignment, route_sheet)
+        footer_paragraph = Paragraph(f'"{footer_text}"', footer_style)
+
+        # Wrap body + footer so footer stays at bottom area of each card
+        card_layout = Table(
+            [[card_body], [footer_paragraph]],
+            colWidths=[3.55*inch],
+            rowHeights=[4.72*inch, 0.20*inch]
         )
         card_layout.setStyle(TableStyle([
             ('BORDER', (0, 0), (-1, -1), 1.5, self.COLOR_BLUE),
             ('BACKGROUND', (0, 0), (-1, -1), colors.white),
             ('LEFTPADDING', (0, 0), (-1, -1), 4),
             ('RIGHTPADDING', (0, 0), (-1, -1), 4),
-            ('TOPPADDING', (0, 0), (-1, -1), 4),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('TOPPADDING', (0, 0), (-1, -1), 2),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+            ('VALIGN', (0, 0), (0, 0), 'TOP'),
+            ('VALIGN', (0, 1), (0, 1), 'BOTTOM'),
+            ('ALIGN', (0, 1), (0, 1), 'CENTER'),
         ]))
         
         return card_layout
+
+    def _get_footer_message(
+        self,
+        assignment: RouteAssignment,
+        route_sheet: Optional[RouteSheet],
+    ) -> str:
+        """Return a fixed motivational/safety footer message for each card."""
+        return "One stop at a time — finish strong."

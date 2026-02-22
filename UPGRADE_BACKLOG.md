@@ -3,6 +3,13 @@
 ## Overview
 This document tracks potential improvements, features, and integrations for the NDAY Route Manager system. Items are organized by category and priority.
 
+**Canonical source:** This file is the single source of truth for feature ideas and upgrades. Legacy notes from `IDEAS.md` were merged here on Feb 22, 2026.
+
+### 📨 Idea Intake Queue
+- Asana integration for new driver scheduling (merged into High Priority item #1)
+- Performance metrics by driver and route code (covered in Medium Priority item #8)
+- Motivational phrase generator using driver metrics (tracked in Medium Priority item #8.1)
+
 ---
 
 ## ✅ Completed Features
@@ -89,6 +96,13 @@ This document tracks potential improvements, features, and integrations for the 
 - Peak hours/demand analysis
 - Trend analysis over time
 - Predictive analytics for scheduling
+
+### 8.1 Motivational Phrase Generator
+**Idea:** Use driver performance and safety metrics to select the most effective footer message per driver
+- Track phrase impact on key metrics (safety incidents, on-time return, delivery accuracy)
+- A/B test motivational and safety comments by route/driver cohort
+- Recommend best-performing phrase for each driver profile
+- Keep manual override for dispatcher/admins
 
 ---
 

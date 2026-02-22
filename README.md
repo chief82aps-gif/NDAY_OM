@@ -18,6 +18,9 @@ DSP Route Manager backend for ingesting, validating, and generating driver hando
 - **Validation:** Cross-file consistency checks, operational status filtering (skip "Grounded"), service type matching
 - **Status Endpoint:** Real-time ingest status and validation errors/warnings
 
+## Planning & Roadmap
+See [UPGRADE_BACKLOG.md](UPGRADE_BACKLOG.md) for the canonical list of features, improvements, and integration opportunities. ✓ Single source of truth for product direction.
+
 ## API Endpoints
 | Method | Endpoint | Description |
 |--------|----------|-------------|

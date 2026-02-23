@@ -19,7 +19,7 @@ class DriverHandoutGenerator:
     CARD_WIDTH = 3.75 * inch  # Reduced from 4.5" to fit 2 across with margins
     CARD_HEIGHT = 5.0 * inch  # Reduced from 6.5" to fit 2 rows on portrait page
     CARD_SPACING = 0.1 * inch  # Minimal spacing between card rows to prevent overflow
-    MARGIN = 0.4 * inch
+    MARGIN = 0.25 * inch  # Reduced from 0.4" to maximize card space
     
     # Colors per governance (NDL branding: blue + white)
     COLOR_BLUE = colors.HexColor("#003DA5")  # NDL primary blue
@@ -108,40 +108,60 @@ class DriverHandoutGenerator:
         if os.path.exists(logo_path):
             # Load logo image
             try:
-                logo_img = Image(logo_path, width=0.8*inch, height=0.8*inch)
+                logo_img = Image(logo_path, width=0.5*inch, height=0.5*inch)
                 header_table_data.append([
                     logo_img,
-                    Paragraph('<b>NDL Driver Handout Report</b>', self.styles['Heading1']),
-                    Paragraph(f'<b>Generated:</b> {datetime.now().strftime("%m/%d/%Y")}', self.styles['Normal'])
+                    Paragraph('<b>NDL Driver Handout</b>', ParagraphStyle(
+                        'CompactHeading',
+                        parent=self.styles['Heading2'],
+                        fontSize=12,
+                        textColor=colors.whitesmoke,
+                    )),
+                    Paragraph(f'{datetime.now().strftime("%m/%d/%Y")}', ParagraphStyle(
+                        'DateSmall',
+                        parent=self.styles['Normal'],
+                        fontSize=8,
+                        textColor=colors.whitesmoke,
+                    ))
                 ])
             except:
                 # Fallback if logo fails to load
                 header_table_data.append([
-                    Paragraph('<b>NDL Driver Handout Report</b><br/>(Logo unavailable)', self.styles['Heading1']),
+                    Paragraph('<b>NDL Handout</b>', ParagraphStyle(
+                        'CompactHeading',
+                        parent=self.styles['Heading2'],
+                        fontSize=12,
+                        textColor=colors.whitesmoke,
+                    )),
                 ])
         else:
             # Fallback if logo file not found
             header_table_data.append([
-                Paragraph('<b>NDL Driver Handout Report</b><br/>(Logo unavailable)', self.styles['Heading1']),
+                Paragraph('<b>NDL Handout</b>', ParagraphStyle(
+                    'CompactHeading',
+                    parent=self.styles['Heading2'],
+                    fontSize=12,
+                    textColor=colors.whitesmoke,
+                )),
             ])
         
-        # Create header table with blue background
-        header_table = Table(header_table_data, colWidths=[1*inch, 4*inch, 1.5*inch])
+        # Create compact header table with blue background
+        header_table = Table(header_table_data, colWidths=[0.6*inch, 3.5*inch, 1*inch])
         header_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, -1), self.COLOR_BLUE),
             ('TEXTCOLOR', (0, 0), (-1, -1), colors.whitesmoke),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('LEFTPADDING', (0, 0), (-1, -1), 10),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 10),
-            ('TOPPADDING', (0, 0), (-1, -1), 10),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+            ('LEFTPADDING', (0, 0), (-1, -1), 4),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
             ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
         ]))
         
         header_elements.append(header_table)
-        header_elements.append(Spacer(1, 0.2*inch))
+        header_elements.append(Spacer(1, 0.1*inch))  # Reduced from 0.2"
         
         return header_elements
     

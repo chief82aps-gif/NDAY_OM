@@ -28,39 +28,52 @@ class UserListResponse(BaseModel):
     name: str
 
 
-# Path to users.json file
+# Path to users.json file (for persistent storage when available)
 USERS_FILE = os.path.join(os.path.dirname(__file__), '..', '..', 'users.json')
 
-# Default admin user
-DEFAULT_ADMIN = {
-    "admin": "NDAY_2026",
+# Default/static users - always available, loaded from environment or hardcoded
+# This ensures users aren't lost on Render deployments
+DEFAULT_USERS = {
+    "admin": os.getenv("ADMIN_PASSWORD", "NDAY_2026"),
+    "chief": os.getenv("CHIEF_PASSWORD", "chief_2026"),
 }
 
 
 def load_users():
-    """Load users from JSON file or return default admin."""
+    """Load users from JSON file, merged with default users.
+    
+    Default users are ALWAYS available, even if file doesn't exist.
+    File-based users are supplementary - useful for local development.
+    """
+    users = DEFAULT_USERS.copy()  # Start with defaults
+    
+    # Try to load additional users from file if it exists
     if os.path.exists(USERS_FILE):
         try:
             with open(USERS_FILE, 'r') as f:
-                return json.load(f)
+                file_users = json.load(f)
+                users.update(file_users)  # Merge file users
         except Exception as e:
-            print(f"Error loading users: {e}")
-            return DEFAULT_ADMIN.copy()
-    return DEFAULT_ADMIN.copy()
+            print(f"Warning: Could not load users from file: {e}")
+    
+    return users
 
 
 def save_users(users):
-    """Save users to JSON file."""
+    """Save users to JSON file (optional, for local development).
+    
+    This won't persist in Render, but doesn't hurt to try.
+    """
     try:
         os.makedirs(os.path.dirname(USERS_FILE), exist_ok=True)
         with open(USERS_FILE, 'w') as f:
             json.dump(users, f, indent=2)
     except Exception as e:
-        print(f"Error saving users: {e}")
-        raise
+        print(f"Warning: Could not save users to file: {e}")
+        # Don't raise - just log the warning
 
 
-# Load users on startup
+# Load users on startup (will always have defaults)
 USERS = load_users()
 
 

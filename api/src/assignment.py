@@ -1,8 +1,16 @@
 """Vehicle assignment engine - matches routes to fleet vehicles by service type."""
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Set
 from dataclasses import dataclass
 from api.src.models import RouteDOP, Vehicle, CortexRoute
 from api.src.driver_van_affinity import affinity_tracker
+from api.src.van_capacities import (
+    get_van_capacity,
+    get_capacity_percentage,
+    is_van_at_capacity_threshold,
+    is_van_over_capacity,
+    is_van_electric,
+    is_route_electric,
+)
 
 
 @dataclass
@@ -17,6 +25,25 @@ class RouteAssignment:
     dsp: Optional[str] = None
     wave_time: Optional[str] = None  # For sorting (e.g., "10:20 AM")
     route_duration: Optional[int] = None  # Route duration in minutes
+    num_packages: Optional[int] = None  # Number of packages on this route
+    estimated_cubic_feet: Optional[float] = None  # Estimated cubic footage of packages
+
+
+@dataclass
+class VanCapacityStatus:
+    """Status of van capacity utilization."""
+    vehicle_name: str
+    service_type: str
+    max_bags: int
+    max_cubic_feet: float
+    current_bags: int
+    current_cubic_feet: float
+    bag_percentage: float  # 0-100
+    cubic_percentage: float  # 0-100
+    bags_remaining: int
+    cubic_remaining: float
+    is_at_threshold: bool  # True if >85% full
+    is_over_capacity: bool  # True if exceeds limits
 
 
 class VehicleAssignmentEngine:
@@ -76,6 +103,19 @@ class VehicleAssignmentEngine:
         self.assignments: Dict[str, RouteAssignment] = {}
         self.failed_assignments: List[Tuple[str, str]] = []  # (route_code, reason)
         self.fallback_assignments: List[Tuple[str, str, str]] = []  # (route_code, requested_type, assigned_type)
+        
+        # Capacity tracking: vin -> current bag count
+        self.van_loads: Dict[str, int] = {vehicle.vin: 0 for vehicle in fleet}
+        # Vehicle info lookup: vin -> vehicle
+        self.vehicle_info: Dict[str, Vehicle] = {vehicle.vin: vehicle for vehicle in fleet}
+        # Capacity warnings: list of (route_code, van_name, bags, max_bags, percentage)
+        self.capacity_warnings: List[Tuple[str, str, int, int, float]] = []
+        
+        # Electric van constraint violations (electric van on non-electric route without authorization)
+        # (route_code, van_name, service_type, route_service_type)
+        self.electric_van_violations: List[Tuple[str, str, str, str]] = []
+        # User-authorized electric van assignments: set of route_codes approved by user
+        self.authorized_electric_assignments: Set[str] = set()
     
     def _build_vehicle_pool(self) -> Dict[str, List[Vehicle]]:
         """Build pool of vehicles organized by service type."""
@@ -86,6 +126,97 @@ class VehicleAssignmentEngine:
                 pool[service_type] = []
             pool[service_type].append(vehicle)
         return pool
+    
+    def _can_fit_in_van(self, vehicle_vin: str, route_packages: int) -> bool:
+        """
+        Check if a route's packages will fit in a van within capacity limits.
+        
+        Args:
+            vehicle_vin: VIN of the vehicle
+            route_packages: Number of packages on the route
+        
+        Returns:
+            True if the route fits within capacity
+        """
+        if vehicle_vin not in self.vehicle_info:
+            return False
+        
+        vehicle = self.vehicle_info[vehicle_vin]
+        capacity_data = get_van_capacity(vehicle.service_type)
+        
+        if not capacity_data:
+            # No capacity data, assume it fits
+            return True
+        
+        current_load = self.van_loads.get(vehicle_vin, 0)
+        total_after = current_load + route_packages
+        max_bags = capacity_data["max_bags"]
+        
+        return total_after <= max_bags
+    
+    def _get_current_van_capacity_percent(self, vehicle_vin: str) -> float:
+        """Get current capacity utilization percentage for a van."""
+        if vehicle_vin not in self.vehicle_info:
+            return 0.0
+        
+        vehicle = self.vehicle_info[vehicle_vin]
+        capacity_data = get_van_capacity(vehicle.service_type)
+        
+        if not capacity_data:
+            return 0.0
+        
+        current_load = self.van_loads.get(vehicle_vin, 0)
+        return (current_load / capacity_data["max_bags"] * 100) if capacity_data["max_bags"] > 0 else 0.0
+    
+    def _find_best_available_van(self, service_type: str, route_packages: int, fallback_chain: List[str]) -> Optional[Vehicle]:
+        """
+        Find the best available van that can fit the route's packages.
+        Prefers vans with more remaining capacity to avoid overloading.
+        
+        Args:
+            service_type: Primary service type
+            route_packages: Number of packages on the route
+            fallback_chain: Service types to try in order
+        
+        Returns:
+            Best available Vehicle or None
+        """
+        for try_service_type in fallback_chain:
+            available_vans = self.vehicle_pool.get(try_service_type, [])
+            
+            # Filter vans that have capacity
+            vans_with_capacity = [
+                van for van in available_vans
+                if self._can_fit_in_van(van.vin, route_packages)
+            ]
+            
+            if vans_with_capacity:
+                # Sort by remaining capacity (prefer less full vans for balanced loading)
+                vans_with_capacity.sort(
+                    key=lambda v: self.van_loads.get(v.vin, 0),
+                    reverse=False  # Least full first
+                )
+                return vans_with_capacity[0]
+        
+        return None
+    
+    def _is_electric_constraint_violation(self, van_service_type: str, route_service_type: str) -> bool:
+        """
+        Check if assigning this van to this route violates the electric van constraint.
+        Electric vans can ONLY be used on electric routes unless user-authorized.
+        
+        Args:
+            van_service_type: Service type of the van
+            route_service_type: Service type of the route
+        
+        Returns:
+            True if this is a violation (electric van on non-electric route)
+        """
+        van_is_electric = is_van_electric(van_service_type)
+        route_is_electric = is_route_electric(route_service_type)
+        
+        # Violation: electric van on non-electric route
+        return van_is_electric and not route_is_electric
     
     def assign_routes(
         self,
@@ -146,6 +277,13 @@ class VehicleAssignmentEngine:
                 available_vehicles = self.vehicle_pool.get(route.service_type, [])
                 for idx, vehicle in enumerate(available_vehicles):
                     if vehicle.vehicle_name == preferred_vehicle_name:
+                        # Check electric van constraint
+                        if self._is_electric_constraint_violation(vehicle.service_type, route.service_type):
+                            if route.route_code not in self.authorized_electric_assignments:
+                                # Skip this vehicle, it violates electric constraint
+                                continue
+                            # Otherwise, it's user-authorized, proceed
+                        
                         # Found the preferred vehicle! Use it with affinity priority
                         assigned_vehicle = available_vehicles.pop(idx)
                         
@@ -178,6 +316,17 @@ class VehicleAssignmentEngine:
             if available_vehicles:
                 # Pick first available vehicle (FIFO)
                 vehicle = available_vehicles[0]
+                
+                # Check electric van constraint BEFORE assigning
+                if self._is_electric_constraint_violation(vehicle.service_type, route.service_type):
+                    if route.route_code not in self.authorized_electric_assignments:
+                        # Record violation and skip this vehicle
+                        self.electric_van_violations.append(
+                            (route.route_code, vehicle.vehicle_name, vehicle.service_type, route.service_type)
+                        )
+                        # Skip to next vehicle type
+                        continue
+                    # Otherwise, it's user-authorized, proceed
                 
                 # REMOVE vehicle from pool so it won't be assigned again
                 available_vehicles.pop(0)
@@ -230,4 +379,75 @@ class VehicleAssignmentEngine:
                 }
                 for route_code, requested, assigned in self.fallback_assignments
             ],
+            "electric_van_violations": [
+                {
+                    "route_code": route_code,
+                    "van_name": van_name,
+                    "van_type": van_type,
+                    "route_type": route_type,
+                    "message": f"Electric van '{van_name}' cannot be used on non-electric route '{route_code}' ({route_type})",
+                }
+                for route_code, van_name, van_type, route_type in self.electric_van_violations
+            ],
+            "has_electric_violations": len(self.electric_van_violations) > 0,
+            "electric_violation_count": len(self.electric_van_violations),
+        }
+    
+    def get_capacity_status(self) -> Dict:
+        """
+        Get capacity utilization by service type.
+        Aggregates all assigned bags per service type and compares to limits.
+        
+        Returns:
+            Dictionary with service type → capacity status
+            Includes alerts for types at 80%+ capacity
+        """
+        from collections import defaultdict
+        
+        # Count total bags per service type
+        bags_by_service = defaultdict(int)
+        assignments_by_service = defaultdict(list)
+        
+        for assignment in self.assignments.values():
+            service_type = assignment.service_type
+            # Count packages if available, else estimate 1 package per route
+            num_packages = assignment.num_packages or 1
+            bags_by_service[service_type] += num_packages
+            assignments_by_service[service_type].append(assignment)
+        
+        # Build capacity status for each service type used
+        capacity_status = {}
+        alerts = []
+        
+        for service_type, total_bags in bags_by_service.items():
+            capacity_data = get_van_capacity(service_type)
+            
+            if capacity_data:
+                max_bags = capacity_data["max_bags"]
+                percentage = (total_bags / max_bags * 100) if max_bags > 0 else 0
+                is_alert = percentage >= 80.0
+                
+                capacity_status[service_type] = {
+                    "total_bags": total_bags,
+                    "max_bags": max_bags,
+                    "percentage": round(percentage, 1),
+                    "routes_assigned": len(assignments_by_service[service_type]),
+                    "bags_remaining": max(0, max_bags - total_bags),
+                    "is_at_threshold": is_alert,
+                }
+                
+                if is_alert:
+                    alerts.append({
+                        "service_type": service_type,
+                        "total_bags": total_bags,
+                        "max_bags": max_bags,
+                        "percentage": round(percentage, 1),
+                        "message": f"{service_type}: {round(percentage, 1)}% capacity ({total_bags}/{max_bags} bags)",
+                    })
+        
+        return {
+            "by_service_type": capacity_status,
+            "alerts": alerts,
+            "has_alerts": len(alerts) > 0,
+            "alert_count": len(alerts),
         }

@@ -44,13 +44,17 @@ class CortexRoute:
 
 
 def parse_cortex_excel(file_path: str) -> Tuple[List[CortexRoute], List[str]]:
-    """Parse Cortex Excel file and return route assignment records and validation errors."""
+    """Parse Cortex Excel or CSV file and return route assignment records and validation errors."""
     errors = []
     records = []
     
     try:
-        # Read first sheet, no headers assumption (data-driven validation)
-        df = pd.read_excel(file_path, sheet_name=0, header=None)
+        # Detect file type and read accordingly
+        if file_path.lower().endswith('.csv'):
+            df = pd.read_csv(file_path, header=None)
+        else:
+            # Read first sheet for Excel files, no headers assumption (data-driven validation)
+            df = pd.read_excel(file_path, sheet_name=0, header=None)
         
         if df.shape[0] < 1 or df.shape[1] < 6:
             errors.append("Cortex file has insufficient columns or rows. Expected at least 6 columns.")
@@ -111,6 +115,6 @@ def parse_cortex_excel(file_path: str) -> Tuple[List[CortexRoute], List[str]]:
                 continue
     
     except Exception as e:
-        errors.append(f"Failed to read Cortex Excel file: {str(e)}")
+        errors.append(f"Failed to read Cortex file: {str(e)}")
     
     return records, errors

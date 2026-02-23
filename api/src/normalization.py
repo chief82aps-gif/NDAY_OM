@@ -64,8 +64,17 @@ def normalize_route_code(route_code: str) -> str:
 
 
 def validate_route_code(route_code: str) -> bool:
-    """Validate route code: must be 4-5 characters after normalization."""
+    """Validate route code: accepts all CX/AX codes, warns if > 6 characters."""
     normalized = normalize_route_code(route_code)
     if not normalized:
         return False
-    return 4 <= len(normalized) <= 5
+    # Accept all route codes, just note if unusually long
+    return True
+
+
+def is_route_code_long(route_code: str) -> bool:
+    """Check if route code exceeds 6 characters (for warnings)."""
+    normalized = normalize_route_code(route_code)
+    if not normalized:
+        return False
+    return len(normalized) > 6

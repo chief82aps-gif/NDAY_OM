@@ -5,6 +5,9 @@ import { useRouter } from 'next/router';
 import UploadZone from '../components/UploadZone';
 import StatusDisplay from '../components/StatusDisplay';
 import PageHeader from '../components/PageHeader';
+import CapacityAlert from '../components/CapacityAlert';
+import ElectricVanViolationsAlert from '../components/ElectricVanViolationsAlert';
+import ManualVehicleAssignment from '../components/ManualVehicleAssignment';
 import { ProtectedRoute } from '../components/ProtectedRoute';
 
 interface IngestStatus {
@@ -47,6 +50,9 @@ export default function Upload() {
   const [messages, setMessages] = useState<StatusMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [pdfGenerated, setPdfGenerated] = useState(false);
+  const [violationsRefreshTrigger, setViolationsRefreshTrigger] = useState(0);
+  const [failedRoutes, setFailedRoutes] = useState<any[]>([]);
+  const [showManualAssignment, setShowManualAssignment] = useState(false);
 
   const showMessage = (type: 'success' | 'error' | 'info' | 'warning', text: string) => {
     const msg: StatusMessage = { type, text };
@@ -100,18 +106,33 @@ export default function Upload() {
         throw new Error(`Assignment failed: ${response.status}`);
       }
 
-      const result = await response.json();
+      const result = await fetch(`${API_URL}/upload/assign-vehicles`, {
+        method: 'POST',
+      }).then(r => r.json());
 
-      if (result.success) {
+      // Check if there are failed routes requiring manual assignment
+      if (result.failed && result.failed > 0 && result.failed_routes_detail) {
+        showMessage(
+          'warning',
+          `${result.assigned}/${result.total_routes} routes assigned. ${result.failed} routes require manual vehicle selection.`
+        );
+        setFailedRoutes(result.failed_routes_detail);
+        setShowManualAssignment(true);
+      } else if (result.success === false) {
+        showMessage('error', result.message || 'Assignment failed');
+      } else {
         showMessage(
           'success',
-          `Assigned ${result.assigned}/${result.total_routes} routes (${result.success_rate}%)`
+          `Successfully assigned all ${result.assigned}/${result.total_routes} routes (${result.success_rate}%)`
         );
 
         // Fetch updated status
         const statusResponse = await fetch(`${API_URL}/upload/status`);
         const statusData = await statusResponse.json();
         setStatus(statusData);
+        
+        // Trigger violations refresh
+        setViolationsRefreshTrigger(prev => prev + 1);
         
         // Fetch and store assignment details in sessionStorage for database view
         try {
@@ -123,14 +144,18 @@ export default function Upload() {
         } catch (e) {
           console.error('Failed to fetch assignment details:', e);
         }
-      } else {
-        showMessage('error', result.message || 'Assignment failed');
       }
     } catch (error) {
       showMessage('error', `Assignment failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleAssignmentComplete = async () => {
+    // After manual assignment is complete, try to generate handouts
+    setShowManualAssignment(false);
+    await handleGenerateHandouts();
   };
 
   const handleGenerateHandouts = async () => {
@@ -171,6 +196,16 @@ export default function Upload() {
   return (
     <ProtectedRoute>
       <div className="min-h-screen bg-white">
+      {/* Manual Vehicle Assignment Dialog */}
+      {showManualAssignment && (
+        <ManualVehicleAssignment
+          failedRoutes={failedRoutes}
+          apiUrl={API_URL}
+          onAssignmentComplete={handleAssignmentComplete}
+          onClose={() => setShowManualAssignment(false)}
+        />
+      )}
+
       {/* Header */}
       <PageHeader title="Daily Driver Assignment" showBack={true} />
 
@@ -178,6 +213,16 @@ export default function Upload() {
       <main className="max-w-6xl mx-auto px-4 py-8">
         {/* Messages */}
         <StatusDisplay messages={messages} isLoading={isLoading} />
+
+        {/* Capacity Alerts */}
+        <div className="mt-6">
+          <CapacityAlert apiUrl={API_URL} />
+        </div>
+
+        {/* Electric Van Violations */}
+        <div className="mt-6">
+          <ElectricVanViolationsAlert refreshTrigger={violationsRefreshTrigger} />
+        </div>
 
         {/* Upload Section */}
         <div className="mt-8">
@@ -190,8 +235,8 @@ export default function Upload() {
                 DOP (Day of Plan)
               </label>
               <UploadZone
-                label="DOP Excel"
-                accept=".xlsx,.xls"
+                label="DOP Excel/CSV"
+                accept=".xlsx,.xls,.csv"
                 onDrop={(files) => handleUpload('/dop', files)}
               >
                 <div className="py-8">
@@ -210,8 +255,8 @@ export default function Upload() {
                 Fleet
               </label>
               <UploadZone
-                label="Fleet Excel"
-                accept=".xlsx,.xls"
+                label="Fleet Excel/CSV"
+                accept=".xlsx,.xls,.csv"
                 onDrop={(files) => handleUpload('/fleet', files)}
               >
                 <div className="py-8">
@@ -230,8 +275,8 @@ export default function Upload() {
                 Cortex
               </label>
               <UploadZone
-                label="Cortex Excel"
-                accept=".xlsx,.xls"
+                label="Cortex Excel/CSV"
+                accept=".xlsx,.xls,.csv"
                 onDrop={(files) => handleUpload('/cortex', files)}
               >
                 <div className="py-8">

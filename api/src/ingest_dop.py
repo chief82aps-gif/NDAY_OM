@@ -43,13 +43,17 @@ def _safe_cell(row: pd.Series, col_idx: int):
 
 
 def parse_dop_excel(file_path: str) -> Tuple[List[RouteDOP], List[str]]:
-    """Parse DOP Excel file and return route records and validation errors."""
+    """Parse DOP Excel or CSV file and return route records and validation errors."""
     errors = []
     records = []
     
     try:
-        # Read first sheet, no headers assumption (data-driven validation)
-        df = pd.read_excel(file_path, sheet_name=0, header=None)
+        # Detect file type and read accordingly
+        if file_path.lower().endswith('.csv'):
+            df = pd.read_csv(file_path, header=None)
+        else:
+            # Read first sheet for Excel files, no headers assumption (data-driven validation)
+            df = pd.read_excel(file_path, sheet_name=0, header=None)
         
         if df.shape[0] < 1 or df.shape[1] < 7:
             errors.append("DOP file has insufficient columns or rows. Expected at least 7 columns.")
@@ -86,8 +90,13 @@ def parse_dop_excel(file_path: str) -> Tuple[List[RouteDOP], List[str]]:
                 
                 route_code = normalize_route_code(route_code_raw)
                 if not validate_route_code(route_code_raw):
-                    errors.append(f"Row {idx+1}: Route code '{route_code_raw}' is invalid or exceeds 5 characters.")
+                    errors.append(f"Row {idx+1}: Route code '{route_code_raw}' is invalid.")
                     continue
+                
+                # Warn if route code is unusually long (> 6 characters)
+                from api.src.normalization import is_route_code_long
+                if is_route_code_long(route_code_raw):
+                    errors.append(f"Row {idx+1}: Route code '{route_code_raw}' exceeds 6 characters. Please verify.")
                 
                 service_type_norm = normalize_service_type(service_type)
                 if not service_type_norm:
@@ -121,6 +130,6 @@ def parse_dop_excel(file_path: str) -> Tuple[List[RouteDOP], List[str]]:
                 continue
     
     except Exception as e:
-        errors.append(f"Failed to read DOP Excel file: {str(e)}")
+        errors.append(f"Failed to read DOP file: {str(e)}")
     
     return records, errors

@@ -17,7 +17,7 @@ class DriverHandoutGenerator:
     # Layout constants optimized for 8.5"x11" portrait (2x2 layout per page)
     CARD_WIDTH = 3.75 * inch  # Reduced from 4.5" to fit 2 across with margins
     CARD_HEIGHT = 5.0 * inch  # Reduced from 6.5" to fit 2 rows on portrait page
-    CARD_SPACING = 0.25 * inch  # Vertical spacing between card rows
+    CARD_SPACING = 0.1 * inch  # Minimal spacing between card rows to prevent overflow
     MARGIN = 0.4 * inch
     
     # Colors per governance (NDL branding: blue + white)

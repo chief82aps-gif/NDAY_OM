@@ -104,11 +104,18 @@ This document tracks potential improvements, features, and integrations for the 
 - Recommend best-performing phrase for each driver profile
 - Keep manual override for dispatcher/admins
 
+### 9. Dynamic Sort Order by Service Type
+**Idea:** Allow users to sort/group assignments by service type as primary sort key
+- Dynamically re-order schedule and handouts by service type (standard, oversized, etc.)
+- Optional secondary sort by wave time, zone, or driver name
+- Filter/group view showing only specific service types
+- Remember user's preferred sort preference across sessions
+
 ---
 
 ## 💡 Medium-Low Priority Features
 
-### 9. SMS/Email Notifications
+### 10. SMS/Email Notifications
 **Idea:** Automated communications to drivers and managers
 - Driver assignment notifications (day before, morning of)
 - Show time reminders
@@ -117,7 +124,7 @@ This document tracks potential improvements, features, and integrations for the 
 - Manager alerts for staffing issues
 - Customizable notification preferences
 
-### 10. Driver Schedule Self-Service Portal
+### 11. Driver Schedule Self-Service Portal
 **Idea:** Allow drivers to view/manage their own schedule
 - View assigned routes and show times
 - Switch shifts with other drivers (with approval)
@@ -125,14 +132,14 @@ This document tracks potential improvements, features, and integrations for the 
 - View historical assignments
 - Availability calendar management
 
-### 11. Route Batch Processing
+### 12. Route Batch Processing
 **Idea:** Process multiple route sheets at once
 - Bulk upload multiple PDFs
 - Parallel processing
 - Consolidated report generation
 - Duplicate detection and handling
 
-### 12. Template/Recurring Schedules
+### 13. Template/Recurring Schedules
 **Idea:** Create reusable schedule templates
 - Save schedule templates
 - Apply templates for recurring weeks
@@ -143,7 +150,7 @@ This document tracks potential improvements, features, and integrations for the 
 
 ## 🔧 Technical Improvements
 
-### 13. Backend Optimization
+### 14. Backend Optimization
 **Ideas:**
 - Add request pagination for large datasets
 - Implement caching for frequently accessed data
@@ -151,7 +158,7 @@ This document tracks potential improvements, features, and integrations for the 
 - Add database layer (currently in-memory; consider: SQLite or PostgreSQL)
 - Rate limiting and API security enhancements
 
-### 14. Frontend Enhancements
+### 15. Frontend Enhancements
 **Ideas:**
 - Real-time updates using WebSockets
 - Mobile-responsive design improvements
@@ -160,7 +167,7 @@ This document tracks potential improvements, features, and integrations for the 
 - Drag-and-drop for manual schedule adjustments
 - Export to iCal for driver calendar integration
 
-### 15. Data Export & Reporting
+### 16. Data Export & Reporting
 **Ideas:**
 - Export schedules to CSV/Excel
 - Export to Google Calendar
@@ -168,7 +175,7 @@ This document tracks potential improvements, features, and integrations for the 
 - Email report delivery (scheduled)
 - Historical data archival
 
-### 16. System Reliability
+### 17. System Reliability
 **Ideas:**
 - Add comprehensive error logging
 - Implement retry logic for file uploads
@@ -180,23 +187,23 @@ This document tracks potential improvements, features, and integrations for the 
 
 ## 🔌 Integration Opportunities
 
-### 17. Asana (Discussed Above)
+### 18. Asana (Discussed Above)
 - Hiring/onboarding pipeline integration
 - Task assignment and tracking
 - Status reporting
 
-### 18. Google Calendar / Outlook
+### 19. Google Calendar / Outlook
 - Export driver schedules to personal calendars
 - Show driver availability in real-time
 - Sync with corporate calendar
 
-### 19. Slack Integration
+### 20. Slack Integration
 - Daily schedule summaries
 - Alerts and notifications
 - Quick commands (e.g., `/sweeper-status`)
 - Report delivery to channels
 
-### 20. Twilio SMS
+### 21. Twilio SMS
 - Send schedule notifications via text
 - Driver confirmations
 - Route updates

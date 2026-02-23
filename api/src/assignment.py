@@ -65,16 +65,19 @@ class VehicleAssignmentEngine:
             "Standard Parcel - Extra Large Van - US",
             "Standard Parcel - Custom Delivery Van 16ft",  # Allow smaller alt
         ],
+        "Standard Parcel Electric - Rivian MEDIUM": [
+            "Standard Parcel Electric - Rivian MEDIUM",  # Match exact normalized name
+            "Standard Parcel Electric - Rivian MEDIUM",  # No fallback for electric routes (keep separate from gas)
+        ],
         "4WD P31 Delivery Truck": [
             "4WD P31 Delivery Truck",
         ],
+        # Keep legacy names for backward compatibility
         "Rivian MEDIUM": [
-            "Rivian MEDIUM",
-            "Rivian LARGE",  # Upsize if needed
+            "Standard Parcel Electric - Rivian MEDIUM",  # Fallback to normalized name
         ],
         "Rivian LARGE": [
-            "Rivian LARGE",
-            "Rivian MEDIUM",  # Note: downsize as fallback (risky but doable for light routes)
+            "Standard Parcel Electric - Rivian MEDIUM",  # Fallback to normalized medium
         ],
         "Electric Step Van - XL": [
             "Electric Step Van - XL",

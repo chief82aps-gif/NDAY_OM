@@ -117,6 +117,20 @@
         "CX124",
         "CX124"
       ]
+    },
+    {
+      "vehicle_name": "2179 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-22T17:09:30.238848",
+      "last_used": "2026-02-22T17:10:34.829574",
+      "frequency": 5,
+      "routes": [
+        "CX124",
+        "CX124",
+        "CX124",
+        "CX124",
+        "CX124"
+      ]
     }
   ],
   "Brock Shoemaker|Standard Parcel - Extra Large Van - US": [
@@ -345,6 +359,20 @@
         "CX128",
         "CX128"
       ]
+    },
+    {
+      "vehicle_name": "2075 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-22T17:09:30.234476",
+      "last_used": "2026-02-22T17:10:34.824790",
+      "frequency": 5,
+      "routes": [
+        "CX128",
+        "CX128",
+        "CX128",
+        "CX128",
+        "CX128"
+      ]
     }
   ],
   "Sebastian Coronado Serracin|Standard Parcel - Extra Large Van - US": [
@@ -376,10 +404,11 @@
       "vehicle_name": "2115 XL",
       "service_type": "Standard Parcel - Extra Large Van - US",
       "first_used": "2026-02-20T18:28:14.119649",
-      "last_used": "2026-02-20T18:28:14.119652",
-      "frequency": 1,
+      "last_used": "2026-02-22T17:14:06.156710",
+      "frequency": 2,
       "routes": [
-        "CX138"
+        "CX138",
+        "CX145"
       ]
     },
     {
@@ -587,6 +616,20 @@
         "CX134",
         "CX134"
       ]
+    },
+    {
+      "vehicle_name": "6978 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-22T17:09:30.231993",
+      "last_used": "2026-02-22T17:10:34.822011",
+      "frequency": 5,
+      "routes": [
+        "CX134",
+        "CX134",
+        "CX134",
+        "CX134",
+        "CX134"
+      ]
     }
   ],
   "Nathan Mercier|Standard Parcel - Extra Large Van - US": [
@@ -594,9 +637,10 @@
       "vehicle_name": "9790 XL",
       "service_type": "Standard Parcel - Extra Large Van - US",
       "first_used": "2026-02-21T10:33:50.034030",
-      "last_used": "2026-02-22T06:25:47.163864",
-      "frequency": 3,
+      "last_used": "2026-02-22T17:14:06.157945",
+      "frequency": 4,
       "routes": [
+        "CX146",
         "CX146",
         "CX146",
         "CX146"
@@ -699,6 +743,20 @@
         "CX123",
         "CX123"
       ]
+    },
+    {
+      "vehicle_name": "9770 AWD",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-22T17:09:30.233368",
+      "last_used": "2026-02-22T17:10:34.823570",
+      "frequency": 5,
+      "routes": [
+        "CX123",
+        "CX123",
+        "CX123",
+        "CX123",
+        "CX123"
+      ]
     }
   ],
   "Hayden Chapman|Standard Parcel - Extra Large Van - US": [
@@ -709,6 +767,20 @@
       "last_used": "2026-02-22T06:25:47.180096",
       "frequency": 3,
       "routes": [
+        "CX125",
+        "CX125",
+        "CX125"
+      ]
+    },
+    {
+      "vehicle_name": "2149 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-22T17:09:30.235560",
+      "last_used": "2026-02-22T17:10:34.825951",
+      "frequency": 5,
+      "routes": [
+        "CX125",
+        "CX125",
         "CX125",
         "CX125",
         "CX125"
@@ -782,6 +854,122 @@
         "CX167",
         "CX167",
         "CX167"
+      ]
+    }
+  ],
+  "Cristofer Martinez-Cowger|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "0164 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-22T17:09:30.236642",
+      "last_used": "2026-02-22T17:10:34.827118",
+      "frequency": 5,
+      "routes": [
+        "CX126",
+        "CX126",
+        "CX126",
+        "CX126",
+        "CX126"
+      ]
+    }
+  ],
+  "Ripley Shakespeare|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "6309 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-22T17:09:30.237740",
+      "last_used": "2026-02-22T17:10:34.828302",
+      "frequency": 5,
+      "routes": [
+        "CX127",
+        "CX127",
+        "CX127",
+        "CX127",
+        "CX127"
+      ]
+    }
+  ],
+  "Brett Self|Dylan Youngblood|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E929",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:14:06.147712",
+      "last_used": "2026-02-22T17:14:06.147717",
+      "frequency": 1,
+      "routes": [
+        "CX134"
+      ]
+    }
+  ],
+  "Jordan Perone|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E768",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:14:06.149203",
+      "last_used": "2026-02-22T17:14:06.149206",
+      "frequency": 1,
+      "routes": [
+        "CX123"
+      ]
+    }
+  ],
+  "William Wardrobe|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E543",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:14:06.150508",
+      "last_used": "2026-02-22T17:14:06.150511",
+      "frequency": 1,
+      "routes": [
+        "CX128"
+      ]
+    }
+  ],
+  "Hayden Chapman|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E706",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:14:06.151705",
+      "last_used": "2026-02-22T17:14:06.151708",
+      "frequency": 1,
+      "routes": [
+        "CX125"
+      ]
+    }
+  ],
+  "Cristofer Martinez-Cowger|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E550",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:14:06.153026",
+      "last_used": "2026-02-22T17:14:06.153028",
+      "frequency": 1,
+      "routes": [
+        "CX126"
+      ]
+    }
+  ],
+  "Ripley Shakespeare|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E548",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:14:06.154214",
+      "last_used": "2026-02-22T17:14:06.154216",
+      "frequency": 1,
+      "routes": [
+        "CX127"
+      ]
+    }
+  ],
+  "Anders Herzberg|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E771",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:14:06.155454",
+      "last_used": "2026-02-22T17:14:06.155457",
+      "frequency": 1,
+      "routes": [
+        "CX124"
       ]
     }
   ]

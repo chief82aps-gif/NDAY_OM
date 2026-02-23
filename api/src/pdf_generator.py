@@ -16,10 +16,10 @@ class DriverHandoutGenerator:
     """Generates driver handout PDFs with 2x2 card layout."""
     
     # Layout constants optimized for 8.5"x11" portrait (2x2 layout per page)
-    CARD_WIDTH = 3.75 * inch  # Reduced from 4.5" to fit 2 across with margins
-    CARD_HEIGHT = 5.0 * inch  # Reduced from 6.5" to fit 2 rows on portrait page
-    CARD_SPACING = 0.1 * inch  # Minimal spacing between card rows to prevent overflow
-    MARGIN = 0.25 * inch  # Reduced from 0.4" to maximize card space
+    CARD_WIDTH = 3.9 * inch  # Increased to 3.9" to fit 2 across with minimal margins
+    CARD_HEIGHT = 5.25 * inch  # Increased to 5.25" to fit 2 rows on full page without header
+    CARD_SPACING = 0.05 * inch  # Minimal spacing between card rows
+    MARGIN = 0.1 * inch  # Minimized to 0.1" since no header/footer
     
     # Colors per governance (NDL branding: blue + white)
     COLOR_BLUE = colors.HexColor("#003DA5")  # NDL primary blue
@@ -210,12 +210,7 @@ class DriverHandoutGenerator:
         # Build story (content elements)
         story = []
         
-        # Add header with company logo
-        story.extend(self._build_header_with_logo())
-        
-        # Add summary page with all assignments sorted by wave time then route code
-        story.extend(self._build_summary_page(assignment_list, route_lookup))
-        story.append(PageBreak())
+        # No header or summary page - go straight to cards (2x2 layout)
         
         def route_has_overflow(route_code: str) -> bool:
             route_sheet = route_lookup.get(route_code)

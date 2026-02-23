@@ -380,8 +380,6 @@ class DriverHandoutGenerator:
             Paragraph("<b>Route</b>", self.styles['TableHeader']),
             Paragraph("<b>Wave</b>", self.styles['TableHeader']),
             Paragraph("<b>Expected RTS</b>", self.styles['TableHeader']),
-            Paragraph("<b>Service Type</b>", self.styles['TableHeader']),
-            Paragraph("<b>DSP</b>", self.styles['TableHeader']),
         ]]
         
         # Build row background colors based on wave timing
@@ -402,8 +400,6 @@ class DriverHandoutGenerator:
                 Paragraph(route_code or "", self.styles['TableCell']),
                 Paragraph(assignment.wave_time or "", self.styles['TableCell']),
                 Paragraph(expected_rts or "", self.styles['TableCell']),
-                Paragraph(assignment.service_type[:20] if assignment.service_type else "", self.styles['TableCell']),
-                Paragraph("NDAY", self.styles['TableCell']),
             ])
             
             # Determine background color based on wave
@@ -438,7 +434,7 @@ class DriverHandoutGenerator:
         
         table = Table(
             table_data,
-            colWidths=[0.85*inch, 0.70*inch, 0.55*inch, 0.65*inch, 0.75*inch, 0.80*inch, 0.70*inch],
+            colWidths=[1.2*inch, 0.70*inch, 0.55*inch, 0.65*inch, 0.75*inch],
             style=TableStyle(table_style_list)
         )
         

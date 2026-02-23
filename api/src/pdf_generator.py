@@ -536,9 +536,9 @@ class DriverHandoutGenerator:
         
         # Bags table
         if route_sheet and route_sheet.bags:
-            # Determine if we need 2-column layout for many bags
+            # Always use 2-column layout for bags to save space
             num_bags = len(route_sheet.bags)
-            use_two_columns = num_bags > 12
+            use_two_columns = True  # Always use two columns
             
             if use_two_columns:
                 # Split bags into two columns

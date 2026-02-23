@@ -210,7 +210,10 @@ class DriverHandoutGenerator:
         # Build story (content elements)
         story = []
         
-        # No header or summary page - go straight to cards (2x2 layout)
+        # Add header only on summary page
+        story.extend(self._build_header_with_logo())
+        story.extend(self._build_summary_page(assignment_list, route_lookup))
+        story.append(PageBreak())
         
         def route_has_overflow(route_code: str) -> bool:
             route_sheet = route_lookup.get(route_code)

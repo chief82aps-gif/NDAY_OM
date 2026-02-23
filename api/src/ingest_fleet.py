@@ -60,6 +60,15 @@ def parse_fleet_excel(file_path: str) -> Tuple[List[Vehicle], List[str]]:
         
         for idx, row in df.iloc[start_idx:].iterrows():
             try:
+                # Skip any row that contains the word GROUNDED anywhere
+                row_text = " ".join(
+                    str(cell).strip().upper()
+                    for cell in row.tolist()
+                    if pd.notna(cell)
+                )
+                if "GROUNDED" in row_text:
+                    continue
+
                 vin_cell = _safe_cell(row, column_map["vin"])
                 service_cell = _safe_cell(row, column_map["service_type"])
                 vehicle_cell = _safe_cell(row, column_map["vehicle_name"])

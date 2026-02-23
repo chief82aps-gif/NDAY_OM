@@ -76,8 +76,11 @@ def parse_fleet_excel(file_path: str) -> Tuple[List[Vehicle], List[str]]:
                     errors.append(f"Row {idx+1}: Vehicle name is empty.")
                     continue
                 
-                # Only allow explicitly operational vehicles
-                if operational_status.strip().upper() != "OPERATIONAL":
+                # Only allow operational vehicles (accept variants like "Operational - In Service")
+                status_norm = operational_status.strip().upper()
+                if not status_norm:
+                    status_norm = "OPERATIONAL"
+                if not status_norm.startswith("OPERATIONAL"):
                     continue  # Skip, not an error - just ineligible
                 
                 record = Vehicle(

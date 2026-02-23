@@ -429,8 +429,8 @@ class DriverHandoutGenerator:
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
             ('FONTSIZE', (0, 0), (-1, 0), 6),
-            ('TOPPADDING', (0, 0), (-1, 0), 1),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 1),
+            ('TOPPADDING', (0, 0), (-1, 0), 0.5),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 0.5),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
             ('FONTSIZE', (0, 1), (-1, -1), 5),
             ('TOPPADDING', (0, 1), (-1, -1), 1),
@@ -534,58 +534,41 @@ class DriverHandoutGenerator:
         left_elements.append(Paragraph(f"<b>{expected_return}</b>", expected_style))
         left_elements.append(Spacer(1, 0.01*inch))
         
-        # Bags table
+        # Bags table - 3 column layout
         if route_sheet and route_sheet.bags:
-            # Always use 2-column layout for bags to save space
             num_bags = len(route_sheet.bags)
-            use_two_columns = True  # Always use two columns
             
-            if use_two_columns:
-                # Split bags into two columns
-                mid_point = (num_bags + 1) // 2
-                left_bags = route_sheet.bags[:mid_point]
-                right_bags = route_sheet.bags[mid_point:]
-                
-                bag_data = [
-                    [Paragraph("<b>Bag</b>", self.styles['TableHeader']), 
-                     Paragraph("<b>Bag</b>", self.styles['TableHeader'])],
-                ]
-                
-                # Pad to same length
-                max_rows = max(len(left_bags), len(right_bags))
-                for i in range(max_rows):
-                    left_cell = Paragraph(left_bags[i].bag_id, self.styles['TableCell']) if i < len(left_bags) else ""
-                    right_cell = Paragraph(right_bags[i].bag_id, self.styles['TableCell']) if i < len(right_bags) else ""
-                    bag_data.append([left_cell, right_cell])
-                
-                bags_table = Table(bag_data, colWidths=[0.7*inch, 0.7*inch])
-            else:
-                # Single column layout
-                bag_data = [
-                    [Paragraph("<b>Bag</b>", self.styles['TableHeader'])],
-                ]
-                
-                # Show all bags (no limit)
-                for bag in route_sheet.bags:
-                    # bag_id is already in format "Orange 546", just display it
-                    bag_display = bag.bag_id
-                    bag_data.append([
-                        Paragraph(bag_display, self.styles['TableCell']),
-                    ])
-                
-                bags_table = Table(bag_data, colWidths=[1.4*inch])
+            # Create 3-column layout with left-to-right, top-to-bottom ordering
+            bag_data = [
+                [Paragraph("<b>Bag</b>", self.styles['TableHeader']),
+                 Paragraph("<b>Bag</b>", self.styles['TableHeader']),
+                 Paragraph("<b>Bag</b>", self.styles['TableHeader'])],
+            ]
+            
+            # Fill rows with up to 3 bags each
+            for i in range(0, num_bags, 3):
+                row = []
+                for j in range(3):
+                    if i + j < num_bags:
+                        bag = route_sheet.bags[i + j]
+                        row.append(Paragraph(bag.bag_id, self.styles['TableCell']))
+                    else:
+                        row.append("")
+                bag_data.append(row)
+            
+            bags_table = Table(bag_data, colWidths=[0.65*inch, 0.65*inch, 0.65*inch])
             bags_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), self.COLOR_BLUE),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                 ('BACKGROUND', (0, 1), (-1, -1), self.COLOR_LIGHT_GRAY),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, -1), 5.5),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('LEFTPADDING', (0, 0), (-1, -1), 1),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 1),
-                ('TOPPADDING', (0, 0), (-1, -1), 0.5),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 0.5),
+                ('LEFTPADDING', (0, 0), (-1, -1), 0.5),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 0.5),
+                ('TOPPADDING', (0, 0), (-1, -1), 0.25),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 0.25),
             ]))
             left_elements.append(bags_table)
         
@@ -625,33 +608,41 @@ class DriverHandoutGenerator:
         
         right_elements.append(Spacer(1, 0.005*inch))
         
-        # Overflow table (right side)
+        # Overflow table - 2 column layout with zone grid
         if route_sheet and route_sheet.overflow:
+            num_zones = len(route_sheet.overflow)
+            
+            # Create 2-column layout with left-to-right, top-to-bottom ordering
             overflow_data = [
-                [Paragraph("Zone", self.styles['TableHeader']),
-                 Paragraph("Qty", self.styles['TableHeader'])],
+                [Paragraph("<b>Zone</b>", self.styles['TableHeader']),
+                 Paragraph("<b>Zone</b>", self.styles['TableHeader'])],
             ]
             
-            # Show all overflow (no limit)
-            for overflow in route_sheet.overflow:
-                overflow_data.append([
-                    Paragraph(overflow.sort_zone, self.styles['TableCell']),
-                    Paragraph(str(overflow.package_count), self.styles['TableCell']),
-                ])
+            # Fill rows with up to 2 zones each
+            for i in range(0, num_zones, 2):
+                row = []
+                for j in range(2):
+                    if i + j < num_zones:
+                        overflow = route_sheet.overflow[i + j]
+                        zone_text = "{} ({})".format(overflow.sort_zone, overflow.package_count)
+                        row.append(Paragraph(zone_text, self.styles['TableCell']))
+                    else:
+                        row.append("")
+                overflow_data.append(row)
             
-            overflow_table = Table(overflow_data, colWidths=[0.6*inch, 0.5*inch])
+            overflow_table = Table(overflow_data, colWidths=[0.65*inch, 0.65*inch])
             overflow_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), self.COLOR_BLUE),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                 ('BACKGROUND', (0, 1), (-1, -1), self.COLOR_LIGHT_GRAY),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, -1), 5.5),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('LEFTPADDING', (0, 0), (-1, -1), 1),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 1),
-                ('TOPPADDING', (0, 0), (-1, -1), 0.5),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 0.5),
+                ('LEFTPADDING', (0, 0), (-1, -1), 0.5),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 0.5),
+                ('TOPPADDING', (0, 0), (-1, -1), 0.25),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 0.25),
             ]))
             right_elements.append(overflow_table)
         

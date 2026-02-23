@@ -505,7 +505,7 @@ class DriverHandoutGenerator:
             alignment=TA_LEFT,
         )
         left_elements.append(Paragraph(assignment.route_code, route_style))
-        left_elements.append(Spacer(1, 0.01*inch))
+        left_elements.append(Spacer(1, 0*inch))
         
         # Staging location directly under route code (left justified)
         staging_text = route_sheet.staging_location if route_sheet else "TBD"
@@ -518,7 +518,7 @@ class DriverHandoutGenerator:
             alignment=TA_LEFT,
         )
         left_elements.append(Paragraph(f"Staging: {staging_text}", staging_style))
-        left_elements.append(Spacer(1, 0.01*inch))
+        left_elements.append(Spacer(1, 0*inch))
         
         # Expected return time (left justified, under driver)
         expected_return = route_sheet.expected_return if route_sheet else "TBD"
@@ -532,7 +532,7 @@ class DriverHandoutGenerator:
         )
         left_elements.append(Paragraph("<b>Expected Return</b>", expected_style))
         left_elements.append(Paragraph(f"<b>{expected_return}</b>", expected_style))
-        left_elements.append(Spacer(1, 0.02*inch))
+        left_elements.append(Spacer(1, 0.01*inch))
         
         # Bags table
         if route_sheet and route_sheet.bags:
@@ -580,12 +580,12 @@ class DriverHandoutGenerator:
                 ('BACKGROUND', (0, 1), (-1, -1), self.COLOR_LIGHT_GRAY),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, -1), 6),
+                ('FONTSIZE', (0, 0), (-1, -1), 5.5),
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('LEFTPADDING', (0, 0), (-1, -1), 2),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 2),
-                ('TOPPADDING', (0, 0), (-1, -1), 1),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
+                ('LEFTPADDING', (0, 0), (-1, -1), 1),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 1),
+                ('TOPPADDING', (0, 0), (-1, -1), 0.5),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 0.5),
             ]))
             left_elements.append(bags_table)
         
@@ -613,7 +613,7 @@ class DriverHandoutGenerator:
             alignment=TA_RIGHT,
         )
         right_elements.append(Paragraph(driver_text, driver_style))
-        right_elements.append(Spacer(1, 0.01*inch))
+        right_elements.append(Spacer(1, 0*inch))
         
         # Wave time (right justified)
         wave_text = assignment.wave_time or "TBD"
@@ -623,7 +623,7 @@ class DriverHandoutGenerator:
         vehicle_text = assignment.vehicle_name or "TBD"
         right_elements.append(Paragraph(f"<b>{vehicle_text}</b>", info_style))
         
-        right_elements.append(Spacer(1, 0.02*inch))
+        right_elements.append(Spacer(1, 0.005*inch))
         
         # Overflow table (right side)
         if route_sheet and route_sheet.overflow:
@@ -646,12 +646,12 @@ class DriverHandoutGenerator:
                 ('BACKGROUND', (0, 1), (-1, -1), self.COLOR_LIGHT_GRAY),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, -1), 6),
+                ('FONTSIZE', (0, 0), (-1, -1), 5.5),
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('LEFTPADDING', (0, 0), (-1, -1), 2),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 2),
-                ('TOPPADDING', (0, 0), (-1, -1), 1),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
+                ('LEFTPADDING', (0, 0), (-1, -1), 1),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 1),
+                ('TOPPADDING', (0, 0), (-1, -1), 0.5),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 0.5),
             ]))
             right_elements.append(overflow_table)
         
@@ -681,10 +681,10 @@ class DriverHandoutGenerator:
         )
         card_body.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, -1), colors.white),
-            ('LEFTPADDING', (0, 0), (-1, -1), 4),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
-            ('TOPPADDING', (0, 0), (-1, -1), 4),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
+            ('LEFTPADDING', (0, 0), (-1, -1), 3),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+            ('TOPPADDING', (0, 0), (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 0.5),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ]))
 
@@ -704,15 +704,14 @@ class DriverHandoutGenerator:
         card_layout = Table(
             [[card_body], [footer_paragraph]],
             colWidths=[3.55*inch],
-            rowHeights=[4.72*inch, 0.20*inch]
+            rowHeights=[4.72*inch, 0.18*inch]
         )
         card_layout.setStyle(TableStyle([
-            ('BORDER', (0, 0), (-1, -1), 1.5, self.COLOR_BLUE),
             ('BACKGROUND', (0, 0), (-1, -1), colors.white),
-            ('LEFTPADDING', (0, 0), (-1, -1), 4),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
-            ('TOPPADDING', (0, 0), (-1, -1), 2),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+            ('LEFTPADDING', (0, 0), (-1, -1), 3),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+            ('TOPPADDING', (0, 0), (-1, -1), 1.5),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 1),
             ('VALIGN', (0, 0), (0, 0), 'TOP'),
             ('VALIGN', (0, 1), (0, 1), 'BOTTOM'),
             ('ALIGN', (0, 1), (0, 1), 'CENTER'),

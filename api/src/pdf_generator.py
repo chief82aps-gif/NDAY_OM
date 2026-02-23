@@ -215,28 +215,14 @@ class DriverHandoutGenerator:
         story.extend(self._build_summary_page(assignment_list, route_lookup))
         story.append(PageBreak())
         
-        def route_has_overflow(route_code: str) -> bool:
-            route_sheet = route_lookup.get(route_code)
-            return bool(route_sheet and route_sheet.overflow)
-
-        # Build pages with overflow-aware layout:
-        # any page containing overflow routes is forced to 2x1 portrait (max 2 cards)
+        # Build pages in fixed 2x2 layout (4 cards per page)
         page_idx = 0
         while page_idx < len(assignment_list):
             if page_idx > 0:  # Page break before new page (except first)
                 story.append(PageBreak())
+            page_assignments = assignment_list[page_idx:page_idx + 4]
 
-            # Check if the first route at this position has overflow
-            # If it does, use 2x1 layout to give it more space
-            first_route = assignment_list[page_idx][0] if page_idx < len(assignment_list) else None
-            has_overflow_in_first = first_route and route_has_overflow(first_route)
-
-            # Use 2x1 layout only if first route has overflow, otherwise use 2x2 layout
-            page_size = 2 if has_overflow_in_first else 4
-
-            page_assignments = assignment_list[page_idx:page_idx + page_size]
-
-            if page_size == 4 and len(page_assignments) == 4:
+            if len(page_assignments) == 4:
                 row1 = page_assignments[0:2]
                 row2 = page_assignments[2:4]
                 story.append(self._build_card_row(row1, route_lookup))
@@ -245,7 +231,7 @@ class DriverHandoutGenerator:
             else:
                 story.append(self._build_card_row(page_assignments[0:2], route_lookup))
 
-            page_idx += page_size
+            page_idx += 4
         
         # Build PDF
         doc.build(story)

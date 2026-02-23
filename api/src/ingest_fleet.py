@@ -10,7 +10,13 @@ FLEET_COLUMN_ALIASES = {
     "vin": ["vin", "vin number", "vehicle vin"],
     "service_type": ["service", "service type", "delivery service type"],
     "vehicle_name": ["vehicle", "vehicle name", "truck", "unit", "truck id"],
-    "operational_status": ["operational status", "status", "availability"],
+    "operational_status": [
+        "operational status",
+        "operationalstatus",
+        "operational_status",
+        "status",
+        "availability",
+    ],
 }
 
 FLEET_FALLBACK_COLUMNS = {

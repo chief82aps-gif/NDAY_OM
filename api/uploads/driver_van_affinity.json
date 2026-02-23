@@ -404,10 +404,11 @@
       "vehicle_name": "2115 XL",
       "service_type": "Standard Parcel - Extra Large Van - US",
       "first_used": "2026-02-20T18:28:14.119649",
-      "last_used": "2026-02-22T17:14:06.156710",
-      "frequency": 2,
+      "last_used": "2026-02-22T17:17:55.480782",
+      "frequency": 3,
       "routes": [
         "CX138",
+        "CX145",
         "CX145"
       ]
     },
@@ -637,9 +638,10 @@
       "vehicle_name": "9790 XL",
       "service_type": "Standard Parcel - Extra Large Van - US",
       "first_used": "2026-02-21T10:33:50.034030",
-      "last_used": "2026-02-22T17:14:06.157945",
-      "frequency": 4,
+      "last_used": "2026-02-22T17:17:55.482197",
+      "frequency": 5,
       "routes": [
+        "CX146",
         "CX146",
         "CX146",
         "CX146",
@@ -894,9 +896,10 @@
       "vehicle_name": "E929",
       "service_type": "Standard Parcel Electric - Rivian MEDIUM",
       "first_used": "2026-02-22T17:14:06.147712",
-      "last_used": "2026-02-22T17:14:06.147717",
-      "frequency": 1,
+      "last_used": "2026-02-22T17:17:55.470541",
+      "frequency": 2,
       "routes": [
+        "CX134",
         "CX134"
       ]
     }
@@ -906,9 +909,10 @@
       "vehicle_name": "E768",
       "service_type": "Standard Parcel Electric - Rivian MEDIUM",
       "first_used": "2026-02-22T17:14:06.149203",
-      "last_used": "2026-02-22T17:14:06.149206",
-      "frequency": 1,
+      "last_used": "2026-02-22T17:17:55.472066",
+      "frequency": 2,
       "routes": [
+        "CX123",
         "CX123"
       ]
     }
@@ -918,9 +922,10 @@
       "vehicle_name": "E543",
       "service_type": "Standard Parcel Electric - Rivian MEDIUM",
       "first_used": "2026-02-22T17:14:06.150508",
-      "last_used": "2026-02-22T17:14:06.150511",
-      "frequency": 1,
+      "last_used": "2026-02-22T17:17:55.473428",
+      "frequency": 2,
       "routes": [
+        "CX128",
         "CX128"
       ]
     }
@@ -930,9 +935,10 @@
       "vehicle_name": "E706",
       "service_type": "Standard Parcel Electric - Rivian MEDIUM",
       "first_used": "2026-02-22T17:14:06.151705",
-      "last_used": "2026-02-22T17:14:06.151708",
-      "frequency": 1,
+      "last_used": "2026-02-22T17:17:55.474713",
+      "frequency": 2,
       "routes": [
+        "CX125",
         "CX125"
       ]
     }
@@ -942,9 +948,10 @@
       "vehicle_name": "E550",
       "service_type": "Standard Parcel Electric - Rivian MEDIUM",
       "first_used": "2026-02-22T17:14:06.153026",
-      "last_used": "2026-02-22T17:14:06.153028",
-      "frequency": 1,
+      "last_used": "2026-02-22T17:17:55.476608",
+      "frequency": 2,
       "routes": [
+        "CX126",
         "CX126"
       ]
     }
@@ -954,9 +961,10 @@
       "vehicle_name": "E548",
       "service_type": "Standard Parcel Electric - Rivian MEDIUM",
       "first_used": "2026-02-22T17:14:06.154214",
-      "last_used": "2026-02-22T17:14:06.154216",
-      "frequency": 1,
+      "last_used": "2026-02-22T17:17:55.478128",
+      "frequency": 2,
       "routes": [
+        "CX127",
         "CX127"
       ]
     }
@@ -966,9 +974,10 @@
       "vehicle_name": "E771",
       "service_type": "Standard Parcel Electric - Rivian MEDIUM",
       "first_used": "2026-02-22T17:14:06.155454",
-      "last_used": "2026-02-22T17:14:06.155457",
-      "frequency": 1,
+      "last_used": "2026-02-22T17:17:55.479444",
+      "frequency": 2,
       "routes": [
+        "CX124",
         "CX124"
       ]
     }

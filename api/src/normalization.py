@@ -20,10 +20,10 @@ SERVICE_TYPE_MAP = {
     "CDV 14ft": "Standard Parcel - Custom Delivery Van 14ft",
     "CDV14": "Standard Parcel - Custom Delivery Van 14ft",
     
-    # 4WD P31 Delivery Truck
-    "4WD P31 Delivery Truck": "4WD P31 Delivery Truck",
-    "AmFlex Large Vehicle": "4WD P31 Delivery Truck",
-    "P31": "4WD P31 Delivery Truck",
+    # 4WD P31 Delivery Truck (maps to AmFlex Large Vehicle in Fleet)
+    "4WD P31 Delivery Truck": "AmFlex Large Vehicle",
+    "AmFlex Large Vehicle": "AmFlex Large Vehicle",
+    "P31": "AmFlex Large Vehicle",
     
     # Standard Parcel - Custom Delivery Van 16ft
     "Standard Parcel - Custom Delivery Van 16ft": "Standard Parcel - Custom Delivery Van 16ft",

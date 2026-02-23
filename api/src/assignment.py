@@ -70,7 +70,10 @@ class VehicleAssignmentEngine:
             "Standard Parcel Electric - Rivian MEDIUM",  # No fallback for electric routes (keep separate from gas)
         ],
         "4WD P31 Delivery Truck": [
-            "4WD P31 Delivery Truck",
+            "AmFlex Large Vehicle",  # Maps to AmFlex in Fleet
+        ],
+        "AmFlex Large Vehicle": [
+            "AmFlex Large Vehicle",
         ],
         # Keep legacy names for backward compatibility
         "Rivian MEDIUM": [

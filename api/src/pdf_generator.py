@@ -540,9 +540,9 @@ class DriverHandoutGenerator:
             
             # Create 3-column layout with left-to-right, top-to-bottom ordering
             bag_data = [
-                [Paragraph("<b>Bag</b>", self.styles['TableHeader']),
-                 Paragraph("<b>Bag</b>", self.styles['TableHeader']),
-                 Paragraph("<b>Bag</b>", self.styles['TableHeader'])],
+                [Paragraph("<b>Top</b>", self.styles['TableHeader']),
+                 Paragraph("<b>Middle</b>", self.styles['TableHeader']),
+                 Paragraph("<b>Bottom</b>", self.styles['TableHeader'])],
             ]
             
             # Fill rows with up to 3 bags each

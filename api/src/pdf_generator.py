@@ -403,8 +403,11 @@ class DriverHandoutGenerator:
                 Paragraph(expected_rts or "", self.styles['TableCell']),
             ])
             
-            # Determine background color based on wave
-            if assignment.wave_time:
+            # Determine background color based on wave or assignment status
+            if assignment.vehicle_name == "UNASSIGNED":
+                # Highlight failed assignments in light red
+                row_backgrounds.append(colors.HexColor('#FFD4D4'))
+            elif assignment.wave_time:
                 wave_num = self._extract_wave_number(assignment.wave_time)
                 if wave_num == 2:
                     row_backgrounds.append(colors.HexColor('#D3D3D3'))  # Medium gray

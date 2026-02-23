@@ -316,6 +316,7 @@ class IngestOrchestrator:
     def generate_handouts(self, output_path: str) -> Dict:
         """
         Generate driver handout PDF with 2x2 card layout.
+        Includes both successful assignments and failed routes (marked as "UNASSIGNED").
         
         Args:
             output_path: Path to save PDF
@@ -340,8 +341,43 @@ class IngestOrchestrator:
             self._enrich_route_sheets_with_expected_return()
         
         try:
+            # Create a combined assignments dictionary including failed routes
+            all_assignments = dict(self.assignments)
+            
+            # Add failed routes (marked as UNASSIGNED) to the summary
+            if self.assignment_engine:
+                from api.src.assignment import RouteAssignment
+                
+                # Build DOP lookup by route code
+                dop_lookup = {route.route_code: route for route in self.status.dop_records}
+                
+                # Build Cortex lookup for driver names
+                cortex_lookup = {}
+                if self.status.cortex_records:
+                    cortex_lookup = {record.route_code: record for record in self.status.cortex_records}
+                
+                # Add failed routes to summary
+                for failed_route_code, _ in self.assignment_engine.failed_assignments:
+                    dop_record = dop_lookup.get(failed_route_code)
+                    cortex_record = cortex_lookup.get(failed_route_code)
+                    
+                    if dop_record:
+                        # Create assignment with UNASSIGNED vehicle
+                        failed_assignment = RouteAssignment(
+                            route_code=failed_route_code,
+                            vehicle_vin="",
+                            vehicle_name="UNASSIGNED",
+                            service_type=dop_record.service_type,
+                            driver_name=cortex_record.driver_name if cortex_record else None,
+                            driver_id=cortex_record.transporter_id if cortex_record else None,
+                            dsp=cortex_record.dsp if cortex_record else None,
+                            wave_time=dop_record.wave,
+                            route_duration=dop_record.route_duration,
+                        )
+                        all_assignments[failed_route_code] = failed_assignment
+            
             pdf_path = self.pdf_generator.generate_handouts(
-                self.assignments,
+                all_assignments,
                 self.status.route_sheets,
                 output_path,
             )
@@ -350,7 +386,7 @@ class IngestOrchestrator:
                 "success": True,
                 "message": "Driver handouts generated successfully.",
                 "output_path": pdf_path,
-                "cards_generated": len(self.assignments),
+                "cards_generated": len(all_assignments),
             }
         except Exception as e:
             return {

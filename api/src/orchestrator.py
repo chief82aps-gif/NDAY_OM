@@ -266,8 +266,9 @@ class IngestOrchestrator:
             for assignment in self.assignment_engine.assignments.values()
         }
 
-        # Manual assignment uses all non-grounded vehicles (ignore service type rules)
-        for vehicle in self.assignment_engine.fleet:
+        # Manual assignment uses ALL fleet vehicles (not just vehicle_pool which may be depleted)
+        # Show all non-grounded vehicles regardless of service type
+        for vehicle in self.status.fleet_records:
             status_norm = (vehicle.operational_status or "").strip().upper()
             if status_norm == "GROUNDED":
                 continue

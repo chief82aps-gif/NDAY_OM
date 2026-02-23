@@ -155,9 +155,38 @@ export default function ManualVehicleAssignment({
                   <label className="block text-sm font-semibold text-gray-800 mb-2">
                     Select Vehicle:
                   </label>
+                  
+                  {/* TBD Option - Always shown first */}
+                  {route.available_vehicles.some((v) => v.vin === 'TBD') && (
+                    <button
+                      onClick={() => handleSelectVehicle(route.route_code, 'TBD')}
+                      className={`w-full mb-3 p-4 text-left rounded-lg border-2 transition ${
+                        assignments[route.route_code] === 'TBD'
+                          ? 'border-yellow-500 bg-yellow-50'
+                          : 'border-yellow-300 hover:border-yellow-500 bg-yellow-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="font-bold text-gray-900 flex items-center gap-2">
+                            <span>⚠️</span>
+                            <span>TBD (To Be Determined)</span>
+                          </div>
+                          <div className="text-sm text-gray-700 mt-1">
+                            Vehicle not yet assigned - can be updated later
+                          </div>
+                        </div>
+                        {assignments[route.route_code] === 'TBD' && (
+                          <div className="text-yellow-600 font-bold">✓ Selected</div>
+                        )}
+                      </div>
+                    </button>
+                  )}
+                  
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {route.available_vehicles.length > 0 ? (
+                    {route.available_vehicles.length > 1 ? (
                       route.available_vehicles
+                        .filter((vehicle) => vehicle.vin !== 'TBD') // Exclude TBD from grid (shown above)
                         .filter((vehicle) => {
                           const selectedForThisRoute = assignments[route.route_code] === vehicle.vin;
                           return selectedForThisRoute || !selectedVins.has(vehicle.vin);
@@ -177,9 +206,13 @@ export default function ManualVehicleAssignment({
                           <div className="text-xs text-gray-500">{vehicle.service_type}</div>
                         </button>
                       ))
+                    ) : route.available_vehicles.length === 1 && route.available_vehicles[0].vin === 'TBD' ? (
+                      <div className="col-span-2 p-3 bg-orange-50 border border-orange-300 rounded-lg text-orange-800">
+                        No real vehicles available. Select TBD above to mark this route for later assignment.
+                      </div>
                     ) : (
                       <div className="col-span-2 p-3 bg-red-50 border border-red-300 rounded-lg text-red-800">
-                        No available vehicles for this service type. This route cannot be assigned.
+                        No available vehicles for this service type. Select TBD to proceed.
                       </div>
                     )}
                   </div>

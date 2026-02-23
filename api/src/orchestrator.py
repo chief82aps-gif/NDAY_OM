@@ -260,10 +260,18 @@ class IngestOrchestrator:
         if not self.assignment_engine:
             return available
 
+        # Always add TBD option first (for routes without available vehicles)
+        available.append({
+            "vehicle_name": "TBD (To Be Determined)",
+            "vin": "TBD",
+            "service_type": "Any",
+        })
+
         # Get already-assigned VINs so we can exclude them
         assigned_vins = {
             assignment.vehicle_vin
             for assignment in self.assignment_engine.assignments.values()
+            if assignment.vehicle_vin != "TBD"  # Don't exclude TBD
         }
 
         # Manual assignment uses ALL fleet vehicles (not just vehicle_pool which may be depleted)
@@ -288,7 +296,7 @@ class IngestOrchestrator:
         
         Args:
             route_code: The route to assign
-            vehicle_vin: The VIN of the vehicle to assign
+            vehicle_vin: The VIN of the vehicle to assign (or "TBD")
         
         Returns:
             Dictionary with assignment result
@@ -299,24 +307,29 @@ class IngestOrchestrator:
                 "message": "No assignments made yet. Run assign_vehicles first.",
             }
         
-        # Find the vehicle in the pool
-        vehicle_to_assign = None
-        assigned_from_pool = None
-        
-        for pool_type, vehicles in self.assignment_engine.vehicle_pool.items():
-            for idx, vehicle in enumerate(vehicles):
-                if vehicle.vin == vehicle_vin:
-                    vehicle_to_assign = vehicle
-                    assigned_from_pool = (pool_type, idx)
+        # Handle TBD assignment (no actual vehicle)
+        if vehicle_vin == "TBD":
+            vehicle_to_assign = None
+            assigned_from_pool = None
+        else:
+            # Find the vehicle in the pool
+            vehicle_to_assign = None
+            assigned_from_pool = None
+            
+            for pool_type, vehicles in self.assignment_engine.vehicle_pool.items():
+                for idx, vehicle in enumerate(vehicles):
+                    if vehicle.vin == vehicle_vin:
+                        vehicle_to_assign = vehicle
+                        assigned_from_pool = (pool_type, idx)
+                        break
+                if vehicle_to_assign:
                     break
-            if vehicle_to_assign:
-                break
-        
-        if not vehicle_to_assign:
-            return {
-                "success": False,
-                "message": f"Vehicle with VIN {vehicle_vin} not found in available pool.",
-            }
+            
+            if not vehicle_to_assign:
+                return {
+                    "success": False,
+                    "message": f"Vehicle with VIN {vehicle_vin} not found in available pool.",
+                }
         
         # Get route and driver info
         dop_lookup = {route.route_code: route for route in self.status.dop_records}
@@ -335,30 +348,55 @@ class IngestOrchestrator:
         
         # Create assignment
         from api.src.assignment import RouteAssignment
-        assignment = RouteAssignment(
-            route_code=route_code,
-            vehicle_vin=vehicle_to_assign.vin,
-            vehicle_name=vehicle_to_assign.vehicle_name,
-            service_type=vehicle_to_assign.service_type,
-            driver_name=cortex_record.driver_name if cortex_record else None,
-            driver_id=cortex_record.transporter_id if cortex_record else None,
-            dsp=cortex_record.dsp if cortex_record else None,
-            wave_time=dop_record.wave,
-            route_duration=dop_record.route_duration,
-        )
         
-        # Add to assignments and remove from pool
-        self.assignments[route_code] = assignment
-        if assigned_from_pool:
-            pool_type, idx = assigned_from_pool
-            self.assignment_engine.vehicle_pool[pool_type].pop(idx)
-        
-        return {
-            "success": True,
-            "message": f"Route {route_code} assigned to {vehicle_to_assign.vehicle_name}",
-            "route_code": route_code,
-            "vehicle_name": vehicle_to_assign.vehicle_name,
-        }
+        if vehicle_vin == "TBD":
+            # TBD assignment - no actual vehicle
+            assignment = RouteAssignment(
+                route_code=route_code,
+                vehicle_vin="TBD",
+                vehicle_name="TBD",
+                service_type=dop_record.service_type,
+                driver_name=cortex_record.driver_name if cortex_record else None,
+                driver_id=cortex_record.transporter_id if cortex_record else None,
+                dsp=cortex_record.dsp if cortex_record else None,
+                wave_time=dop_record.wave,
+                route_duration=dop_record.route_duration,
+            )
+            
+            self.assignments[route_code] = assignment
+            
+            return {
+                "success": True,
+                "message": f"Route {route_code} marked as TBD (no vehicle assigned yet)",
+                "route_code": route_code,
+                "vehicle_name": "TBD",
+            }
+        else:
+            # Normal vehicle assignment
+            assignment = RouteAssignment(
+                route_code=route_code,
+                vehicle_vin=vehicle_to_assign.vin,
+                vehicle_name=vehicle_to_assign.vehicle_name,
+                service_type=vehicle_to_assign.service_type,
+                driver_name=cortex_record.driver_name if cortex_record else None,
+                driver_id=cortex_record.transporter_id if cortex_record else None,
+                dsp=cortex_record.dsp if cortex_record else None,
+                wave_time=dop_record.wave,
+                route_duration=dop_record.route_duration,
+            )
+            
+            # Add to assignments and remove from pool
+            self.assignments[route_code] = assignment
+            if assigned_from_pool:
+                pool_type, idx = assigned_from_pool
+                self.assignment_engine.vehicle_pool[pool_type].pop(idx)
+            
+            return {
+                "success": True,
+                "message": f"Route {route_code} assigned to {vehicle_to_assign.vehicle_name}",
+                "route_code": route_code,
+                "vehicle_name": vehicle_to_assign.vehicle_name,
+            }
     
     
     def get_capacity_status(self) -> Dict:
@@ -473,15 +511,16 @@ class IngestOrchestrator:
                 "message": "Route Sheets must be uploaded first.",
             }
         
-        # Check for unassigned routes - BLOCK generation if any exist
+        # Check for unassigned routes - NOW ALLOWS TBD ASSIGNMENTS
         total_routes = len(self.status.dop_records) if self.status.dop_records else 0
         assigned_count = len(self.assignments)
+        tbd_count = sum(1 for a in self.assignments.values() if a.vehicle_vin == "TBD")
         
         if assigned_count < total_routes:
             unassigned_count = total_routes - assigned_count
             return {
                 "success": False,
-                "message": f"Cannot generate handouts: {unassigned_count} route(s) still unassigned. Use /manual-assign-vehicle to assign all routes before proceeding.",
+                "message": f"Cannot generate handouts: {unassigned_count} route(s) still unassigned. Use /manual-assign-vehicle to assign all routes (including TBD) before proceeding.",
                 "blocked_reason": "unassigned_routes",
                 "total_routes": total_routes,
                 "assigned": assigned_count,
@@ -500,11 +539,16 @@ class IngestOrchestrator:
                 output_path,
             )
             
+            message = "Driver handouts generated successfully."
+            if tbd_count > 0:
+                message += f" Note: {tbd_count} route(s) marked as TBD (vehicle not yet assigned)."
+            
             return {
                 "success": True,
-                "message": "Driver handouts generated successfully.",
+                "message": message,
                 "output_path": pdf_path,
                 "cards_generated": len(self.assignments),
+                "tbd_count": tbd_count,
             }
         except Exception as e:
             return {

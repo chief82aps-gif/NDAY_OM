@@ -152,16 +152,12 @@ class DriverHandoutGenerator:
             if page_idx > 0:  # Page break before new page (except first)
                 story.append(PageBreak())
 
-            lookahead_four = assignment_list[page_idx:page_idx + 4]
             lookahead_two = assignment_list[page_idx:page_idx + 2]
 
             has_overflow_in_next_two = any(route_has_overflow(route_code) for route_code, _ in lookahead_two)
-            has_overflow_in_next_four = any(route_has_overflow(route_code) for route_code, _ in lookahead_four)
 
-            if has_overflow_in_next_two or has_overflow_in_next_four:
-                page_size = 2
-            else:
-                page_size = 4
+            # Use 2x1 layout if next 2 routes have overflow, otherwise use 2x2 layout
+            page_size = 2 if has_overflow_in_next_two else 4
 
             page_assignments = assignment_list[page_idx:page_idx + page_size]
 

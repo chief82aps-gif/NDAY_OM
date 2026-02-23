@@ -90,7 +90,10 @@ export default function ManualVehicleAssignment({
     return null;
   }
 
-  const selectedVins = new Set(Object.values(assignments));
+  // Track selected VINs but exclude "TBD" since it can be used multiple times
+  const selectedVins = new Set(
+    Object.values(assignments).filter((vin) => vin !== 'TBD')
+  );
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -156,63 +159,58 @@ export default function ManualVehicleAssignment({
                     Select Vehicle:
                   </label>
                   
-                  {/* TBD Option - Always shown first */}
-                  {route.available_vehicles.some((v) => v.vin === 'TBD') && (
-                    <button
-                      onClick={() => handleSelectVehicle(route.route_code, 'TBD')}
-                      className={`w-full mb-3 p-4 text-left rounded-lg border-2 transition ${
-                        assignments[route.route_code] === 'TBD'
-                          ? 'border-yellow-500 bg-yellow-50'
-                          : 'border-yellow-300 hover:border-yellow-500 bg-yellow-50'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="font-bold text-gray-900 flex items-center gap-2">
-                            <span>⚠️</span>
-                            <span>TBD (To Be Determined)</span>
-                          </div>
-                          <div className="text-sm text-gray-700 mt-1">
-                            Vehicle not yet assigned - can be updated later
-                          </div>
+                  {/* TBD Option - Always available for all routes */}
+                  <button
+                    onClick={() => handleSelectVehicle(route.route_code, 'TBD')}
+                    className={`w-full mb-3 p-4 text-left rounded-lg border-2 transition ${
+                      assignments[route.route_code] === 'TBD'
+                        ? 'border-yellow-500 bg-yellow-50'
+                        : 'border-yellow-300 hover:border-yellow-500 bg-yellow-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="font-bold text-gray-900 flex items-center gap-2">
+                          <span>⚠️</span>
+                          <span>TBD (To Be Determined)</span>
                         </div>
-                        {assignments[route.route_code] === 'TBD' && (
-                          <div className="text-yellow-600 font-bold">✓ Selected</div>
-                        )}
+                        <div className="text-sm text-gray-700 mt-1">
+                          Vehicle not yet assigned - can be updated later
+                        </div>
                       </div>
-                    </button>
-                  )}
+                      {assignments[route.route_code] === 'TBD' && (
+                        <div className="text-yellow-600 font-bold">✓ Selected</div>
+                      )}
+                    </div>
+                  </button>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {route.available_vehicles.length > 1 ? (
+                    {route.available_vehicles.length > 0 ? (
                       route.available_vehicles
                         .filter((vehicle) => vehicle.vin !== 'TBD') // Exclude TBD from grid (shown above)
                         .filter((vehicle) => {
+                          // Only show vehicles not already assigned elsewhere
                           const selectedForThisRoute = assignments[route.route_code] === vehicle.vin;
                           return selectedForThisRoute || !selectedVins.has(vehicle.vin);
                         })
                         .map((vehicle) => (
-                        <button
-                          key={vehicle.vin}
-                          onClick={() => handleSelectVehicle(route.route_code, vehicle.vin)}
-                          className={`p-3 text-left rounded-lg border-2 transition ${
-                            assignments[route.route_code] === vehicle.vin
-                              ? 'border-ndl-blue bg-blue-50'
-                              : 'border-gray-300 hover:border-ndl-blue'
-                          }`}
-                        >
-                          <div className="font-semibold text-gray-900">{vehicle.vehicle_name}</div>
-                          <div className="text-sm text-gray-600">VIN: {vehicle.vin}</div>
-                          <div className="text-xs text-gray-500">{vehicle.service_type}</div>
-                        </button>
-                      ))
-                    ) : route.available_vehicles.length === 1 && route.available_vehicles[0].vin === 'TBD' ? (
-                      <div className="col-span-2 p-3 bg-orange-50 border border-orange-300 rounded-lg text-orange-800">
-                        No real vehicles available. Select TBD above to mark this route for later assignment.
-                      </div>
+                          <button
+                            key={vehicle.vin}
+                            onClick={() => handleSelectVehicle(route.route_code, vehicle.vin)}
+                            className={`p-3 text-left rounded-lg border-2 transition ${
+                              assignments[route.route_code] === vehicle.vin
+                                ? 'border-ndl-blue bg-blue-50'
+                                : 'border-gray-300 hover:border-ndl-blue'
+                            }`}
+                          >
+                            <div className="font-semibold text-gray-900">{vehicle.vehicle_name}</div>
+                            <div className="text-sm text-gray-600">VIN: {vehicle.vin}</div>
+                            <div className="text-xs text-gray-500">{vehicle.service_type}</div>
+                          </button>
+                        ))
                     ) : (
-                      <div className="col-span-2 p-3 bg-red-50 border border-red-300 rounded-lg text-red-800">
-                        No available vehicles for this service type. Select TBD to proceed.
+                      <div className="col-span-2 p-3 bg-orange-50 border border-orange-300 rounded-lg text-orange-800">
+                        No vehicles available or all vehicles assigned. Select TBD above to mark this route for later assignment.
                       </div>
                     )}
                   </div>

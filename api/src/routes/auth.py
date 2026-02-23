@@ -28,6 +28,14 @@ class UserListResponse(BaseModel):
     name: str
 
 
+class ChangePasswordRequest(BaseModel):
+    username: str
+    old_password: str
+    new_password: str
+    admin_username: str
+    admin_password: str
+
+
 # Path to users.json file (for persistent storage when available)
 USERS_FILE = os.path.join(os.path.dirname(__file__), '..', '..', 'users.json')
 
@@ -218,3 +226,51 @@ async def delete_user(request: CreateUserRequest):
     save_users(USERS)
     
     return {"message": f"User '{username_to_delete}' deleted successfully"}
+
+
+@router.post("/change-password")
+async def change_password(request: ChangePasswordRequest):
+    """
+    Change a user's password. Requires valid admin credentials OR the user's old password.
+    """
+    USERS = load_users()  # Reload users
+    
+    username_to_change = request.username.lower().strip()
+    
+    # Check if user exists
+    if username_to_change not in USERS:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+    
+    # Admin can change any password OR user can change their own with old password
+    admin_username = request.admin_username.lower().strip()
+    is_admin_change = admin_username in USERS and USERS[admin_username] == request.admin_password
+    is_self_change = username_to_change == admin_username and USERS[username_to_change] == request.old_password
+    
+    if not (is_admin_change or is_self_change):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials. Provide either admin password or your old password.",
+        )
+    
+    # Validate new password
+    if not request.new_password or len(request.new_password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be at least 6 characters",
+        )
+    
+    # Prevent changing default admin password in Render (environment variable)
+    if username_to_change == "admin" and username_to_change in DEFAULT_USERS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot change default admin password. This is set via environment variable.",
+        )
+    
+    # Change password
+    USERS[username_to_change] = request.new_password
+    save_users(USERS)
+    
+    return {"message": f"Password for '{username_to_change}' changed successfully"}

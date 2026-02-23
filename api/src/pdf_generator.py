@@ -355,7 +355,7 @@ class DriverHandoutGenerator:
                 textColor=self.COLOR_BLUE,
                 fontName='Helvetica-Bold',
                 alignment=TA_CENTER,
-                spaceAfter=4,
+                spaceAfter=2,
             )
         )
         story.append(title)
@@ -368,7 +368,7 @@ class DriverHandoutGenerator:
                 fontSize=8,
                 textColor=self.COLOR_BLACK,
                 alignment=TA_CENTER,
-                spaceAfter=6,
+                spaceAfter=2,
             )
         )
         story.append(date_text)
@@ -421,14 +421,14 @@ class DriverHandoutGenerator:
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
             ('FONTSIZE', (0, 0), (-1, 0), 6),
-            ('TOPPADDING', (0, 0), (-1, 0), 0.5),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 0.5),
+            ('TOPPADDING', (0, 0), (-1, 0), 0.25),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 0.25),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-            ('FONTSIZE', (0, 1), (-1, -1), 5),
-            ('TOPPADDING', (0, 1), (-1, -1), 1),
-            ('BOTTOMPADDING', (0, 1), (-1, -1), 1),
-            ('LEFTPADDING', (0, 0), (-1, -1), 2),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 2),
+            ('FONTSIZE', (0, 1), (-1, -1), 4),
+            ('TOPPADDING', (0, 1), (-1, -1), 0.5),
+            ('BOTTOMPADDING', (0, 1), (-1, -1), 0.5),
+            ('LEFTPADDING', (0, 0), (-1, -1), 1),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 1),
             ('ROWBACKGROUNDS', (0, 0), (-1, -1), row_backgrounds),
         ]
         

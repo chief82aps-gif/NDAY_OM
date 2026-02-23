@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useRouter } from 'next/router';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -31,9 +32,14 @@ export default function PageHeader({ title, showBack = false }: PageHeaderProps)
         <div className="flex items-center justify-between">
           {/* Left: Logo and Title */}
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center">
-              <span className="text-ndl-blue font-bold text-lg">N</span>
-            </div>
+            <Image
+              src="/logo.png"
+              alt="NDL Logo"
+              width={40}
+              height={40}
+              className="rounded-lg"
+              priority
+            />
             <div>
               <h1 className="text-2xl font-bold">{title}</h1>
               {user && <p className="text-sm text-blue-100">Welcome, {user.name}</p>}

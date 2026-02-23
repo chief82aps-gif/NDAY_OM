@@ -1,10 +1,11 @@
 """Driver handout PDF generation - creates 2x2 card layout with route/driver/vehicle/load info."""
 from typing import List, Optional, Tuple
 from datetime import datetime
+import os
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from api.src.models import RouteSheet
@@ -92,6 +93,58 @@ class DriverHandoutGenerator:
             alignment=TA_CENTER,
         ))
     
+    def _build_header_with_logo(self) -> List:
+        """Build header with company logo and title."""
+        header_elements = []
+        
+        # Try to load logo
+        logo_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            'Logo', 'NDL LogoShirt.png'
+        )
+        
+        header_table_data = []
+        
+        if os.path.exists(logo_path):
+            # Load logo image
+            try:
+                logo_img = Image(logo_path, width=0.8*inch, height=0.8*inch)
+                header_table_data.append([
+                    logo_img,
+                    Paragraph('<b>NDL Driver Handout Report</b>', self.styles['Heading1']),
+                    Paragraph(f'<b>Generated:</b> {datetime.now().strftime("%m/%d/%Y")}', self.styles['Normal'])
+                ])
+            except:
+                # Fallback if logo fails to load
+                header_table_data.append([
+                    Paragraph('<b>NDL Driver Handout Report</b><br/>(Logo unavailable)', self.styles['Heading1']),
+                ])
+        else:
+            # Fallback if logo file not found
+            header_table_data.append([
+                Paragraph('<b>NDL Driver Handout Report</b><br/>(Logo unavailable)', self.styles['Heading1']),
+            ])
+        
+        # Create header table with blue background
+        header_table = Table(header_table_data, colWidths=[1*inch, 4*inch, 1.5*inch])
+        header_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), self.COLOR_BLUE),
+            ('TEXTCOLOR', (0, 0), (-1, -1), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 10),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+            ('TOPPADDING', (0, 0), (-1, -1), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ]))
+        
+        header_elements.append(header_table)
+        header_elements.append(Spacer(1, 0.2*inch))
+        
+        return header_elements
+    
     def generate_handouts(
         self,
         assignments: dict,  # route_code -> RouteAssignment
@@ -136,6 +189,9 @@ class DriverHandoutGenerator:
         
         # Build story (content elements)
         story = []
+        
+        # Add header with company logo
+        story.extend(self._build_header_with_logo())
         
         # Add summary page with all assignments sorted by wave time then route code
         story.extend(self._build_summary_page(assignment_list, route_lookup))

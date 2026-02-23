@@ -195,6 +195,25 @@ def assign_vehicles():
         raise HTTPException(status_code=500, detail=f"Failed to assign vehicles: {str(e)}")
 
 
+@router.post("/manual-assign-vehicle")
+def manual_assign_vehicle(route_code: str, vehicle_vin: str):
+    """
+    Manually assign a vehicle to a route that failed automatic assignment.
+    
+    Args:
+        route_code: The route code to assign
+        vehicle_vin: The VIN of the vehicle to assign
+    
+    Returns:
+        Result of manual assignment
+    """
+    try:
+        result = orchestrator.manual_assign_vehicle(route_code, vehicle_vin)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to manually assign vehicle: {str(e)}")
+
+
 @router.get("/capacity-status")
 def get_capacity_status():
     """Get van capacity utilization and alerts for service types at 80%+ capacity."""

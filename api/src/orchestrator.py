@@ -196,7 +196,7 @@ class IngestOrchestrator:
         Assign fleet vehicles to routes based on service type.
         
         Returns:
-            Dictionary with assignment status
+            Dictionary with assignment status including failed routes requiring manual assignment
         """
         if not self.status.dop_records or not self.status.fleet_records:
             return {
@@ -216,15 +216,146 @@ class IngestOrchestrator:
         # Get assignment status
         assignment_status = self.assignment_engine.get_assignment_status()
         
+        # Build failed routes with details for manual assignment
+        failed_routes_detail = []
+        if assignment_status["failed"] > 0:
+            # Build lookup dicts
+            dop_lookup = {route.route_code: route for route in self.status.dop_records}
+            cortex_lookup = {}
+            if self.status.cortex_records:
+                cortex_lookup = {record.route_code: record for record in self.status.cortex_records}
+            
+            for failed_route_code in assignment_status["failed_routes"]:
+                dop_record = dop_lookup.get(failed_route_code)
+                cortex_record = cortex_lookup.get(failed_route_code)
+                
+                if dop_record:
+                    # Get available vehicles for this service type and fallbacks
+                    available_options = self._get_available_vehicles_for_route(dop_record.service_type)
+                    
+                    failed_routes_detail.append({
+                        "route_code": failed_route_code,
+                        "service_type": dop_record.service_type,
+                        "driver_name": cortex_record.driver_name if cortex_record else None,
+                        "wave_time": dop_record.wave,
+                        "available_vehicles": available_options,
+                    })
+        
         return {
-            "success": True,
+            "success": assignment_status["failed"] == 0,  # Only fully successful if no failures
             "total_routes": assignment_status["total_routes"],
             "assigned": assignment_status["assigned"],
             "failed": assignment_status["failed"],
             "fallback_used": assignment_status["fallback_used"],
             "success_rate": assignment_status["success_rate"],
             "failed_routes": assignment_status["failed_routes"],
+            "failed_routes_detail": failed_routes_detail,  # Detail for manual assignment UI
+            "message": f"{assignment_status['assigned']}/{assignment_status['total_routes']} routes assigned. {assignment_status['failed']} routes require manual vehicle selection." if assignment_status["failed"] > 0 else "All routes assigned successfully.",
         }
+    
+    def _get_available_vehicles_for_route(self, service_type: str) -> list:
+        """Get available vehicles for a route (current pool + fallback chain)."""
+        available = []
+        
+        if not self.assignment_engine:
+            return available
+        
+        # Get fallback chain for this service type
+        fallback_chain = self.assignment_engine.FALLBACK_CHAIN.get(
+            service_type, 
+            self.assignment_engine.DEFAULT_FALLBACK
+        )
+        
+        # Collect all available vehicles from fallback chain
+        for fallback_type in fallback_chain:
+            vehicles = self.assignment_engine.vehicle_pool.get(fallback_type, [])
+            for vehicle in vehicles:
+                available.append({
+                    "vehicle_name": vehicle.vehicle_name,
+                    "vin": vehicle.vin,
+                    "service_type": vehicle.service_type,
+                })
+        
+        return available
+    
+    def manual_assign_vehicle(self, route_code: str, vehicle_vin: str) -> Dict:
+        """
+        Manually assign a vehicle to a failed route.
+        
+        Args:
+            route_code: The route to assign
+            vehicle_vin: The VIN of the vehicle to assign
+        
+        Returns:
+            Dictionary with assignment result
+        """
+        if not self.assignment_engine:
+            return {
+                "success": False,
+                "message": "No assignments made yet. Run assign_vehicles first.",
+            }
+        
+        # Find the vehicle in the pool
+        vehicle_to_assign = None
+        assigned_from_pool = None
+        
+        for pool_type, vehicles in self.assignment_engine.vehicle_pool.items():
+            for idx, vehicle in enumerate(vehicles):
+                if vehicle.vin == vehicle_vin:
+                    vehicle_to_assign = vehicle
+                    assigned_from_pool = (pool_type, idx)
+                    break
+            if vehicle_to_assign:
+                break
+        
+        if not vehicle_to_assign:
+            return {
+                "success": False,
+                "message": f"Vehicle with VIN {vehicle_vin} not found in available pool.",
+            }
+        
+        # Get route and driver info
+        dop_lookup = {route.route_code: route for route in self.status.dop_records}
+        cortex_lookup = {}
+        if self.status.cortex_records:
+            cortex_lookup = {record.route_code: record for record in self.status.cortex_records}
+        
+        dop_record = dop_lookup.get(route_code)
+        cortex_record = cortex_lookup.get(route_code)
+        
+        if not dop_record:
+            return {
+                "success": False,
+                "message": f"Route {route_code} not found in DOP records.",
+            }
+        
+        # Create assignment
+        from api.src.assignment import RouteAssignment
+        assignment = RouteAssignment(
+            route_code=route_code,
+            vehicle_vin=vehicle_to_assign.vin,
+            vehicle_name=vehicle_to_assign.vehicle_name,
+            service_type=vehicle_to_assign.service_type,
+            driver_name=cortex_record.driver_name if cortex_record else None,
+            driver_id=cortex_record.transporter_id if cortex_record else None,
+            dsp=cortex_record.dsp if cortex_record else None,
+            wave_time=dop_record.wave,
+            route_duration=dop_record.route_duration,
+        )
+        
+        # Add to assignments and remove from pool
+        self.assignments[route_code] = assignment
+        if assigned_from_pool:
+            pool_type, idx = assigned_from_pool
+            self.assignment_engine.vehicle_pool[pool_type].pop(idx)
+        
+        return {
+            "success": True,
+            "message": f"Route {route_code} assigned to {vehicle_to_assign.vehicle_name}",
+            "route_code": route_code,
+            "vehicle_name": vehicle_to_assign.vehicle_name,
+        }
+    
     
     def get_capacity_status(self) -> Dict:
         """
@@ -316,13 +447,15 @@ class IngestOrchestrator:
     def generate_handouts(self, output_path: str) -> Dict:
         """
         Generate driver handout PDF with 2x2 card layout.
-        Includes both successful assignments and failed routes (marked as "UNASSIGNED").
+        
+        BLOCKS generation if any routes are unassigned. User must manually assign
+        vehicles for all failed routes via /manual-assign-vehicle before PDF generation.
         
         Args:
             output_path: Path to save PDF
         
         Returns:
-            Dictionary with generation status
+            Dictionary with generation status or error if unassigned routes exist
         """
         if not self.assignments:
             return {
@@ -336,48 +469,29 @@ class IngestOrchestrator:
                 "message": "Route Sheets must be uploaded first.",
             }
         
+        # Check for unassigned routes - BLOCK generation if any exist
+        total_routes = len(self.status.dop_records) if self.status.dop_records else 0
+        assigned_count = len(self.assignments)
+        
+        if assigned_count < total_routes:
+            unassigned_count = total_routes - assigned_count
+            return {
+                "success": False,
+                "message": f"Cannot generate handouts: {unassigned_count} route(s) still unassigned. Use /manual-assign-vehicle to assign all routes before proceeding.",
+                "blocked_reason": "unassigned_routes",
+                "total_routes": total_routes,
+                "assigned": assigned_count,
+                "unassigned": unassigned_count,
+            }
+        
+        # All routes are assigned - proceed with PDF generation
         # Ensure expected return times are calculated
         if self.status.dop_records:
             self._enrich_route_sheets_with_expected_return()
         
         try:
-            # Create a combined assignments dictionary including failed routes
-            all_assignments = dict(self.assignments)
-            
-            # Add failed routes (marked as UNASSIGNED) to the summary
-            if self.assignment_engine:
-                from api.src.assignment import RouteAssignment
-                
-                # Build DOP lookup by route code
-                dop_lookup = {route.route_code: route for route in self.status.dop_records}
-                
-                # Build Cortex lookup for driver names
-                cortex_lookup = {}
-                if self.status.cortex_records:
-                    cortex_lookup = {record.route_code: record for record in self.status.cortex_records}
-                
-                # Add failed routes to summary
-                for failed_route_code, _ in self.assignment_engine.failed_assignments:
-                    dop_record = dop_lookup.get(failed_route_code)
-                    cortex_record = cortex_lookup.get(failed_route_code)
-                    
-                    if dop_record:
-                        # Create assignment with UNASSIGNED vehicle
-                        failed_assignment = RouteAssignment(
-                            route_code=failed_route_code,
-                            vehicle_vin="",
-                            vehicle_name="UNASSIGNED",
-                            service_type=dop_record.service_type,
-                            driver_name=cortex_record.driver_name if cortex_record else None,
-                            driver_id=cortex_record.transporter_id if cortex_record else None,
-                            dsp=cortex_record.dsp if cortex_record else None,
-                            wave_time=dop_record.wave,
-                            route_duration=dop_record.route_duration,
-                        )
-                        all_assignments[failed_route_code] = failed_assignment
-            
             pdf_path = self.pdf_generator.generate_handouts(
-                all_assignments,
+                self.assignments,
                 self.status.route_sheets,
                 output_path,
             )
@@ -386,7 +500,7 @@ class IngestOrchestrator:
                 "success": True,
                 "message": "Driver handouts generated successfully.",
                 "output_path": pdf_path,
-                "cards_generated": len(all_assignments),
+                "cards_generated": len(self.assignments),
             }
         except Exception as e:
             return {

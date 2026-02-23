@@ -254,34 +254,31 @@ class IngestOrchestrator:
         }
     
     def _get_available_vehicles_for_route(self, service_type: str) -> list:
-        """Get available vehicles for a route (including fallback options)."""
+        """Get all operational vehicles available for manual assignment."""
         available = []
-        
+
         if not self.assignment_engine:
             return available
-        
-        # Get fallback chain for this service type
-        fallback_chain = self.assignment_engine.FALLBACK_CHAIN.get(
-            service_type, 
-            self.assignment_engine.DEFAULT_FALLBACK
-        )
-        
+
         # Get already-assigned VINs so we can exclude them
         assigned_vins = {
-            assignment.vehicle_vin 
+            assignment.vehicle_vin
             for assignment in self.assignment_engine.assignments.values()
         }
-        
-        # Collect all vehicles from fallback chain that aren't already assigned
-        # Use the original fleet, not the depleted vehicle_pool
+
+        # Manual assignment uses all operational vehicles (ignore service type rules)
         for vehicle in self.assignment_engine.fleet:
-            if vehicle.service_type in fallback_chain and vehicle.vin not in assigned_vins:
-                available.append({
-                    "vehicle_name": vehicle.vehicle_name,
-                    "vin": vehicle.vin,
-                    "service_type": vehicle.service_type,
-                })
-        
+            status_norm = (vehicle.operational_status or "").strip().upper()
+            if not status_norm.startswith("OPERATIONAL"):
+                continue
+            if vehicle.vin in assigned_vins:
+                continue
+            available.append({
+                "vehicle_name": vehicle.vehicle_name,
+                "vin": vehicle.vin,
+                "service_type": vehicle.service_type,
+            })
+
         return available
     
     def manual_assign_vehicle(self, route_code: str, vehicle_vin: str) -> Dict:

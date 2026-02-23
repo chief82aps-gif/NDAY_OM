@@ -90,6 +90,8 @@ export default function ManualVehicleAssignment({
     return null;
   }
 
+  const selectedVins = new Set(Object.values(assignments));
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
@@ -155,7 +157,12 @@ export default function ManualVehicleAssignment({
                   </label>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                     {route.available_vehicles.length > 0 ? (
-                      route.available_vehicles.map((vehicle) => (
+                      route.available_vehicles
+                        .filter((vehicle) => {
+                          const selectedForThisRoute = assignments[route.route_code] === vehicle.vin;
+                          return selectedForThisRoute || !selectedVins.has(vehicle.vin);
+                        })
+                        .map((vehicle) => (
                         <button
                           key={vehicle.vin}
                           onClick={() => handleSelectVehicle(route.route_code, vehicle.vin)}

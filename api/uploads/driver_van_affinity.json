@@ -186,10 +186,13 @@
       "vehicle_name": "1858 XL",
       "service_type": "Standard Parcel - Extra Large Van - US",
       "first_used": "2026-02-20T18:28:14.113305",
-      "last_used": "2026-02-20T18:28:14.113309",
-      "frequency": 1,
+      "last_used": "2026-02-22T18:04:37.538281",
+      "frequency": 4,
       "routes": [
-        "CX131"
+        "CX131",
+        "CX148",
+        "CX148",
+        "CX148"
       ]
     }
   ],
@@ -335,6 +338,18 @@
       "routes": [
         "CX162"
       ]
+    },
+    {
+      "vehicle_name": "1481 CDV 16'",
+      "service_type": "Standard Parcel - Custom Delivery Van 16ft",
+      "first_used": "2026-02-22T17:57:54.424208",
+      "last_used": "2026-02-22T18:04:37.549363",
+      "frequency": 3,
+      "routes": [
+        "CX98",
+        "CX98",
+        "CX98"
+      ]
     }
   ],
   "William Wardrobe|Standard Parcel - Extra Large Van - US": [
@@ -442,10 +457,13 @@
       "vehicle_name": "2070 XL",
       "service_type": "Standard Parcel - Extra Large Van - US",
       "first_used": "2026-02-20T18:28:14.121173",
-      "last_used": "2026-02-20T18:28:14.121177",
-      "frequency": 1,
+      "last_used": "2026-02-22T18:04:37.553349",
+      "frequency": 4,
       "routes": [
-        "CX119"
+        "CX119",
+        "CX108",
+        "CX108",
+        "CX108"
       ]
     }
   ],
@@ -928,6 +946,18 @@
         "CX128",
         "CX128"
       ]
+    },
+    {
+      "vehicle_name": "E725",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.395517",
+      "last_used": "2026-02-22T18:04:37.513371",
+      "frequency": 3,
+      "routes": [
+        "CX113",
+        "CX113",
+        "CX113"
+      ]
     }
   ],
   "Hayden Chapman|Standard Parcel Electric - Rivian MEDIUM": [
@@ -979,6 +1009,440 @@
       "routes": [
         "CX124",
         "CX124"
+      ]
+    }
+  ],
+  "Austin Spitzer|AmFlex Large Vehicle": [
+    {
+      "vehicle_name": "4534 LMR 4x4",
+      "service_type": "AmFlex Large Vehicle",
+      "first_used": "2026-02-22T17:57:54.381331",
+      "last_used": "2026-02-22T18:04:37.488664",
+      "frequency": 3,
+      "routes": [
+        "CX105",
+        "CX105",
+        "CX105"
+      ]
+    }
+  ],
+  "Devin Padilla|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E929",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.382979",
+      "last_used": "2026-02-22T18:04:37.490855",
+      "frequency": 3,
+      "routes": [
+        "CX126",
+        "CX126",
+        "CX126"
+      ]
+    }
+  ],
+  "Noah Arrance|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E453",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.384278",
+      "last_used": "2026-02-22T18:04:37.492659",
+      "frequency": 3,
+      "routes": [
+        "CX125",
+        "CX125",
+        "CX125"
+      ]
+    }
+  ],
+  "Joseph Hogan|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E768",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.385540",
+      "last_used": "2026-02-22T18:04:37.494439",
+      "frequency": 3,
+      "routes": [
+        "CX130",
+        "CX130",
+        "CX130"
+      ]
+    }
+  ],
+  "Beau Dietmeier|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E770",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.386787",
+      "last_used": "2026-02-22T18:04:37.496226",
+      "frequency": 3,
+      "routes": [
+        "CX123",
+        "CX123",
+        "CX123"
+      ]
+    }
+  ],
+  "Krista Randall|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E702",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.388057",
+      "last_used": "2026-02-22T18:04:37.498149",
+      "frequency": 3,
+      "routes": [
+        "CX116",
+        "CX116",
+        "CX116"
+      ]
+    }
+  ],
+  "Naoluong Thao|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E543",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.389364",
+      "last_used": "2026-02-22T18:04:37.501167",
+      "frequency": 3,
+      "routes": [
+        "CX117",
+        "CX117",
+        "CX117"
+      ]
+    }
+  ],
+  "Brandon Urtusuastegui-Quintero|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E705",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.390691",
+      "last_used": "2026-02-22T18:04:37.504219",
+      "frequency": 3,
+      "routes": [
+        "CX124",
+        "CX124",
+        "CX124"
+      ]
+    }
+  ],
+  "Rui Qian|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E706",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.392054",
+      "last_used": "2026-02-22T18:04:37.507353",
+      "frequency": 3,
+      "routes": [
+        "CX121",
+        "CX121",
+        "CX121"
+      ]
+    }
+  ],
+  "Garrett Parker|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E550",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.393451",
+      "last_used": "2026-02-22T18:04:37.510320",
+      "frequency": 3,
+      "routes": [
+        "CX132",
+        "CX132",
+        "CX132"
+      ]
+    }
+  ],
+  "Henry Cook|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E548",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.397214",
+      "last_used": "2026-02-22T18:04:37.516443",
+      "frequency": 3,
+      "routes": [
+        "CX119",
+        "CX119",
+        "CX119"
+      ]
+    }
+  ],
+  "Ray Page|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E541",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.398690",
+      "last_used": "2026-02-22T18:04:37.519144",
+      "frequency": 3,
+      "routes": [
+        "CX118",
+        "CX118",
+        "CX118"
+      ]
+    }
+  ],
+  "Brock Shoemaker|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E752",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.400144",
+      "last_used": "2026-02-22T18:04:37.521401",
+      "frequency": 3,
+      "routes": [
+        "CX115",
+        "CX115",
+        "CX115"
+      ]
+    }
+  ],
+  "Arnell Laporte|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E064",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.401615",
+      "last_used": "2026-02-22T18:04:37.523394",
+      "frequency": 3,
+      "routes": [
+        "CX131",
+        "CX131",
+        "CX131"
+      ]
+    }
+  ],
+  "Angel Somoza|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E544",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.403047",
+      "last_used": "2026-02-22T18:04:37.525253",
+      "frequency": 3,
+      "routes": [
+        "CX128",
+        "CX128",
+        "CX128"
+      ]
+    }
+  ],
+  "Ethan Boston|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E771",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.404498",
+      "last_used": "2026-02-22T18:04:37.527066",
+      "frequency": 3,
+      "routes": [
+        "CX120",
+        "CX120",
+        "CX120"
+      ]
+    }
+  ],
+  "Zachary Syth|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E755",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.405984",
+      "last_used": "2026-02-22T18:04:37.528842",
+      "frequency": 3,
+      "routes": [
+        "CX122",
+        "CX122",
+        "CX122"
+      ]
+    }
+  ],
+  "Pedro Ibarra jr|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E753",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.407501",
+      "last_used": "2026-02-22T18:04:37.530738",
+      "frequency": 3,
+      "routes": [
+        "CX127",
+        "CX127",
+        "CX127"
+      ]
+    }
+  ],
+  "Brett Self|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E540",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.409033",
+      "last_used": "2026-02-22T18:04:37.532591",
+      "frequency": 3,
+      "routes": [
+        "CX129",
+        "CX129",
+        "CX129"
+      ]
+    }
+  ],
+  "Ronan Cichelli|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E688",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.410722",
+      "last_used": "2026-02-22T18:04:37.534404",
+      "frequency": 3,
+      "routes": [
+        "CX112",
+        "CX112",
+        "CX112"
+      ]
+    }
+  ],
+  "Michael Spadino|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E062",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.412689",
+      "last_used": "2026-02-22T18:04:37.536359",
+      "frequency": 3,
+      "routes": [
+        "CX110",
+        "CX110",
+        "CX110"
+      ]
+    }
+  ],
+  "Chris Espejo|Standard Parcel - Custom Delivery Van 16ft": [
+    {
+      "vehicle_name": "3355 CDV 16'",
+      "service_type": "Standard Parcel - Custom Delivery Van 16ft",
+      "first_used": "2026-02-22T17:57:54.416106",
+      "last_used": "2026-02-22T18:04:37.540149",
+      "frequency": 3,
+      "routes": [
+        "CX149",
+        "CX149",
+        "CX149"
+      ]
+    }
+  ],
+  "Brent Dadey|Standard Parcel - Custom Delivery Van 16ft": [
+    {
+      "vehicle_name": "1460 CDV 16'",
+      "service_type": "Standard Parcel - Custom Delivery Van 16ft",
+      "first_used": "2026-02-22T17:57:54.417685",
+      "last_used": "2026-02-22T18:04:37.542024",
+      "frequency": 3,
+      "routes": [
+        "CX99",
+        "CX99",
+        "CX99"
+      ]
+    }
+  ],
+  "Ethan Hashimoto|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "6978 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-22T17:57:54.419286",
+      "last_used": "2026-02-22T18:04:37.543801",
+      "frequency": 3,
+      "routes": [
+        "CX103",
+        "CX103",
+        "CX103"
+      ]
+    }
+  ],
+  "Loren Ledrew|Standard Parcel - Custom Delivery Van 14ft": [
+    {
+      "vehicle_name": "3328 CDV 14'",
+      "service_type": "Standard Parcel - Custom Delivery Van 14ft",
+      "first_used": "2026-02-22T17:57:54.420883",
+      "last_used": "2026-02-22T18:04:37.545684",
+      "frequency": 3,
+      "routes": [
+        "CX104",
+        "CX104",
+        "CX104"
+      ]
+    }
+  ],
+  "Eli Fraser|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "6365 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-22T17:57:54.422522",
+      "last_used": "2026-02-22T18:04:37.547524",
+      "frequency": 3,
+      "routes": [
+        "CX101",
+        "CX101",
+        "CX101"
+      ]
+    }
+  ],
+  "Roniel Tapado|Standard Parcel Electric - Rivian MEDIUM": [
+    {
+      "vehicle_name": "E746",
+      "service_type": "Standard Parcel Electric - Rivian MEDIUM",
+      "first_used": "2026-02-22T17:57:54.426067",
+      "last_used": "2026-02-22T18:04:37.551267",
+      "frequency": 3,
+      "routes": [
+        "CX114",
+        "CX114",
+        "CX114"
+      ]
+    }
+  ],
+  "Cristian Lopez|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "9770 AWD",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-22T17:57:54.430020",
+      "last_used": "2026-02-22T18:04:37.555517",
+      "frequency": 3,
+      "routes": [
+        "CX97",
+        "CX97",
+        "CX97"
+      ]
+    }
+  ],
+  "Braden Van Dyke|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "2078 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-22T17:57:54.431699",
+      "last_used": "2026-02-22T18:04:37.557432",
+      "frequency": 3,
+      "routes": [
+        "CX100",
+        "CX100",
+        "CX100"
+      ]
+    }
+  ],
+  "Dakota Hill|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "6304 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-22T17:57:54.433325",
+      "last_used": "2026-02-22T18:04:37.559272",
+      "frequency": 3,
+      "routes": [
+        "CX106",
+        "CX106",
+        "CX106"
+      ]
+    }
+  ],
+  "Kara Krogmann|Standard Parcel - Extra Large Van - US": [
+    {
+      "vehicle_name": "2075 XL",
+      "service_type": "Standard Parcel - Extra Large Van - US",
+      "first_used": "2026-02-22T17:57:54.435064",
+      "last_used": "2026-02-22T18:04:37.561188",
+      "frequency": 3,
+      "routes": [
+        "CX107",
+        "CX107",
+        "CX107"
       ]
     }
   ]

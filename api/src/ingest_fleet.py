@@ -1,9 +1,12 @@
 """Fleet Excel ingest parser."""
 import pandas as pd
+import logging
 from typing import List, Tuple
 from api.src.models import Vehicle
 from api.src.normalization import normalize_service_type
 from api.src.column_mapping import build_column_map
+
+logger = logging.getLogger(__name__)
 
 
 FLEET_COLUMN_ALIASES = {
@@ -42,14 +45,19 @@ def parse_fleet_excel(file_path: str) -> Tuple[List[Vehicle], List[str]]:
         # Detect file type and read accordingly
         if file_path.lower().endswith('.csv'):
             df = pd.read_csv(file_path, header=None)
+            logger.info(f"Fleet: Loaded CSV file with shape {df.shape}")
         else:
             # Read first sheet for Excel files, no headers assumption (data-driven validation)
             df = pd.read_excel(file_path, sheet_name=0, header=None)
+            logger.info(f"Fleet: Loaded Excel file with shape {df.shape}")
         
         if df.shape[0] < 1 or df.shape[1] < 4:
-            errors.append("Fleet file has insufficient columns or rows. Expected at least 4 columns.")
+            error_msg = "Fleet file has insufficient columns or rows. Expected at least 4 columns."
+            errors.append(error_msg)
+            logger.warning(f"Fleet: {error_msg}")
             return records, errors
         
+        logger.info(f"Fleet: File dimensions OK. Attempting column detection with search_rows=25, min_hits=1")
         column_map, start_idx = build_column_map(
             df,
             FLEET_COLUMN_ALIASES,
@@ -57,6 +65,17 @@ def parse_fleet_excel(file_path: str) -> Tuple[List[Vehicle], List[str]]:
             search_rows=25,
             min_hits=1,
         )
+        logger.info(f"Fleet: Column map detected: {column_map}, data starts at row {start_idx}")
+        
+        if start_idx >= len(df):
+            error_msg = f"Fleet: No data rows found (header detected at row {start_idx}, but file only has {len(df)} rows)"
+            errors.append(error_msg)
+            logger.warning(error_msg)
+            return records, errors
+        
+        parsed_count = 0
+        skipped_grounded = 0
+        skipped_validation = 0
         
         for idx, row in df.iloc[start_idx:].iterrows():
             try:
@@ -67,6 +86,7 @@ def parse_fleet_excel(file_path: str) -> Tuple[List[Vehicle], List[str]]:
                     if pd.notna(cell)
                 )
                 if "GROUNDED" in row_text:
+                    skipped_grounded += 1
                     continue
 
                 vin_cell = _safe_cell(row, column_map["vin"])
@@ -82,24 +102,29 @@ def parse_fleet_excel(file_path: str) -> Tuple[List[Vehicle], List[str]]:
                 # Normalize and validate
                 if not vin:
                     errors.append(f"Row {idx+1}: VIN is empty.")
+                    skipped_validation += 1
                     continue
                 
                 if not service_type:
                     errors.append(f"Row {idx+1}: Service type is empty.")
+                    skipped_validation += 1
                     continue
                 
                 service_type_norm = normalize_service_type(service_type)
                 if not service_type_norm:
                     errors.append(f"Row {idx+1}: Service type '{service_type}' is unrecognized.")
+                    skipped_validation += 1
                     continue
                 
                 if not vehicle_name:
                     errors.append(f"Row {idx+1}: Vehicle name is empty.")
+                    skipped_validation += 1
                     continue
                 
                 # Skip grounded vehicles only
                 status_norm = operational_status.strip().upper()
                 if status_norm == "GROUNDED":
+                    skipped_grounded += 1
                     continue  # Skip, not an error - just ineligible
                 
                 record = Vehicle(
@@ -109,11 +134,17 @@ def parse_fleet_excel(file_path: str) -> Tuple[List[Vehicle], List[str]]:
                     operational_status=operational_status,
                 )
                 records.append(record)
+                parsed_count += 1
             except Exception as e:
                 errors.append(f"Row {idx+1}: Error parsing row - {str(e)}")
+                skipped_validation += 1
                 continue
+        
+        logger.info(f"Fleet: Parsed {parsed_count} records, skipped {skipped_grounded} (GROUNDED), {skipped_validation} (validation errors)")
     
     except Exception as e:
-        errors.append(f"Failed to read Fleet file: {str(e)}")
+        error_msg = f"Failed to read Fleet file: {str(e)}"
+        errors.append(error_msg)
+        logger.error(error_msg)
     
     return records, errors

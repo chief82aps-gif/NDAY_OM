@@ -15,6 +15,14 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 def upload_dop(file: UploadFile = File(...)):
     """Upload DOP Excel or CSV file and parse."""
     try:
+        # Validate file type before processing
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in ['.xlsx', '.xls', '.csv']:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid file type: {file_ext}. DOP file must be .xlsx, .xls, or .csv"
+            )
+        
         file_path = os.path.join(UPLOAD_DIR, f"dop_{file.filename}")
         with open(file_path, "wb") as f:
             f.write(file.file.read())
@@ -28,6 +36,8 @@ def upload_dop(file: UploadFile = File(...)):
             "records_parsed": len(orchestrator.status.dop_records),
             "errors": orchestrator.status.validation_errors[-5:],  # Last 5 errors
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to upload DOP: {str(e)}")
 
@@ -36,6 +46,14 @@ def upload_dop(file: UploadFile = File(...)):
 def upload_fleet(file: UploadFile = File(...)):
     """Upload Fleet Excel or CSV file and parse."""
     try:
+        # Validate file type before processing
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in ['.xlsx', '.xls', '.csv']:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid file type: {file_ext}. Fleet file must be .xlsx, .xls, or .csv"
+            )
+        
         file_path = os.path.join(UPLOAD_DIR, f"fleet_{file.filename}")
         with open(file_path, "wb") as f:
             f.write(file.file.read())
@@ -49,6 +67,8 @@ def upload_fleet(file: UploadFile = File(...)):
             "records_parsed": len(orchestrator.status.fleet_records),
             "errors": orchestrator.status.validation_errors[-5:],
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to upload Fleet: {str(e)}")
 
@@ -57,6 +77,14 @@ def upload_fleet(file: UploadFile = File(...)):
 def upload_cortex(file: UploadFile = File(...)):
     """Upload Cortex Excel or CSV file and parse."""
     try:
+        # Validate file type before processing
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in ['.xlsx', '.xls', '.csv']:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid file type: {file_ext}. Cortex file must be .xlsx, .xls, or .csv"
+            )
+        
         file_path = os.path.join(UPLOAD_DIR, f"cortex_{file.filename}")
         with open(file_path, "wb") as f:
             f.write(file.file.read())
@@ -70,6 +98,8 @@ def upload_cortex(file: UploadFile = File(...)):
             "records_parsed": len(orchestrator.status.cortex_records),
             "errors": orchestrator.status.validation_errors[-5:],
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to upload Cortex: {str(e)}")
 

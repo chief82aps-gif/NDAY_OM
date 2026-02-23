@@ -66,6 +66,8 @@ def build_column_map(
     df: pd.DataFrame,
     aliases_by_field: Dict[str, Iterable[str]],
     fallback_columns: Dict[str, int],
+    search_rows: int = 10,
+    min_hits: int = 2,
 ) -> Tuple[Dict[str, int], int]:
     """
     Build semantic field -> dataframe column index map.
@@ -73,7 +75,7 @@ def build_column_map(
     Returns:
         (column_map, data_start_row)
     """
-    header_row_idx = detect_header_row(df, aliases_by_field)
+    header_row_idx = detect_header_row(df, aliases_by_field, search_rows=search_rows, min_hits=min_hits)
     column_map = dict(fallback_columns)
 
     if header_row_idx is None:

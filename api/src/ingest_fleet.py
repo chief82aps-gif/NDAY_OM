@@ -50,7 +50,13 @@ def parse_fleet_excel(file_path: str) -> Tuple[List[Vehicle], List[str]]:
             errors.append("Fleet file has insufficient columns or rows. Expected at least 4 columns.")
             return records, errors
         
-        column_map, start_idx = build_column_map(df, FLEET_COLUMN_ALIASES, FLEET_FALLBACK_COLUMNS)
+        column_map, start_idx = build_column_map(
+            df,
+            FLEET_COLUMN_ALIASES,
+            FLEET_FALLBACK_COLUMNS,
+            search_rows=25,
+            min_hits=1,
+        )
         
         for idx, row in df.iloc[start_idx:].iterrows():
             try:

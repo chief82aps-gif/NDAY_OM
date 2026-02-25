@@ -8,6 +8,7 @@ import PageHeader from '../components/PageHeader';
 import CapacityAlert from '../components/CapacityAlert';
 import ElectricVanViolationsAlert from '../components/ElectricVanViolationsAlert';
 import ManualVehicleAssignment from '../components/ManualVehicleAssignment';
+import PrimaryDriverSelection from '../components/PrimaryDriverSelection';
 import { ProtectedRoute } from '../components/ProtectedRoute';
 
 interface IngestStatus {
@@ -35,6 +36,13 @@ interface IngestStatus {
 interface StatusMessage {
   type: 'success' | 'error' | 'info' | 'warning';
   text: string;
+}
+
+interface AssignmentDetails {
+  route_code: string;
+  driver_name: string;
+  wave_time?: string;
+  vehicle_name?: string;
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
@@ -78,6 +86,9 @@ export default function Upload() {
   const [violationsRefreshTrigger, setViolationsRefreshTrigger] = useState(0);
   const [failedRoutes, setFailedRoutes] = useState<any[]>([]);
   const [showManualAssignment, setShowManualAssignment] = useState(false);
+  const [primaryDriverRoutes, setPrimaryDriverRoutes] = useState<AssignmentDetails[]>([]);
+  const [showPrimaryDriverModal, setShowPrimaryDriverModal] = useState(false);
+  const [autoGenerateAfterPrimary, setAutoGenerateAfterPrimary] = useState(false);
 
   // Extract user role from JWT token
   useEffect(() => {
@@ -131,6 +142,38 @@ export default function Upload() {
   const showMessage = (type: 'success' | 'error' | 'info' | 'warning', text: string) => {
     const msg: StatusMessage = { type, text };
     setMessages([msg]);
+  };
+
+  const hasMultipleDrivers = (driverName?: string) => {
+    if (!driverName || driverName === 'N/A') return false;
+    return /\||\/|&|,|;|\s+and\s+/i.test(driverName);
+  };
+
+  const openPrimaryDriverModal = (assignments: AssignmentDetails[], shouldAutoGenerate = false) => {
+    const multiDriverRoutes = assignments.filter((assignment) => hasMultipleDrivers(assignment.driver_name));
+    if (multiDriverRoutes.length > 0) {
+      setPrimaryDriverRoutes(multiDriverRoutes);
+      setShowPrimaryDriverModal(true);
+      setAutoGenerateAfterPrimary(shouldAutoGenerate);
+      return true;
+    }
+    return false;
+  };
+
+  const fetchAssignmentsAndPromptPrimary = async (headers: Record<string, string>, shouldAutoGenerate = false) => {
+    try {
+      const detailsResponse = await fetch(`${API_URL}/upload/assignments`, {
+        headers,
+      });
+      const detailsData = await detailsResponse.json();
+      if (detailsData.assignments) {
+        sessionStorage.setItem('assignments', JSON.stringify(detailsData.assignments));
+        return openPrimaryDriverModal(detailsData.assignments, shouldAutoGenerate);
+      }
+    } catch (e) {
+      console.error('Failed to fetch assignment details:', e);
+    }
+    return false;
   };
 
   const handleUpload = useCallback(
@@ -219,17 +262,7 @@ export default function Upload() {
         setViolationsRefreshTrigger(prev => prev + 1);
         
         // Fetch and store assignment details in sessionStorage for database view
-        try {
-          const detailsResponse = await fetch(`${API_URL}/upload/assignments`, {
-            headers,
-          });
-          const detailsData = await detailsResponse.json();
-          if (detailsData.assignments) {
-            sessionStorage.setItem('assignments', JSON.stringify(detailsData.assignments));
-          }
-        } catch (e) {
-          console.error('Failed to fetch assignment details:', e);
-        }
+        await fetchAssignmentsAndPromptPrimary(headers);
       }
     } catch (error) {
       showMessage('error', `Assignment failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -241,7 +274,21 @@ export default function Upload() {
   const handleAssignmentComplete = async () => {
     // After manual assignment is complete, try to generate handouts
     setShowManualAssignment(false);
-    await handleGenerateHandouts();
+    const token = localStorage.getItem('access_token');
+    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+    const prompted = await fetchAssignmentsAndPromptPrimary(headers, true);
+    if (!prompted) {
+      await handleGenerateHandouts();
+    }
+  };
+
+  const handlePrimaryDriversComplete = async () => {
+    setShowPrimaryDriverModal(false);
+    setPrimaryDriverRoutes([]);
+    if (autoGenerateAfterPrimary) {
+      setAutoGenerateAfterPrimary(false);
+      await handleGenerateHandouts();
+    }
   };
 
   const handleGenerateHandouts = async () => {
@@ -292,6 +339,20 @@ export default function Upload() {
           apiUrl={API_URL}
           onAssignmentComplete={handleAssignmentComplete}
           onClose={() => setShowManualAssignment(false)}
+        />
+      )}
+
+      {/* Primary Driver Selection Dialog */}
+      {showPrimaryDriverModal && (
+        <PrimaryDriverSelection
+          routes={primaryDriverRoutes}
+          apiUrl={API_URL}
+          onComplete={handlePrimaryDriversComplete}
+          onClose={() => {
+            setShowPrimaryDriverModal(false);
+            setPrimaryDriverRoutes([]);
+            setAutoGenerateAfterPrimary(false);
+          }}
         />
       )}
 

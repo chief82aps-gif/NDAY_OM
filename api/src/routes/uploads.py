@@ -317,6 +317,26 @@ def manual_assign_vehicle(route_code: str, vehicle_vin: str):
         raise HTTPException(status_code=500, detail=f"Failed to manually assign vehicle: {str(e)}")
 
 
+@router.post("/primary-driver")
+def set_primary_driver(route_code: str, driver_name: str):
+    """Set the primary driver for a route with multiple assigned drivers."""
+    try:
+        assignment = orchestrator.assignments.get(route_code)
+        if not assignment:
+            raise HTTPException(status_code=404, detail=f"Route not found: {route_code}")
+
+        assignment.driver_name = driver_name.strip() if driver_name else assignment.driver_name
+        return {
+            "status": "updated",
+            "route_code": route_code,
+            "driver_name": assignment.driver_name,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to set primary driver: {str(e)}")
+
+
 @router.get("/capacity-status")
 def get_capacity_status():
     """Get van capacity utilization and alerts for service types at 80%+ capacity."""

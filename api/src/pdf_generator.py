@@ -361,7 +361,7 @@ class DriverHandoutGenerator:
         if not name_text:
             return "TBD"
 
-        separators = ["/", "&", ",", ";", " and ", "+"]
+        separators = ["|", "/", "&", ",", ";", " and ", "+"]
         for sep in separators:
             if sep in name_text:
                 parts = [part.strip() for part in name_text.split(sep)]

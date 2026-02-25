@@ -50,11 +50,16 @@ def parse_driver_schedule_excel(file_path: str) -> Tuple[DriverScheduleSummary, 
         else:
             errors.append("'Shifts & Availability' tab not found in file")
         
-        # Determine the scheduled date (first date from row 4)
-        scheduled_date = assigned_dates[0] if assigned_dates else ""
+        # Use current date as the scheduled date (for the report)
+        from datetime import date
+        today_date = date.today()
+        scheduled_date = today_date.strftime('%m/%d/%Y')
         
-        # Filter assignments to only those matching the scheduled date
-        assignments_for_scheduled_date = [a for a in assignments if a.date == scheduled_date]
+        # Find the first date in the file to match assignments against
+        file_date = assigned_dates[0] if assigned_dates else ""
+        
+        # Filter assignments to only those matching the first file date
+        assignments_for_scheduled_date = [a for a in assignments if a.date == file_date]
         
         # Calculate show times from assignments
         assignments_with_show_times = _calculate_show_times(assignments_for_scheduled_date)
@@ -255,7 +260,11 @@ def _parse_assignment_data(data_str: str) -> Tuple[Optional[str], Optional[str]]
     lines = data_str.split('\n')
     for line in lines:
         line = line.strip()
-        if 'Electric' in line or 'Truck' in line or 'Van' in line or 'Parcel' in line:
+        # Skip empty lines and time patterns
+        if not line or re.search(time_pattern, line):
+            continue
+        # First non-empty, non-time line is likely the service type
+        if line and not re.search(time_pattern, line):
             service_type = line
             break
     

@@ -1,14 +1,76 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from fastapi.responses import FileResponse
 from typing import List
+from datetime import datetime
 import os
 import tempfile
 from api.src.orchestrator import orchestrator
+from api.src.authorization import get_current_user_role, require_financial_access
+from api.src.permissions import Permission
+from api.src.database import (
+    SessionLocal,
+    VariableInvoice,
+    WstDeliveredPackages,
+    WstServiceDetails,
+    WstTrainingWeekly,
+    WstUnplannedDelay,
+    WstWeeklyReport,
+    WeeklyIncentiveInvoice,
+    FleetInvoice,
+    DspScorecardSummary,
+    PodReportSummary,
+)
+from api.src.ingest_variable_invoice import ingest_variable_invoice_pdf
+from api.src.ingest_wst_zip import ingest_wst_zip
+from api.src.ingest_weekly_incentive import parse_weekly_incentive_pdf
+from api.src.ingest_fleet_invoice import parse_fleet_invoice_pdf
+from api.src.ingest_dsp_scorecard import parse_dsp_scorecard_pdf
+from api.src.ingest_pod_report import parse_pod_report_pdf
 
 router = APIRouter()
 
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), '../../uploads')
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+def _to_bool(value):
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in {"yes", "y", "true", "1"}:
+        return True
+    if text in {"no", "n", "false", "0"}:
+        return False
+    return None
+
+
+def _to_int(value):
+    try:
+        if value is None or value == "":
+            return None
+        return int(float(value))
+    except (ValueError, TypeError):
+        return None
+
+
+def _to_decimal(value):
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _to_date(value):
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    try:
+        return datetime.fromisoformat(str(value)).date()
+    except ValueError:
+        return None
 
 
 @router.post("/dop")
@@ -215,6 +277,17 @@ def get_upload_status():
     return orchestrator.get_status()
 
 
+@router.post("/reset")
+def reset_upload_cycle():
+    """Reset in-memory ingest status for a new test cycle."""
+    orchestrator.reset()
+    return {
+        "status": "reset",
+        "message": "Ingest status reset successfully.",
+        "details": "In-memory state cleared; uploaded files on disk are unchanged."
+    }
+
+
 @router.post("/assign-vehicles")
 def assign_vehicles():
     """Assign fleet vehicles to routes based on service type."""
@@ -355,3 +428,366 @@ def get_affinity_stats():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve affinity stats: {str(e)}")
+
+
+@router.post("/wst-zip")
+def upload_wst_zip(file: UploadFile = File(...)):
+    """Upload WST ZIP and ingest all five CSVs."""
+    try:
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext != ".zip":
+            raise HTTPException(status_code=400, detail="WST upload must be a .zip file")
+
+        file_path = os.path.join(UPLOAD_DIR, f"wst_{file.filename}")
+        with open(file_path, "wb") as f:
+            f.write(file.file.read())
+
+        results, errors = ingest_wst_zip(file_path)
+
+        db = SessionLocal()
+        try:
+            counts = {}
+            summary = {
+                "total_records": 0,
+                "delivered_packages_total": 0,
+                "pickup_packages_total": 0,
+                "excluded_routes": 0,
+                "dsp_late_cancel_total": 0,
+            }
+            for key, records in results.items():
+                if key == "delivered packages report":
+                    for record in records:
+                        package_count = _to_int(record.get("package count")) or 0
+                        package_type = (record.get("package type") or "").strip().lower()
+                        if "pickup" in package_type:
+                            summary["pickup_packages_total"] += package_count
+                        else:
+                            summary["delivered_packages_total"] += package_count
+                        db.add(WstDeliveredPackages(
+                            report_date=_to_date(record.get("date")),
+                            station=record.get("station"),
+                            dsp_short_code=record.get("dsp short code"),
+                            package_count=package_count,
+                            package_type=record.get("package type"),
+                            source_file=file.filename,
+                        ))
+                    counts[key] = len(records)
+                elif key == "service details report":
+                    for record in records:
+                        excluded = _to_bool(record.get("excluded?") or record.get("excluded"))
+                        if excluded:
+                            summary["excluded_routes"] += 1
+                        db.add(WstServiceDetails(
+                            report_date=_to_date(record.get("date")),
+                            station=record.get("station"),
+                            dsp_short_code=record.get("dsp short code"),
+                            delivery_associate=record.get("delivery associate"),
+                            route_code=record.get("route"),
+                            service_type=record.get("service type"),
+                            planned_duration=record.get("planned duration"),
+                            log_in=record.get("log in"),
+                            log_out=record.get("log out"),
+                            total_distance_planned=_to_decimal(record.get("total distance planned")),
+                            total_distance_allowance=_to_decimal(record.get("total distance allowance")),
+                            distance_unit=record.get("distance unit"),
+                            shipments_delivered=_to_int(record.get("shipments delivered")),
+                            shipments_returned=_to_int(record.get("shipments returned")),
+                            pickup_packages=_to_int(record.get("pickup packages")),
+                            excluded=excluded,
+                            source_file=file.filename,
+                        ))
+                    counts[key] = len(records)
+                elif key == "training weekly report":
+                    for record in records:
+                        db.add(WstTrainingWeekly(
+                            assignment_date=_to_date(record.get("assignment date")),
+                            payment_date=_to_date(record.get("payment date")),
+                            station=record.get("station"),
+                            dsp_short_code=record.get("dsp short code"),
+                            delivery_associate=record.get("delivery associate"),
+                            service_type=record.get("service type"),
+                            course_name=record.get("course name"),
+                            dsp_payment_eligible=_to_bool(record.get("dsp payment eligible")),
+                            source_file=file.filename,
+                        ))
+                    counts[key] = len(records)
+                elif key == "unplanned delay weekly report":
+                    for record in records:
+                        db.add(WstUnplannedDelay(
+                            report_date=_to_date(record.get("date")),
+                            station=record.get("station"),
+                            dsp_short_code=record.get("dsp short code"),
+                            delay_reason=record.get("unplanned delay"),
+                            total_delay_minutes=_to_decimal(record.get("total delay in minutes")),
+                            impacted_routes=_to_int(record.get("impacted routes")),
+                            notes=record.get("notes"),
+                            source_file=file.filename,
+                        ))
+                    counts[key] = len(records)
+                elif key == "weekly report":
+                    for record in records:
+                        dsp_late_cancel = _to_decimal(record.get("dsp late cancel")) or 0
+                        summary["dsp_late_cancel_total"] += dsp_late_cancel
+                        db.add(WstWeeklyReport(
+                            report_date=_to_date(record.get("date")),
+                            station=record.get("station"),
+                            dsp_short_code=record.get("dsp short code"),
+                            service_type=record.get("service type"),
+                            planned_duration=record.get("planned duration"),
+                            total_distance_planned=_to_decimal(record.get("total distance planned")),
+                            total_distance_allowance=_to_decimal(record.get("total distance allowance")),
+                            planned_distance_unit=record.get("planned distance unit"),
+                            amzl_late_cancel=_to_decimal(record.get("amzl late cancel")),
+                            dsp_late_cancel=dsp_late_cancel,
+                            quick_coverage_accepted=_to_decimal(record.get("quick coverage accepted") or record.get("quick coverage")),
+                            completed_routes=_to_int(record.get("completed routes")),
+                            source_file=file.filename,
+                        ))
+                    counts[key] = len(records)
+
+                summary["total_records"] += len(records)
+
+            db.commit()
+
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+        return {
+            "filename": file.filename,
+            "status": "uploaded",
+            "records_parsed": counts,
+            "summary": summary,
+            "errors": errors,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload WST ZIP: {str(e)}")
+
+
+@router.post("/variable-invoice")
+def upload_variable_invoice(file: UploadFile = File(...), role: str = Depends(get_current_user_role)):
+    """Upload weekly variable invoice PDF and store summary lines.
+    
+    Requires: Admin or Manager role (financial data access)
+    """
+    # Verify financial access
+    require_financial_access(role)
+    try:
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext != ".pdf":
+            raise HTTPException(status_code=400, detail="Variable invoice must be a .pdf file")
+
+        file_path = os.path.join(UPLOAD_DIR, f"variable_invoice_{file.filename}")
+        with open(file_path, "wb") as f:
+            f.write(file.file.read())
+
+        db = SessionLocal()
+        try:
+            invoice, errors = ingest_variable_invoice_pdf(file_path, db)
+        finally:
+            db.close()
+
+        summary = None
+        if invoice:
+            total_amount = sum([float(item.amount or 0) for item in invoice.line_items])
+            total_quantity = sum([float(item.quantity or 0) for item in invoice.line_items])
+            summary = {
+                "line_items": len(invoice.line_items),
+                "total_quantity": total_quantity,
+                "total_amount": total_amount,
+            }
+
+        return {
+            "filename": file.filename,
+            "status": "uploaded",
+            "invoice_number": invoice.invoice_number if invoice else None,
+            "line_items": len(invoice.line_items) if invoice else 0,
+            "summary": summary,
+            "errors": errors,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload Variable Invoice: {str(e)}")
+
+
+@router.post("/fleet-invoice")
+def upload_fleet_invoice(file: UploadFile = File(...), role: str = Depends(get_current_user_role)):
+    """Upload monthly fleet invoice PDF (header only for now).
+    
+    Requires: Admin or Manager role (financial data access)
+    """
+    require_financial_access(role)
+    try:
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext != ".pdf":
+            raise HTTPException(status_code=400, detail="Fleet invoice must be a .pdf file")
+
+        file_path = os.path.join(UPLOAD_DIR, f"fleet_invoice_{file.filename}")
+        with open(file_path, "wb") as f:
+            f.write(file.file.read())
+
+        data, errors = parse_fleet_invoice_pdf(file_path)
+        invoice_number = data.get("invoice_number")
+
+        db = SessionLocal()
+        try:
+            invoice = FleetInvoice(
+                invoice_number=invoice_number or f"fleet_{file.filename}",
+                source_file=file.filename,
+            )
+            db.add(invoice)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+        return {
+            "filename": file.filename,
+            "status": "uploaded",
+            "invoice_number": invoice_number,
+            "summary": {
+                "stored": True,
+                "parsed_fields": list(data.keys()),
+            },
+            "errors": errors,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload Fleet Invoice: {str(e)}")
+
+
+@router.post("/weekly-incentive")
+def upload_weekly_incentive(file: UploadFile = File(...), role: str = Depends(get_current_user_role)):
+    """Upload weekly incentive invoice PDF (header only for now).
+    
+    Requires: Admin or Manager role (financial data access)
+    """
+    require_financial_access(role)
+    try:
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext != ".pdf":
+            raise HTTPException(status_code=400, detail="Weekly incentive must be a .pdf file")
+
+        file_path = os.path.join(UPLOAD_DIR, f"weekly_incentive_{file.filename}")
+        with open(file_path, "wb") as f:
+            f.write(file.file.read())
+
+        data, errors = parse_weekly_incentive_pdf(file_path)
+        invoice_number = data.get("invoice_number")
+
+        db = SessionLocal()
+        try:
+            invoice = WeeklyIncentiveInvoice(
+                invoice_number=invoice_number or f"weekly_{file.filename}",
+                source_file=file.filename,
+            )
+            db.add(invoice)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+        return {
+            "filename": file.filename,
+            "status": "uploaded",
+            "invoice_number": invoice_number,
+            "summary": {
+                "stored": True,
+                "parsed_fields": list(data.keys()),
+            },
+            "errors": errors,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload Weekly Incentive: {str(e)}")
+
+
+@router.post("/dsp-scorecard")
+def upload_dsp_scorecard(file: UploadFile = File(...)):
+    """Upload DSP scorecard PDF (summary stored, parsing later)."""
+    try:
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext != ".pdf":
+            raise HTTPException(status_code=400, detail="DSP scorecard must be a .pdf file")
+
+        file_path = os.path.join(UPLOAD_DIR, f"dsp_scorecard_{file.filename}")
+        with open(file_path, "wb") as f:
+            f.write(file.file.read())
+
+        _, _, errors = parse_dsp_scorecard_pdf(file_path)
+
+        db = SessionLocal()
+        try:
+            summary = DspScorecardSummary(source_file=file.filename)
+            db.add(summary)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+        return {
+            "filename": file.filename,
+            "status": "uploaded",
+            "summary": {
+                "stored": True,
+                "parsed_sections": ["summary", "driver_section"],
+            },
+            "errors": errors,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload DSP Scorecard: {str(e)}")
+
+
+@router.post("/pod-report")
+def upload_pod_report(file: UploadFile = File(...)):
+    """Upload POD report PDF (summary stored, parsing later)."""
+    try:
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext != ".pdf":
+            raise HTTPException(status_code=400, detail="POD report must be a .pdf file")
+
+        file_path = os.path.join(UPLOAD_DIR, f"pod_report_{file.filename}")
+        with open(file_path, "wb") as f:
+            f.write(file.file.read())
+
+        _, _, errors = parse_pod_report_pdf(file_path)
+
+        db = SessionLocal()
+        try:
+            summary = PodReportSummary(source_file=file.filename)
+            db.add(summary)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+        return {
+            "filename": file.filename,
+            "status": "uploaded",
+            "summary": {
+                "stored": True,
+                "parsed_sections": ["summary", "driver_section"],
+            },
+            "errors": errors,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload POD Report: {str(e)}")

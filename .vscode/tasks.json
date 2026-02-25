@@ -20,7 +20,7 @@
 		{
 			"label": "Stop NDAY_OM Backend",
 			"type": "shell",
-			"command": "$conn = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue; if ($conn) { $pids = $conn | Select-Object -ExpandProperty OwningProcess -Unique; foreach ($pid in $pids) { Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue }; Write-Host \"Stopped backend process(es) on port 8000: $($pids -join ', ')\" } else { Write-Host \"No backend process listening on port 8000.\" }"
+			"command": "$conn = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue; if ($conn) { $procIds = $conn | Select-Object -ExpandProperty OwningProcess -Unique; foreach ($procId in $procIds) { Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue }; Write-Host \"Stopped backend process(es) on port 8000: $($procIds -join ', ')\" } else { Write-Host \"No backend process listening on port 8000.\" }"
 		}
 	]
 }

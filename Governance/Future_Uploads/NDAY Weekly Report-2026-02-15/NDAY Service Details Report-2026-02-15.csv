@@ -1,0 +1,370 @@
+﻿Date,Station,DSP Short Code,Delivery Associate,Route,Service Type,Planned Duration,Log in,Log out,Total Distance Planned,Total Distance Allowance,Distance unit,Shipments delivered,Shipments returned,Pickup Packages,Excluded?
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Noah Arrance,CX120,Standard Parcel - Extra Large Van - US,10 hr,2026-02-15T18:22:01.355Z,2026-02-16T04:00:41.585Z,124,124,miles,198,2,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Roniel Tapado,CX121,Standard Parcel - Custom Delivery Van 16ft,10 hr,2026-02-15T18:25:43.181Z,2026-02-16T03:20:11.692Z,117,117,miles,208,1,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Cody Bowling,CX122,Standard Parcel - Custom Delivery Van 16ft,10 hr,2026-02-15T18:02:30.452Z,2026-02-16T03:08:55.934Z,140,140,miles,155,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Garrett Parker,CX123,Standard Parcel - Extra Large Van - US,10 hr,2026-02-15T18:14:30.959Z,2026-02-16T04:01:53.708Z,123,123,miles,168,1,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Nathan Berg,CX124,Standard Parcel - Extra Large Van - US,10 hr,2026-02-15T18:24:01.511Z,2026-02-16T03:56:43.113Z,140,140,miles,205,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Garrett Parker,CX124,Standard Parcel - Extra Large Van - US,10 hr,2026-02-15T18:14:30.959Z,2026-02-16T04:01:53.708Z,,,,0,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Loren Ledrew,CX125,Standard Parcel - Extra Large Van - US,10 hr,2026-02-15T18:01:33.823Z,2026-02-16T03:21:27.818Z,122,122,miles,234,3,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Cristofer Martinez-Cowger,CX126,Standard Parcel - Extra Large Van - US,10 hr,2026-02-15T18:25:49.802Z,,129,129,miles,210,1,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Austin Spitzer,CX127,Standard Parcel - Extra Large Van - US,10 hr,2026-02-15T18:22:58.312Z,2026-02-16T04:26:15.486Z,120,120,miles,197,1,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Nathan Berg,CX127,Standard Parcel - Extra Large Van - US,10 hr,,,,,,0,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Kara Krogmann,CX129,Nursery Route Level 1,10 hr,2026-02-15T18:32:25.130Z,,132,132,miles,102,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Cristofer Martinez-Cowger,CX130,Nursery Route Level 1,10 hr,2026-02-15T18:25:49.802Z,,128,128,miles,57,4,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Kara Krogmann,CX130,Nursery Route Level 1,10 hr,2026-02-15T18:32:25.130Z,,,,,20,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Michael Spadino,CX132,Nursery Route Level 1,10 hr,2026-02-15T18:23:56.761Z,2026-02-16T03:12:38.071Z,103,103,miles,101,1,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Ronan Cichelli,CX133,Nursery Route Level 1,10 hr,2026-02-15T18:25:09.368Z,2026-02-16T04:13:17.519Z,106,106,miles,84,1,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Anders Herzberg,CX134,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:09:31.235Z,2026-02-16T02:42:09.377Z,84,84,miles,200,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Johnny Jr Faris,CX135,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:01:31.107Z,2026-02-16T01:51:29.990Z,75,75,miles,252,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Esteban Saldana,CX136,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:07:13.291Z,2026-02-16T01:35:52.914Z,61,61,miles,186,1,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Krista Randall,CX136,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:17:06.126Z,2026-02-16T01:30:30.836Z,,,,53,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Charles Jay Higginbotham,CX137,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:02:25.419Z,2026-02-16T01:59:12.520Z,59,59,miles,208,2,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Arnell Laporte,CX137,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:07:07.679Z,2026-02-16T01:34:47.683Z,,,,37,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Lukascaiden Klingenfuss,CX138,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:08:57.311Z,2026-02-16T02:27:14.119Z,62,62,miles,177,2,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Arnell Laporte,CX139,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:07:07.679Z,2026-02-16T01:34:47.683Z,44,44,miles,166,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Cristian Lopez,CX140,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:11:10.184Z,2026-02-15T23:59:17.597Z,48,48,miles,171,5,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Ethan Hashimoto,CX141,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:26:55.176Z,2026-02-16T01:35:35.013Z,50,50,miles,263,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Dustin Dahlgren,CX142,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:24:56.891Z,2026-02-16T01:33:31.667Z,50,50,miles,233,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Zachary Syth,CX143,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:24:46.951Z,,49,49,miles,287,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Andre Caldwell,CX144,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:07:24.378Z,2026-02-16T01:59:42.727Z,52,52,miles,250,3,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Sebastian Coronado Serracin,CX145,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:07:46.648Z,2026-02-15T23:11:30.145Z,48,48,miles,130,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Krista Randall,CX145,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:17:06.126Z,2026-02-16T01:30:30.836Z,,,,106,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Dexter Gleaton,CX146,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T17:57:46.523Z,2026-02-16T01:29:27.956Z,49,49,miles,298,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Brett Self,CX147,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:08:28.941Z,2026-02-16T01:30:26.776Z,55,55,miles,266,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Derric Reed,CX148,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:14:30.531Z,2026-02-16T00:05:15.775Z,57,57,miles,174,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Krista Randall,CX148,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:17:06.126Z,2026-02-16T01:30:30.836Z,,,,115,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Guadalupe Ortiz,CX149,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:18:53.810Z,2026-02-16T02:53:42.832Z,74,74,miles,246,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,William Lockhart,CX150,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T17:57:47.023Z,2026-02-16T02:52:51.055Z,68,68,miles,268,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Nathan Mercier,CX151,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:09:27.761Z,2026-02-16T01:06:10.070Z,51,51,miles,228,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Eli Fraser,CX152,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:46:06.391Z,2026-02-16T01:22:07.322Z,58,58,miles,271,2,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Joshua Alvarez,CX154,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:07:25.647Z,2026-02-16T03:46:53.919Z,93,93,miles,237,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Eli Fraser,CX154,Standard Parcel Electric - Rivian MEDIUM,10 hr,,,,,,0,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Ray Page,CX156,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:09:09.169Z,2026-02-16T01:42:10.461Z,98,98,miles,167,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Muhammad Burney,CX157,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-15T18:01:19.554Z,2026-02-16T02:30:24.203Z,97,97,miles,191,7,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Rui Qian,CX168,Standard Parcel - Extra Large Van - US,10 hr,2026-02-15T18:21:01.137Z,2026-02-16T03:36:50.597Z,136,136,miles,163,9,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Jordan Perone,CX168,Standard Parcel - Extra Large Van - US,10 hr,2026-02-15T18:01:14.800Z,2026-02-16T02:48:08.303Z,,,,42,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Jacob Sotelo,CX170,Standard Parcel - Custom Delivery Van 14ft,10 hr,2026-02-15T18:09:00.240Z,2026-02-16T03:13:42.928Z,127,127,miles,169,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Dalton Ross,CX170,Standard Parcel - Custom Delivery Van 14ft,10 hr,2026-02-15T18:24:38.798Z,2026-02-16T01:37:34.178Z,,,,51,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Jordan Perone,CX171,Standard Parcel - Extra Large Van - US,10 hr,2026-02-15T18:01:14.800Z,2026-02-16T02:48:08.303Z,170,170,miles,146,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Anthony Solano,CX171,Standard Parcel - Extra Large Van - US,10 hr,2026-02-15T18:11:35.369Z,2026-02-16T03:07:31.006Z,,,,32,0,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Anthony Solano,CX174,Standard Parcel - Custom Delivery Van 16ft,10 hr,2026-02-15T18:11:35.369Z,2026-02-16T03:07:31.006Z,138,138,miles,125,2,0,no
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Dalton Ross,CX174,Standard Parcel - Custom Delivery Van 16ft,10 hr,2026-02-15T18:24:38.798Z,2026-02-16T01:37:34.178Z,,,,96,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Brent Dadey,CX104,Standard Parcel - Extra Large Van - US,10 hr,2026-02-16T18:06:17.773Z,2026-02-17T00:14:29.736Z,121,121,miles,0,197,0,yes
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Christopher Hampton,CX105,Standard Parcel - Custom Delivery Van 16ft,10 hr,2026-02-16T18:22:15.021Z,2026-02-16T23:32:31.826Z,144,144,miles,0,86,0,yes
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Eli Fraser,CX105,Standard Parcel - Custom Delivery Van 16ft,10 hr,2026-02-16T18:09:55.668Z,,,,,0,72,0,yes
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Cody Bowling,CX106,Standard Parcel - Extra Large Van - US,10 hr,2026-02-16T18:29:18.884Z,2026-02-16T23:27:25.636Z,130,130,miles,0,83,0,yes
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Braden Van Dyke,CX106,Standard Parcel - Extra Large Van - US,10 hr,2026-02-16T18:13:19.950Z,2026-02-17T00:16:59.057Z,,,,0,105,0,yes
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Ethan Hashimoto,CX107,Standard Parcel - Custom Delivery Van 16ft,10 hr,2026-02-16T18:30:21.191Z,2026-02-17T01:51:47.442Z,134,134,miles,0,178,0,yes
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Guadalupe Ortiz,CX108,Standard Parcel - Extra Large Van - US,10 hr,2026-02-16T18:32:47.661Z,2026-02-17T00:17:11.738Z,134,134,miles,0,114,0,yes
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Nathan Berg,CX108,Standard Parcel - Extra Large Van - US,10 hr,2026-02-16T18:31:18.401Z,2026-02-16T23:12:49.597Z,,,,0,66,0,yes
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Loren Ledrew,CX109,4WD P31 Delivery Truck,10 hr,2026-02-16T18:03:30.690Z,2026-02-17T02:44:26.759Z,148,148,miles,65,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Austin Spitzer,CX109,4WD P31 Delivery Truck,10 hr,2026-02-16T18:04:45.163Z,2026-02-17T02:52:17.520Z,,,,34,22,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Cristofer Martinez-Cowger,CX112,Nursery Route Level 1 - Electric Vehicle,10 hr,2026-02-16T18:10:20.313Z,2026-02-17T00:09:01.647Z,98,98,miles,43,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Loren Ledrew,CX114,Nursery Route Level 1 - Electric Vehicle,10 hr,2026-02-16T18:03:30.690Z,2026-02-17T02:44:26.759Z,98,98,miles,50,8,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Kara Krogmann,CX114,Nursery Route Level 1 - Electric Vehicle,10 hr,,,,,,0,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Cristofer Martinez-Cowger,CX115,Nursery Route Level 2 - Electric Vehicle,10 hr,2026-02-16T18:10:20.313Z,2026-02-17T00:09:01.647Z,98,98,miles,38,2,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Arnell Laporte,CX117,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:26:40.002Z,2026-02-17T01:26:48.939Z,81,81,miles,142,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Nathan Mercier,CX118,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:43:33.568Z,2026-02-16T23:55:53.796Z,75,75,miles,100,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Dakota Hill,CX118,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T20:09:17.114Z,2026-02-17T00:41:47.972Z,,,,58,1,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Esteban Saldana,CX119,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T17:52:10.509Z,2026-02-17T00:29:37.272Z,59,59,miles,173,1,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Cristian Lopez,CX120,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:33:28.055Z,2026-02-17T00:45:22.938Z,61,61,miles,141,1,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Dexter Gleaton,CX120,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:12:32.250Z,2026-02-17T00:42:52.207Z,,,,60,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Pedro Ibarra jr,CX121,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:07:09.067Z,2026-02-16T23:27:32.518Z,57,57,miles,101,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Lukascaiden Klingenfuss,CX122,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:03:46.505Z,2026-02-16T23:34:43.032Z,48,48,miles,124,2,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Henry Cook,CX123,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:14:19.866Z,2026-02-17T00:35:05.907Z,53,53,miles,179,1,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Chris Espejo,CX124,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T17:56:33.404Z,2026-02-17T00:12:07.862Z,51,51,miles,179,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Dakota Doser,CX125,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:18:24.688Z,2026-02-16T23:39:59.824Z,47,47,miles,171,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Andre Caldwell,CX126,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:42:36.279Z,2026-02-17T02:46:23.483Z,52,52,miles,143,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Roniel Tapado,CX126,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:42:15.776Z,2026-02-17T01:05:28.619Z,,,,27,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Brandon Urtusuastegui-Quintero,CX127,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:30:42.145Z,2026-02-16T23:49:33.920Z,46,46,miles,116,1,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Dexter Gleaton,CX128,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:12:32.250Z,2026-02-17T00:42:52.207Z,48,48,miles,101,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Zachary Syth,CX128,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T19:51:55.677Z,2026-02-16T22:43:23.512Z,,,,63,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Brett Self,CX129,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:26:29.259Z,2026-02-17T00:28:54.380Z,53,53,miles,193,1,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Kara Krogmann,CX130,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:28:48.199Z,2026-02-16T23:29:09.035Z,58,58,miles,113,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Rochelle Carey,CX130,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T17:58:17.905Z,2026-02-16T23:16:38.777Z,,,,63,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Roniel Tapado,CX131,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:42:15.776Z,2026-02-17T01:05:28.619Z,80,80,miles,102,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Travis Rubinstein,CX131,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:22:52.769Z,,,,,67,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Ethan Boston,CX131,Standard Parcel Electric - Rivian MEDIUM,10 hr,,,,,,0,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Michael Spadino,CX132,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:04:09.268Z,2026-02-17T00:51:38.475Z,58,58,miles,129,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Noah Arrance,CX132,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:31:41.100Z,,,,,122,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Jaden Ewalt,CX133,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:01:45.205Z,2026-02-17T01:00:37.122Z,59,59,miles,140,1,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Joseph Hogan,CX134,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:03:20.219Z,2026-02-16T22:47:28.832Z,78,78,miles,85,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Ronan Cichelli,CX134,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:13:48.722Z,2026-02-17T00:39:19.092Z,,,,60,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Lewis Fletcher,CX135,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:01:11.251Z,2026-02-17T02:25:45.700Z,80,80,miles,113,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Matthew Fury,CX136,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T17:57:37.891Z,2026-02-17T00:39:53.862Z,77,77,miles,117,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Garrett Parker,CX137,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:15:10.051Z,2026-02-16T23:45:11.230Z,87,87,miles,57,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Krista Randall,CX140,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T19:04:54.076Z,2026-02-17T02:43:01.440Z,89,89,miles,76,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Kara Krogmann,CX140,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-16T18:28:48.199Z,2026-02-16T23:29:09.035Z,,,,0,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Dalton Ross,CX153,Nursery Route Level 1 - Electric Vehicle,10 hr,2026-02-16T18:11:09.297Z,2026-02-17T02:01:54.672Z,88,88,miles,71,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Dalton Ross,CX154,Nursery Route Level 1 - Electric Vehicle,10 hr,2026-02-16T18:11:09.297Z,2026-02-17T02:01:54.672Z,89,89,miles,83,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Naoluong Thao,CX175,Standard Parcel - Custom Delivery Van 14ft,10 hr,2026-02-16T18:12:31.397Z,2026-02-17T03:40:06.914Z,152,152,miles,216,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Bryce Askew,CX176,Standard Parcel - Extra Large Van - US,10 hr,2026-02-16T18:10:52.779Z,2026-02-17T03:25:22.978Z,152,152,miles,160,6,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Krista Randall,CX176,Standard Parcel - Extra Large Van - US,10 hr,2026-02-16T19:04:54.076Z,2026-02-17T02:43:01.440Z,,,,62,1,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Ray Page,CX176,Standard Parcel - Extra Large Van - US,10 hr,2026-02-16T18:10:06.560Z,2026-02-17T02:50:17.809Z,,,,1,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Ray Page,CX177,Standard Parcel - Custom Delivery Van 16ft,10 hr,2026-02-16T18:10:06.560Z,2026-02-17T02:50:17.809Z,164,164,miles,166,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Dalton Ross,CX177,Standard Parcel - Custom Delivery Van 16ft,10 hr,2026-02-16T18:11:09.297Z,2026-02-17T02:01:54.672Z,,,,16,0,0,no
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Anthony Solano,CX178,Standard Parcel - Extra Large Van - US,10 hr,2026-02-16T18:27:35.509Z,2026-02-17T03:39:50.949Z,175,175,miles,140,3,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Cristian Lopez,CX97,Standard Parcel - Extra Large Van - US,10 hr,2026-02-17T18:17:55.048Z,2026-02-18T01:11:10.201Z,111,111,miles,0,168,0,yes
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Christopher Hampton,CX98,Standard Parcel - Custom Delivery Van 16ft,10 hr,2026-02-17T18:14:29.857Z,2026-02-18T00:56:56.860Z,103,103,miles,0,187,0,yes
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Nathan Berg,CX99,Standard Parcel - Custom Delivery Van 16ft,8 hr,2026-02-17T19:08:01.648Z,2026-02-17T23:58:28.076Z,138,138,miles,0,99,0,yes
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Braden Van Dyke,CX100,Standard Parcel - Extra Large Van - US,10 hr,2026-02-17T18:26:46.471Z,2026-02-18T00:27:14.761Z,123,123,miles,0,124,0,yes
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Eli Fraser,CX101,Standard Parcel - Extra Large Van - US,10 hr,2026-02-17T18:00:13.107Z,2026-02-18T00:03:23.013Z,109,109,miles,0,193,0,yes
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Ethan Hashimoto,CX103,Standard Parcel - Extra Large Van - US,10 hr,2026-02-17T18:03:18.224Z,2026-02-18T01:12:34.288Z,122,122,miles,0,139,0,yes
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Loren Ledrew,CX104,Standard Parcel - Custom Delivery Van 14ft,10 hr,2026-02-17T18:08:38.610Z,2026-02-18T00:08:57.426Z,126,126,miles,0,146,0,yes
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Austin Spitzer,CX105,4WD P31 Delivery Truck,10 hr,2026-02-17T17:47:31.885Z,2026-02-17T23:56:53.382Z,129,129,miles,0,94,0,yes
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Cristofer Martinez-Cowger,CX106,Nursery Route Level 2,9 hr,2026-02-17T18:38:52.284Z,2026-02-18T01:07:07.814Z,130,130,miles,0,69,0,yes
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Cristofer Martinez-Cowger,CX107,Nursery Route Level 2,9 hr,2026-02-17T18:38:52.284Z,2026-02-18T01:07:07.814Z,133,133,miles,0,72,0,yes
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Raymond Burns,CX108,Nursery Route Level 2,9 hr,2026-02-17T18:53:58.996Z,2026-02-17T22:24:12.788Z,124,124,miles,0,61,0,yes
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Brent Dadey,CX110,Nursery Route Level 2 - Electric Vehicle,10 hr,2026-02-17T18:27:09.988Z,2026-02-18T01:13:56.049Z,97,97,miles,0,57,0,yes
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Brent Dadey,CX112,Nursery Route Level 2 - Electric Vehicle,10 hr,2026-02-17T18:27:09.988Z,2026-02-18T01:13:56.049Z,96,96,miles,0,57,0,yes
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Charles Jay Higginbotham,CX113,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-17T18:11:52.121Z,2026-02-18T02:03:43.438Z,57,57,miles,14,7,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Beau Dietmeier,CX114,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-17T18:51:35.082Z,,81,81,miles,8,60,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Brock Shoemaker,CX115,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-17T18:14:49.193Z,2026-02-18T02:45:09.877Z,64,64,miles,14,75,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Krista Randall,CX116,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-17T18:01:18.775Z,2026-02-18T00:09:05.619Z,51,51,miles,43,23,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Naoluong Thao,CX117,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-17T18:03:41.850Z,2026-02-17T23:01:30.841Z,45,45,miles,49,1,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Anthony Solano,CX118,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-17T18:11:44.806Z,2026-02-17T22:50:33.659Z,43,43,miles,42,12,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Henry Cook,CX119,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-17T18:02:02.241Z,2026-02-17T23:55:51.587Z,48,48,miles,80,7,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Ethan Boston,CX120,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-17T18:07:43.973Z,2026-02-17T21:43:22.048Z,42,42,miles,24,0,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Rui Qian,CX121,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-17T18:08:35.278Z,2026-02-17T21:53:32.890Z,42,42,miles,25,0,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Zachary Syth,CX122,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-17T18:32:18.605Z,2026-02-18T00:36:20.448Z,50,50,miles,76,0,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Matthew Fury,CX123,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-17T18:14:21.981Z,,44,44,miles,33,0,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Brandon Urtusuastegui-Quintero,CX124,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-17T18:01:53.892Z,,47,47,miles,38,1,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Dakota Doser,CX125,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-17T19:18:54.926Z,2026-02-18T00:21:44.920Z,44,44,miles,40,1,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Devin Padilla,CX126,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-17T17:51:23.206Z,2026-02-17T23:25:14.106Z,54,54,miles,71,2,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Pedro Ibarra jr,CX127,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-17T18:04:20.078Z,2026-02-17T21:58:26.105Z,48,48,miles,25,0,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Angel Somoza,CX128,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-17T17:58:39.517Z,2026-02-17T23:51:39.408Z,62,62,miles,17,40,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Brett Self,CX129,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-17T18:26:07.521Z,2026-02-18T00:34:16.269Z,59,59,miles,42,2,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Angel Somoza,CX129,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-17T17:58:39.517Z,2026-02-17T23:51:39.408Z,,,,7,5,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Bryce Askew,CX130,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-17T18:11:32.416Z,,53,53,miles,16,1,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Arnell Laporte,CX131,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-17T18:15:37.566Z,,76,76,miles,13,34,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Garrett Parker,CX132,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-17T18:05:28.628Z,2026-02-18T01:46:23.855Z,88,88,miles,1,45,0,no
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Ray Page,CX148,Standard Parcel - Extra Large Van - US,8 hr,2026-02-17T19:17:55.439Z,2026-02-17T22:51:01.437Z,165,165,miles,0,84,0,yes
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Chris Espejo,CX149,Standard Parcel - Custom Delivery Van 16ft,10 hr,2026-02-17T17:59:28.870Z,,146,146,miles,0,0,0,yes
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Christopher Hampton,CX134,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:26:39.349Z,2026-02-18T23:29:23.528Z,66,66,miles,58,1,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Johnny Jr Faris,CX135,Standard Parcel - Custom Delivery Van 16ft,10 hr,2026-02-18T17:51:38.978Z,2026-02-19T05:47:25.947Z,119,119,miles,131,5,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Anthony Solano,CX136,Standard Parcel - On-Road Experience: Driver,10 hr,2026-02-18T18:25:14.935Z,2026-02-19T02:46:32.778Z,109,109,miles,6,87,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Gregory Paulk,CX136,Standard Parcel - On-Road Experience: Driver,10 hr,2026-02-18T18:51:19.931Z,2026-02-19T01:10:58.952Z,,,,0,1,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Cristofer Martinez-Cowger,CX137,Standard Parcel - Custom Delivery Van 16ft,10 hr,2026-02-18T18:11:54.238Z,2026-02-19T05:38:00.113Z,127,127,miles,121,3,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Austin Spitzer,CX138,4WD P31 Delivery Truck,10 hr,2026-02-18T18:10:33.845Z,,188,188,miles,18,59,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Christopher Camillo,CX138,4WD P31 Delivery Truck,10 hr,2026-02-18T18:13:49.297Z,,,,,11,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Spencer Colby,CX138,4WD P31 Delivery Truck,10 hr,2026-02-18T18:25:44.905Z,2026-02-19T04:01:35.857Z,,,,5,146,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Rishi Wason,CX139,Nursery Route Level 2 - Electric Vehicle,10 hr,2026-02-18T18:28:32.900Z,2026-02-19T02:55:51.060Z,74,74,miles,36,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Joseph Hogan,CX139,Nursery Route Level 2 - Electric Vehicle,10 hr,2026-02-18T18:01:29.240Z,2026-02-19T01:52:07.354Z,,,,26,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Lukascaiden Klingenfuss,CX139,Nursery Route Level 2 - Electric Vehicle,10 hr,2026-02-18T18:15:07.967Z,2026-02-19T00:37:51.275Z,,,,4,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Roniel Tapado,CX140,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:42:31.519Z,2026-02-19T01:30:38.450Z,68,68,miles,72,1,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Dakota Doser,CX141,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T19:15:34.856Z,2026-02-19T00:49:03.128Z,53,53,miles,74,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Brock Shoemaker,CX142,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:22:03.378Z,2026-02-18T23:40:07.739Z,47,47,miles,58,1,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Justin McFarren,CX143,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:24:55.097Z,,64,64,miles,58,5,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Galo Saldarriaga Marcillo,CX144,Nursery Route Level 2,8 hr,2026-02-18T18:31:21.282Z,2026-02-18T22:16:48.512Z,42,42,miles,8,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Hayden Chapman,CX145,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:20:13.754Z,,39,39,miles,8,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Cristian Lopez,CX146,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:25:52.407Z,2026-02-18T21:41:41.498Z,40,40,miles,30,1,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Jose Figueroa,CX147,Nursery Route Level 2,8 hr,2026-02-18T19:09:03.913Z,2026-02-18T22:24:42.177Z,41,41,miles,20,2,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Galo Saldarriaga Marcillo,CX148,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:31:21.282Z,2026-02-18T22:16:48.512Z,37,37,miles,3,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Henry Cook,CX149,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:11:08.408Z,2026-02-18T21:11:17.996Z,44,44,miles,31,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Chris Espejo,CX150,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:22:41.025Z,2026-02-18T21:24:12.288Z,44,44,miles,32,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Zachary Syth,CX151,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:22:36.402Z,2026-02-18T22:02:27.206Z,44,44,miles,38,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Galo Saldarriaga Marcillo,CX152,Nursery Route Level 3,9 hr,2026-02-18T18:31:21.282Z,2026-02-18T22:16:48.512Z,43,43,miles,12,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Galo Saldarriaga Marcillo,CX153,Nursery Route Level 1,10 hr,2026-02-18T18:31:21.282Z,2026-02-18T22:16:48.512Z,41,41,miles,2,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Sebastian Coronado Serracin,CX154,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:00:18.924Z,2026-02-18T22:10:51.022Z,46,46,miles,49,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Collin LaTour,CX155,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:10:51.225Z,2026-02-18T21:01:45.060Z,43,43,miles,23,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Arnell Laporte,CX156,Nursery Route Level 2,8 hr,2026-02-18T20:14:52.697Z,2026-02-19T02:03:22.098Z,43,43,miles,27,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Brett Self,CX157,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:13:08.066Z,2026-02-18T22:41:58.921Z,52,52,miles,50,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Esteban Saldana,CX158,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:19:40.261Z,2026-02-19T01:03:48.827Z,57,57,miles,65,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Ripley Shakespeare,CX159,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:23:53.950Z,2026-02-19T01:43:30.794Z,69,69,miles,63,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Beau Dietmeier,CX160,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:32:47.567Z,2026-02-19T00:55:39.833Z,42,42,miles,7,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Rishi Wason,CX161,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:28:32.900Z,2026-02-19T02:55:51.060Z,49,49,miles,40,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Lukascaiden Klingenfuss,CX162,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:15:07.967Z,2026-02-19T00:37:51.275Z,41,41,miles,8,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Joseph Hogan,CX163,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:01:29.240Z,2026-02-19T01:52:07.354Z,52,52,miles,37,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Noah Coe,CX164,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:13:24.255Z,2026-02-19T03:01:32.121Z,58,58,miles,50,4,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Arnell Laporte,CX165,Nursery Route Level 1,10 hr,2026-02-18T20:14:52.697Z,2026-02-19T02:03:22.098Z,86,86,miles,25,12,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Noah Coe,CX165,Nursery Route Level 1,10 hr,2026-02-18T18:13:24.255Z,2026-02-19T03:01:32.121Z,,,,22,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Beau Dietmeier,CX165,Nursery Route Level 1,10 hr,2026-02-18T18:32:47.567Z,2026-02-19T00:55:39.833Z,,,,12,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Brandon Urtusuastegui-Quintero,CX166,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:11:17.306Z,2026-02-18T23:22:54.899Z,71,71,miles,45,1,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Garrett Parker,CX167,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:03:16.117Z,2026-02-18T22:41:08.296Z,84,84,miles,32,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Devin Padilla,CX168,Nursery Route Level 2,10 hr,2026-02-18T18:10:04.787Z,2026-02-19T00:45:55.070Z,86,86,miles,54,4,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Dalton Ross,CX169,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-18T18:12:12.585Z,2026-02-18T23:38:25.449Z,83,83,miles,41,4,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Michael Casillas,CX172,Nursery Route Level 2,9 hr,2026-02-18T18:50:30.856Z,2026-02-19T00:35:50.396Z,84,84,miles,43,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,William Wardrobe,CX174,Nursery Route Level 3,9 hr,2026-02-18T18:21:32.974Z,2026-02-18T18:55:55.535Z,91,91,miles,40,5,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Ross Reinberg,CX178,Standard Parcel - Custom Delivery Van 14ft,10 hr,2026-02-18T18:25:18.372Z,2026-02-19T02:26:43.300Z,101,101,miles,87,1,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,William Wardrobe,CX178,Standard Parcel - Custom Delivery Van 14ft,10 hr,2026-02-18T18:21:32.974Z,2026-02-18T18:55:55.535Z,,,,44,0,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Michael Deleon,CX179,Standard Parcel - Extra Large Van - US,10 hr,2026-02-18T18:34:09.098Z,2026-02-19T02:30:33.969Z,89,89,miles,53,6,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Pedro Ibarra jr,CX180,Standard Parcel - Extra Large Van - US,10 hr,2026-02-18T19:10:21.661Z,2026-02-19T02:08:34.874Z,97,97,miles,19,86,0,no
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Anthony Solano,CX180,Standard Parcel - Extra Large Van - US,10 hr,,,,,,0,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,,AMZL FULL,Standard Parcel - Extra Large Van - US,10 hr,,,,,miles,,,,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,,AMZL FULL,Standard Parcel - Extra Large Van - US,10 hr,,,,,miles,,,,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,,AMZL FULL,Standard Parcel - Extra Large Van - US,10 hr,,,,,miles,,,,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,,AMZL FULL,Standard Parcel - Extra Large Van - US,10 hr,,,,,miles,,,,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Devin Padilla,CX110,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T18:20:41.872Z,2026-02-20T00:03:47.593Z,31,31,miles,94,7,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Ross Reinberg,CX113,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T18:18:53.732Z,2026-02-20T02:50:17.867Z,33,33,miles,108,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Anders Herzberg,CX115,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T18:13:51.548Z,2026-02-20T03:03:23.816Z,61,61,miles,113,1,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Ross Reinberg,CX115,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T18:18:53.732Z,2026-02-20T02:50:17.867Z,,,,14,1,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Gregory Paulk,CX116,Standard Parcel - On-Road Experience: Driver,10 hr,2026-02-19T18:32:30.136Z,2026-02-20T01:29:41.897Z,105,105,miles,0,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Johnny Jr Faris,CX116,Standard Parcel - On-Road Experience: Driver,10 hr,2026-02-19T18:26:06.640Z,2026-02-20T04:30:01.258Z,,,,0,43,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Juan Martinez,CX117,Standard Parcel - On-Road Experience: Driver,10 hr,2026-02-19T18:35:39.525Z,2026-02-20T03:18:38.165Z,101,101,miles,0,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Johnny Jr Faris,CX117,Standard Parcel - On-Road Experience: Driver,10 hr,2026-02-19T18:26:06.640Z,2026-02-20T04:30:01.258Z,,,,0,54,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Austin Spitzer,CX118,4WD P31 Delivery Truck,10 hr,2026-02-19T18:05:50.925Z,2026-02-20T02:47:30.716Z,138,138,miles,0,61,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Ripley Shakespeare,CX119,Nursery Route Level 2,10 hr,2026-02-19T18:15:36.503Z,2026-02-20T03:57:04.239Z,75,75,miles,73,1,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Henry Cook,CX120,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T18:13:02.006Z,2026-02-20T00:53:26.630Z,68,68,miles,52,14,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Johnny Jr Faris,CX121,Nursery Route Level 3,10 hr,2026-02-19T18:26:06.640Z,2026-02-20T04:30:01.258Z,63,63,miles,34,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Logan Kelley,CX121,Nursery Route Level 3,10 hr,2026-02-19T18:48:02.984Z,2026-02-20T00:30:43.533Z,,,,32,1,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Hayden Chapman,CX121,Nursery Route Level 3,10 hr,2026-02-19T18:48:07.768Z,2026-02-19T23:38:23.644Z,,,,10,2,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Brock Shoemaker,CX122,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T18:09:49.455Z,2026-02-20T03:43:37.069Z,48,48,miles,92,1,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Justin McFarren,CX123,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T18:09:20.971Z,2026-02-20T01:39:09.233Z,62,62,miles,55,7,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Gregory Paulk,CX123,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T18:32:30.136Z,2026-02-20T01:29:41.897Z,,,,40,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Johnny Jr Faris,CX124,Nursery Route Level 2,10 hr,2026-02-19T18:26:06.640Z,2026-02-20T04:30:01.258Z,46,46,miles,28,22,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Ripley Shakespeare,CX124,Nursery Route Level 2,10 hr,2026-02-19T18:15:36.503Z,2026-02-20T03:57:04.239Z,,,,9,1,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Naoluong Thao,CX125,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T17:52:20.506Z,2026-02-19T23:53:32.604Z,42,42,miles,73,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Jose Figueroa,CX126,Nursery Route Level 2,10 hr,2026-02-19T18:27:31.994Z,2026-02-19T23:37:54.908Z,41,41,miles,57,3,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Bryce Askew,CX127,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T18:08:07.336Z,2026-02-20T00:12:01.007Z,47,47,miles,70,8,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Jacob Sotelo,CX128,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T17:55:38.237Z,2026-02-20T01:01:39.615Z,47,47,miles,107,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Dustin Dahlgren,CX129,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T18:20:24.762Z,2026-02-20T00:15:22.058Z,45,45,miles,78,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Chris Espejo,CX130,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T18:14:23.257Z,2026-02-19T23:49:16.321Z,46,46,miles,81,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Jaren Sunier,CX131,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T18:06:38.271Z,2026-02-19T23:06:16.187Z,49,49,miles,87,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Sebastian Coronado Serracin,CX132,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T18:04:27.696Z,2026-02-20T00:15:13.065Z,47,47,miles,92,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Brandon Urtusuastegui-Quintero,CX133,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T18:10:58.928Z,2026-02-19T23:37:12.485Z,44,44,miles,85,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Collin LaTour,CX134,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T18:15:05.318Z,2026-02-20T00:23:00.499Z,48,48,miles,101,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Dakota Doser,CX135,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T18:07:44.082Z,,50,50,miles,112,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Derric Reed,CX136,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T17:56:38.519Z,2026-02-20T01:00:48.727Z,55,55,miles,115,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Michael Casillas,CX137,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T18:09:59.859Z,2026-02-20T02:20:45.707Z,70,70,miles,108,2,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Rishi Wason,CX137,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T18:20:14.036Z,2026-02-20T02:00:41.355Z,,,,15,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Rishi Wason,CX138,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T18:20:14.036Z,2026-02-20T02:00:41.355Z,54,54,miles,115,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,William Wardrobe,CX139,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T18:08:42.080Z,2026-02-19T23:34:29.060Z,48,48,miles,88,2,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Joseph Hogan,CX140,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-19T17:52:36.732Z,2026-02-20T01:17:42.029Z,55,55,miles,78,8,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Braden Van Dyke,CX141,Nursery Route Level 1,10 hr,2026-02-19T18:18:37.904Z,2026-02-20T02:55:07.185Z,48,48,miles,40,2,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Anaya Corbray,CX141,Nursery Route Level 1,10 hr,2026-02-19T18:12:47.303Z,,,,,0,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Ryan Sheffer lavalleur,CX142,Nursery Route Level 2,10 hr,2026-02-19T18:34:50.507Z,2026-02-20T01:49:17.878Z,62,62,miles,35,4,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Brock Shoemaker,CX142,Nursery Route Level 2,10 hr,2026-02-19T18:09:49.455Z,2026-02-20T03:43:37.069Z,,,,22,9,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Chris Caggiano,CX142,Nursery Route Level 2,10 hr,2026-02-19T18:30:34.348Z,2026-02-19T19:09:12.177Z,,,,0,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Austin Spitzer,CX143,Nursery Route Level 1,10 hr,2026-02-19T18:05:50.925Z,2026-02-20T02:47:30.716Z,76,76,miles,40,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Braden Van Dyke,CX143,Nursery Route Level 1,10 hr,2026-02-19T18:18:37.904Z,2026-02-20T02:55:07.185Z,,,,29,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Logan Kelley,CX143,Nursery Route Level 1,10 hr,2026-02-19T18:48:02.984Z,2026-02-20T00:30:43.533Z,,,,0,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Juan Martinez,CX147,Nursery Route Level 3,10 hr,2026-02-19T18:35:39.525Z,2026-02-20T03:18:38.165Z,88,88,miles,60,0,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Brent Dadey,CX147,Nursery Route Level 3,10 hr,2026-02-19T18:17:47.075Z,2026-02-20T03:37:29.874Z,,,,30,7,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Guadalupe Ortiz,CX159,Standard Parcel - Extra Large Van - US,10 hr,2026-02-19T18:25:16.337Z,,97,97,miles,126,11,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Brent Dadey,CX160,Standard Parcel - Custom Delivery Van 14ft,10 hr,2026-02-19T18:17:47.075Z,2026-02-20T03:37:29.874Z,99,99,miles,125,5,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Christopher Hampton,CX162,Standard Parcel - Custom Delivery Van 16ft,10 hr,2026-02-19T18:17:46.854Z,2026-02-20T02:49:35.378Z,115,115,miles,150,1,0,no
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Angel Somoza,CX163,Standard Parcel - Extra Large Van - US,10 hr,2026-02-19T18:10:59.643Z,,113,113,miles,102,18,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Candice Foster,AX21,Standard Parcel - Large Van - Recycle,10 hr,2026-02-20T20:08:54.855Z,2026-02-20T23:31:38.011Z,126,126,miles,8,13,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Derric Reed,AX25,Standard Parcel - Large Van - Recycle,10 hr,2026-02-20T17:54:43.232Z,2026-02-21T02:08:45.982Z,72,72,miles,21,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Anaya Corbray,AX25,Standard Parcel - Large Van - Recycle,10 hr,2026-02-20T18:17:37.528Z,,,,,18,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Ethan Boston,AX26,Standard Parcel - Large Van - Recycle,10 hr,2026-02-20T20:12:23.260Z,2026-02-21T00:59:47.513Z,86,86,miles,25,1,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Cody Bowling,AX27,Standard Parcel - Large Van - Recycle,10 hr,2026-02-20T18:09:48.995Z,2026-02-21T03:27:24.236Z,101,101,miles,24,1,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Brock Shoemaker,AX27,Standard Parcel - Large Van - Recycle,10 hr,2026-02-20T20:24:04.805Z,2026-02-21T03:24:35.491Z,,,,15,1,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Brock Shoemaker,AX28,Standard Parcel - Large Van - Recycle,10 hr,2026-02-20T20:24:04.805Z,2026-02-21T03:24:35.491Z,107,107,miles,33,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Cody Bowling,AX28,Standard Parcel - Large Van - Recycle,10 hr,2026-02-20T18:09:48.995Z,2026-02-21T03:27:24.236Z,,,,20,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Collin LaTour,CX55,Standard Parcel - Custom Delivery Van 16ft,10 hr,2026-02-20T18:28:23.439Z,2026-02-21T03:50:25.005Z,141,141,miles,178,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Anders Herzberg,CX100,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T18:18:30.288Z,2026-02-21T01:01:55.921Z,49,49,miles,76,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Rishi Wason,CX100,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T18:09:11.547Z,2026-02-21T00:09:05.397Z,,,,22,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Johnny Jr Faris,CX101,Standard Parcel - Extra Large Van - US,10 hr,2026-02-20T18:27:58.872Z,2026-02-21T03:23:21.079Z,137,137,miles,130,1,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Anders Herzberg,CX101,Standard Parcel - Extra Large Van - US,10 hr,2026-02-20T18:18:30.288Z,2026-02-21T01:01:55.921Z,,,,11,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Matthew Fury,CX101,Standard Parcel - Extra Large Van - US,10 hr,,,,,,0,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Ripley Shakespeare,CX102,4WD P31 Delivery Truck,10 hr,2026-02-20T18:07:09.143Z,2026-02-21T03:46:09.463Z,169,169,miles,83,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Evin Ferrara,CX103,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T18:22:17.570Z,2026-02-21T01:03:53.199Z,69,69,miles,77,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Justin McFarren,CX104,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T18:10:02.019Z,2026-02-20T23:52:52.852Z,63,63,miles,61,2,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Hayden Chapman,CX105,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T17:54:23.716Z,,49,49,miles,44,9,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Bryce Askew,CX106,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T18:22:20.574Z,2026-02-20T22:38:48.837Z,48,48,miles,58,3,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Michael Phillips,CX107,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T18:11:55.281Z,2026-02-20T22:15:46.975Z,42,42,miles,37,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Jacob Sotelo,CX107,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T18:09:00.752Z,2026-02-21T04:54:52.074Z,,,,0,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Logan Kelley,CX108,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T18:13:20.849Z,2026-02-20T22:34:16.400Z,47,47,miles,61,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Michael Deleon,CX109,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T18:09:28.043Z,2026-02-20T21:48:03.025Z,44,44,miles,45,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Jaren Sunier,CX110,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T18:00:58.882Z,2026-02-20T23:26:44.680Z,53,53,miles,95,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Rishi Wason,CX111,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T18:09:11.547Z,2026-02-21T00:09:05.397Z,51,51,miles,59,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Derric Reed,CX112,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T17:54:43.232Z,2026-02-21T02:08:45.982Z,62,62,miles,74,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,William Lockhart,CX113,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T17:56:13.129Z,,70,70,miles,44,3,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Gregory Paulk,CX113,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T18:13:57.356Z,2026-02-20T23:11:11.246Z,,,,15,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Nathan Mercier,CX114,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T18:10:15.436Z,2026-02-21T01:05:05.220Z,63,63,miles,106,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Chris Caggiano,CX115,Nursery Route Level 2,10 hr,2026-02-20T18:33:28.462Z,2026-02-21T01:34:19.236Z,85,85,miles,55,3,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Muhammad Burney,CX115,Nursery Route Level 2,10 hr,2026-02-20T18:36:42.782Z,2026-02-21T01:08:26.612Z,,,,35,1,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Ryan Sheffer lavalleur,CX116,Nursery Route Level 2,10 hr,2026-02-20T18:10:13.926Z,2026-02-21T03:01:36.808Z,101,101,miles,134,3,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Jordan Perone,CX117,Nursery Route Level 2,10 hr,2026-02-20T18:11:33.117Z,2026-02-21T04:09:23.018Z,97,97,miles,155,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Jaden Ewalt,CX118,Nursery Route Level 1,10 hr,2026-02-20T18:10:42.847Z,2026-02-21T02:01:06.930Z,102,102,miles,60,9,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Juan Martinez,CX118,Nursery Route Level 1,10 hr,2026-02-20T18:28:11.167Z,2026-02-21T02:07:11.375Z,,,,57,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Jaden Ewalt,CX119,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T18:10:42.847Z,2026-02-21T02:01:06.930Z,80,80,miles,15,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Noah Coe,CX120,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T19:17:40.404Z,2026-02-20T23:15:55.277Z,85,85,miles,39,1,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,William Wardrobe,CX120,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T17:57:36.584Z,2026-02-21T01:27:58.658Z,,,,0,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Cody Bowling,CX122,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T18:09:48.995Z,2026-02-21T03:27:24.236Z,82,82,miles,34,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Cody Bowling,CX123,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T18:09:48.995Z,2026-02-21T03:27:24.236Z,83,83,miles,60,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Jordan Perone,CX123,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-20T18:11:33.117Z,2026-02-21T04:09:23.018Z,,,,0,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Beau Dietmeier,CX125,Nursery Route Level 1,10 hr,2026-02-20T19:11:25.478Z,2026-02-21T03:00:14.272Z,103,103,miles,94,3,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Jacob Sotelo,CX126,Nursery Route Level 1,10 hr,2026-02-20T18:09:00.752Z,2026-02-21T04:54:52.074Z,98,98,miles,146,1,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Logan Kelley,CX126,Nursery Route Level 1,10 hr,2026-02-20T18:13:20.849Z,2026-02-20T22:34:16.400Z,,,,0,1,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,William Wardrobe,CX127,Nursery Route Level 1,10 hr,2026-02-20T17:57:36.584Z,2026-02-21T01:27:58.658Z,102,102,miles,148,5,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Gregory Paulk,CX127,Nursery Route Level 1,10 hr,2026-02-20T18:13:57.356Z,2026-02-20T23:11:11.246Z,,,,0,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Dustin Dahlgren,CX128,Nursery Route Level 2,10 hr,2026-02-20T18:23:01.323Z,2026-02-21T04:03:52.177Z,123,123,miles,128,1,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Travis Rubinstein,CX128,Nursery Route Level 2,10 hr,,,,,,0,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Ross Reinberg,CX129,Nursery Route Level 3,10 hr,2026-02-20T18:37:07.241Z,2026-02-21T03:59:09.686Z,126,126,miles,142,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Jordan Perone,CX129,Nursery Route Level 3,10 hr,2026-02-20T18:11:33.117Z,2026-02-21T04:09:23.018Z,,,,29,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Michael Phillips,CX129,Nursery Route Level 3,10 hr,2026-02-20T18:11:55.281Z,2026-02-20T22:15:46.975Z,,,,0,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Dexter Gleaton,CX130,Nursery Route Level 3,10 hr,2026-02-20T18:09:47.228Z,2026-02-21T04:24:30.700Z,137,137,miles,154,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Jose Figueroa,CX130,Nursery Route Level 3,10 hr,2026-02-20T18:00:48.411Z,2026-02-20T19:12:24.974Z,,,,0,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Gregory Paulk,CX130,Nursery Route Level 3,10 hr,2026-02-20T18:13:57.356Z,2026-02-20T23:11:11.246Z,,,,0,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Naoluong Thao,CX131,Standard Parcel - Custom Delivery Van 14ft,10 hr,2026-02-20T18:01:30.870Z,2026-02-21T04:23:10.629Z,153,153,miles,144,12,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Dexter Gleaton,CX131,Standard Parcel - Custom Delivery Van 14ft,10 hr,2026-02-20T18:09:47.228Z,2026-02-21T04:24:30.700Z,,,,25,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Angel Somoza,CX132,Standard Parcel - Extra Large Van - US,10 hr,2026-02-20T18:56:11.782Z,2026-02-21T03:32:49.715Z,134,134,miles,200,10,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Michael Casillas,CX133,Standard Parcel - Custom Delivery Van 16ft,10 hr,2026-02-20T18:20:16.093Z,2026-02-21T04:01:12.923Z,150,150,miles,219,1,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Devin Padilla,CX135,Nursery Route Level 3,10 hr,2026-02-20T18:29:06.015Z,2026-02-21T03:37:23.999Z,113,113,miles,155,2,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Jacob Sotelo,CX135,Nursery Route Level 3,10 hr,2026-02-20T18:09:00.752Z,2026-02-21T04:54:52.074Z,,,,27,1,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Candice Foster,CX135,Nursery Route Level 3,10 hr,,,,,,0,0,0,no
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Guadalupe Ortiz,CX136,Standard Parcel - Custom Delivery Van 16ft,10 hr,2026-02-20T18:20:07.227Z,2026-02-21T04:20:48.863Z,142,142,miles,206,3,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Michael Deleon,CX69,Standard Parcel - Extra Large Van - US,10 hr,2026-02-21T18:11:04.581Z,2026-02-22T05:17:13.701Z,109,109,miles,232,3,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Rui Qian,CX69,Standard Parcel - Extra Large Van - US,10 hr,2026-02-21T18:16:37.875Z,2026-02-22T05:03:13.397Z,,,,38,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Rui Qian,CX70,Standard Parcel - Custom Delivery Van 16ft,10 hr,2026-02-21T18:16:37.875Z,2026-02-22T05:03:13.397Z,111,111,miles,257,2,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Chris Caggiano,CX123,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:28:41.435Z,2026-02-22T03:36:04.772Z,42,42,miles,189,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Anders Herzberg,CX123,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:01:27.098Z,2026-02-22T05:36:33.461Z,,,,81,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Brock Shoemaker,CX123,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:06:06.012Z,2026-02-22T05:43:44.209Z,,,,38,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Jordan Perone,CX123,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:14:37.277Z,2026-02-22T04:40:25.946Z,,,,0,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Anders Herzberg,CX124,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:01:27.098Z,2026-02-22T05:36:33.461Z,42,42,miles,294,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Candice Foster,CX125,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:25:27.553Z,2026-02-22T04:15:01.234Z,51,51,miles,231,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Hayden Chapman,CX125,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:24:38.130Z,2026-02-22T04:35:50.994Z,,,,0,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Cristofer Martinez-Cowger,CX126,Standard Parcel - Custom Delivery Van 16ft,10 hr,2026-02-21T17:52:44.257Z,2026-02-22T03:41:48.899Z,137,137,miles,212,1,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Ripley Shakespeare,CX127,4WD P31 Delivery Truck,10 hr,2026-02-21T18:05:20.812Z,2026-02-22T03:50:34.726Z,129,129,miles,144,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,William Wardrobe,CX128,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:00:09.272Z,2026-02-22T02:08:13.392Z,75,75,miles,159,25,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Noah Coe,CX129,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:01:53.552Z,2026-02-22T04:14:48.798Z,73,73,miles,167,7,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Evin Ferrara,CX129,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:01:37.698Z,2026-02-22T04:24:50.492Z,,,,17,5,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Evin Ferrara,CX130,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:01:37.698Z,2026-02-22T04:24:50.492Z,70,70,miles,241,1,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Brock Shoemaker,CX131,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:06:06.012Z,2026-02-22T05:43:44.209Z,54,54,miles,285,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Justin McFarren,CX132,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:07:11.516Z,2026-02-22T04:35:05.059Z,59,59,miles,218,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Ross Reinberg,CX133,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:20:40.348Z,2026-02-22T04:31:06.222Z,62,62,miles,201,17,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Dexter Gleaton,CX133,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T17:59:17.044Z,2026-02-22T04:20:38.763Z,,,,44,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Brett Self,CX134,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:08:24.965Z,2026-02-22T04:38:45.770Z,46,46,miles,215,11,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Justin McFarren,CX134,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:07:11.516Z,2026-02-22T04:35:05.059Z,,,,18,12,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Alex Gant,CX135,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:00:39.332Z,2026-02-22T03:56:02.563Z,52,52,miles,300,2,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Dustin Dahlgren,CX136,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:07:29.214Z,2026-02-22T03:22:08.478Z,53,53,miles,292,1,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Jaden Ewalt,CX137,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:05:24.122Z,2026-02-22T04:07:32.932Z,47,47,miles,326,1,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Kylee Artis,CX138,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:00:43.845Z,,56,56,miles,135,1,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Collin LaTour,CX138,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:02:54.717Z,2026-02-22T04:27:19.071Z,,,,117,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Gregory Paulk,CX138,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:29:48.647Z,,,,,55,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Sebastian Coronado Serracin,CX139,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:20:52.728Z,2026-02-22T04:19:40.703Z,47,47,miles,255,1,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Muhammad Burney,CX139,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:00:38.420Z,2026-02-22T04:20:21.302Z,,,,36,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Collin LaTour,CX140,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:02:54.717Z,2026-02-22T04:27:19.071Z,50,50,miles,309,2,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Dexter Gleaton,CX141,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T17:59:17.044Z,2026-02-22T04:20:38.763Z,54,54,miles,300,1,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Derric Reed,CX142,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T17:58:32.711Z,2026-02-22T01:52:52.010Z,58,58,miles,265,1,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Muhammad Burney,CX143,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:00:38.420Z,2026-02-22T04:20:21.302Z,65,65,miles,269,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,William Lockhart,CX144,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:17:30.948Z,,69,69,miles,187,27,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Logan Kelley,CX145,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:31:51.666Z,2026-02-22T02:53:35.533Z,54,54,miles,197,1,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Gregory Paulk,CX145,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:29:48.647Z,,,,,84,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Rishi Wason,CX145,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:21:57.910Z,2026-02-22T02:12:57.224Z,,,,0,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Nathan Mercier,CX146,Standard Parcel Electric - Rivian MEDIUM,10 hr,2026-02-21T18:02:34.685Z,2026-02-22T03:33:23.563Z,60,60,miles,275,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Jacob Sotelo,CX155,Nursery Route Level 2,8 hr,2026-02-21T18:16:37.599Z,2026-02-22T04:17:14.347Z,90,90,miles,181,2,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Rishi Wason,CX161,Nursery Route Level 1,10 hr,2026-02-21T18:21:57.910Z,2026-02-22T02:12:57.224Z,95,95,miles,155,2,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Anaya Corbray,CX162,Nursery Route Level 2,10 hr,2026-02-21T18:14:06.794Z,2026-02-22T05:39:53.157Z,90,90,miles,165,6,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Juan Martinez,CX163,Nursery Route Level 1,10 hr,2026-02-21T18:26:16.087Z,2026-02-22T04:34:17.254Z,91,91,miles,133,2,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Michael Phillips,CX164,Nursery Route Level 3,10 hr,2026-02-21T18:20:34.317Z,2026-02-22T03:12:19.542Z,97,97,miles,90,2,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Jordan Perone,CX164,Nursery Route Level 3,10 hr,2026-02-21T18:14:37.277Z,2026-02-22T04:40:25.946Z,,,,72,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Hayden Chapman,CX164,Nursery Route Level 3,10 hr,2026-02-21T18:24:38.130Z,2026-02-22T04:35:50.994Z,,,,47,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Socorro Navarro Segura,CX165,Nursery Route Level 2,10 hr,2026-02-21T18:36:06.489Z,2026-02-22T05:04:41.019Z,97,97,miles,183,6,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Juan Martinez,CX165,Nursery Route Level 2,10 hr,2026-02-21T18:26:16.087Z,2026-02-22T04:34:17.254Z,,,,20,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Jordan Perone,CX166,Nursery Route Level 2,10 hr,2026-02-21T18:14:37.277Z,2026-02-22T04:40:25.946Z,96,96,miles,176,2,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Hayden Chapman,CX167,Nursery Route Level 3,10 hr,2026-02-21T18:24:38.130Z,2026-02-22T04:35:50.994Z,115,115,miles,183,3,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Candice Foster,CX167,Nursery Route Level 3,10 hr,2026-02-21T18:25:27.553Z,2026-02-22T04:15:01.234Z,,,,0,1,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Cody Bowling,CX168,Standard Parcel - Extra Large Van - US,10 hr,2026-02-21T18:16:10.519Z,2026-02-22T04:48:20.410Z,119,119,miles,243,1,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Nathan Berg,CX168,Standard Parcel - Extra Large Van - US,10 hr,2026-02-21T18:15:18.992Z,2026-02-22T05:15:54.745Z,,,,42,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Jose Figueroa,CX169,Nursery Route Level 3,10 hr,2026-02-21T18:01:39.316Z,2026-02-22T04:56:41.911Z,118,118,miles,209,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Ray Page,CX170,Standard Parcel - Custom Delivery Van 16ft,10 hr,2026-02-21T18:20:27.304Z,2026-02-22T04:38:51.748Z,136,136,miles,245,2,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Michael Casillas,CX172,Standard Parcel - Custom Delivery Van 14ft,10 hr,2026-02-21T18:21:56.722Z,2026-02-22T04:28:23.226Z,144,144,miles,255,3,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Nathan Berg,CX173,Standard Parcel - Extra Large Van - US,10 hr,2026-02-21T18:15:18.992Z,2026-02-22T05:15:54.745Z,143,143,miles,254,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Guadalupe Ortiz,CX174,Standard Parcel - Extra Large Van - US,10 hr,2026-02-21T18:13:12.901Z,2026-02-22T04:57:56.063Z,143,143,miles,230,1,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Eli Fraser,CX174,Standard Parcel - Extra Large Van - US,10 hr,2026-02-21T18:17:18.890Z,2026-02-22T04:50:46.881Z,,,,33,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Eli Fraser,CX175,Standard Parcel - Extra Large Van - US,10 hr,2026-02-21T18:17:18.890Z,2026-02-22T04:50:46.881Z,161,161,miles,190,1,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Ethan Hashimoto,CX187,Nursery Route Level 2,8 hr,2026-02-21T18:50:33.402Z,2026-02-22T03:35:02.479Z,99,99,miles,117,0,0,no
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Rishi Wason,CX187,Nursery Route Level 2,8 hr,2026-02-21T18:21:57.910Z,2026-02-22T02:12:57.224Z,,,,0,0,0,no

@@ -5,3 +5,9 @@ openpyxl
 pdfplumber
 python-multipart
 reportlab
+sqlalchemy==2.0.46
+psycopg2-binary==2.9.9
+python-dotenv==1.0.0
+python-jose==3.3.0
+passlib==1.7.4
+PyJWT==2.8.1

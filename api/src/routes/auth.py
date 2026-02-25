@@ -1,9 +1,16 @@
 import os
 import json
+from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
+import jwt
 
 router = APIRouter()
+
+# JWT Configuration
+JWT_SECRET = os.getenv("JWT_SECRET", "test_secret_key_change_in_production")
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRY_HOURS = 24
 
 
 class LoginRequest(BaseModel):
@@ -14,6 +21,9 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     name: str
     username: str
+    role: str
+    access_token: str
+    token_type: str = "bearer"
 
 
 class CreateUserRequest(BaseModel):
@@ -39,11 +49,35 @@ class ChangePasswordRequest(BaseModel):
 # Path to users.json file (for persistent storage when available)
 USERS_FILE = os.path.join(os.path.dirname(__file__), '..', '..', 'users.json')
 
-# Default/static users - always available, loaded from environment or hardcoded
-# This ensures users aren't lost on Render deployments
+# Default/static users with roles - always available
+# Format: {"username": {"password": "...", "role": "admin|manager|dispatcher|driver", "name": "..."}}
 DEFAULT_USERS = {
-    "admin": os.getenv("ADMIN_PASSWORD", "NDAY_2026"),
-    "chief": os.getenv("CHIEF_PASSWORD", "chief_2026"),
+    "admin": {
+        "password": os.getenv("ADMIN_PASSWORD", "NDAY_2026"),
+        "role": "admin",
+        "name": "Admin"
+    },
+    "chief": {
+        "password": os.getenv("CHIEF_PASSWORD", "chief_2026"),
+        "role": "admin",
+        "name": "Chief"
+    },
+    # Test users for RBAC testing
+    "manager_user": {
+        "password": "manager_pass_123",
+        "role": "manager",
+        "name": "Manager User"
+    },
+    "dispatcher_user": {
+        "password": "dispatcher_pass_123",
+        "role": "dispatcher",
+        "name": "Dispatcher User"
+    },
+    "driver_user": {
+        "password": "driver_pass_123",
+        "role": "driver",
+        "name": "Driver User"
+    },
 }
 
 
@@ -52,19 +86,55 @@ def load_users():
     
     Default users are ALWAYS available, even if file doesn't exist.
     File-based users are supplementary - useful for local development.
+    
+    User format: {
+        "username": {
+            "password": "...",
+            "role": "admin|manager|dispatcher|driver",
+            "name": "Display Name"
+        }
+    }
     """
-    users = DEFAULT_USERS.copy()  # Start with defaults
+    users = {}
+    
+    # Start with defaults
+    for username, user_data in DEFAULT_USERS.items():
+        users[username] = user_data.copy()
     
     # Try to load additional users from file if it exists
     if os.path.exists(USERS_FILE):
         try:
             with open(USERS_FILE, 'r') as f:
                 file_users = json.load(f)
-                users.update(file_users)  # Merge file users
+                # Merge file users (file can override defaults)
+                for username, user_data in file_users.items():
+                    users[username] = user_data
         except Exception as e:
             print(f"Warning: Could not load users from file: {e}")
     
     return users
+
+
+def _normalize_user_record(username: str, user_data):
+    if isinstance(user_data, dict):
+        return {
+            "password": user_data.get("password"),
+            "role": user_data.get("role", "driver"),
+            "name": user_data.get("name", username.capitalize()),
+        }
+    return {
+        "password": user_data,
+        "role": "driver",
+        "name": username.capitalize(),
+    }
+
+
+def _verify_user_password(users, username: str, password: str) -> bool:
+    user_data = users.get(username)
+    if not user_data:
+        return False
+    record = _normalize_user_record(username, user_data)
+    return record.get("password") == password
 
 
 def save_users(users):
@@ -89,25 +159,63 @@ USERS = load_users()
 async def login(request: LoginRequest):
     """
     Authenticate user with username and password.
+    Returns JWT token with role claim for RBAC.
     """
-    USERS = load_users()  # Reload users in case they changed
+    users = load_users()  # Reload users in case they changed
     username = request.username.lower().strip()
     password = request.password
 
-    # Check if user exists and password is correct
-    if username not in USERS or USERS[username] != password:
+    # Check if user exists
+    if username not in users:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
         )
-
-    # Return user info
-    # Format the name nicely (capitalize first letter)
-    display_name = username.capitalize()
+    
+    user_data = users[username]
+    
+    # Check if password is correct
+    # Handle both old format (simple password string) and new format (dict with password key)
+    if isinstance(user_data, dict):
+        user_password = user_data.get("password")
+        user_role = user_data.get("role", "driver")
+        user_name = user_data.get("name", username.capitalize())
+    else:
+        # Old format (backward compatibility)
+        user_password = user_data
+        user_role = "driver"  # Default role for old format
+        user_name = username.capitalize()
+    
+    if user_password != password:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password",
+        )
+    
+    # Generate JWT token with role claim
+    payload = {
+        "sub": username,
+        "username": username,
+        "role": user_role,
+        "name": user_name,
+        "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS),
+        "iat": datetime.utcnow(),
+    }
+    
+    try:
+        access_token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generating token: {str(e)}",
+        )
     
     return LoginResponse(
-        name=display_name,
+        name=user_name,
         username=username,
+        role=user_role,
+        access_token=access_token,
+        token_type="bearer",
     )
 
 
@@ -120,7 +228,7 @@ async def create_user(request: CreateUserRequest):
     
     # Validate admin credentials
     admin_username = request.admin_username.lower().strip()
-    if admin_username not in USERS or USERS[admin_username] != request.admin_password:
+    if not _verify_user_password(USERS, admin_username, request.admin_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid admin credentials",
@@ -157,7 +265,11 @@ async def create_user(request: CreateUserRequest):
         )
     
     # Create new user
-    USERS[new_username] = request.password
+    USERS[new_username] = {
+        "password": request.password,
+        "role": "driver",
+        "name": new_username.capitalize(),
+    }
     save_users(USERS)
     
     return {
@@ -176,17 +288,17 @@ async def list_users(request: LoginRequest):
     
     # Validate admin credentials
     admin_username = request.username.lower().strip()
-    if admin_username not in USERS or USERS[admin_username] != request.password:
+    if not _verify_user_password(USERS, admin_username, request.password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid admin credentials",
         )
     
     # Return list of users
-    users_list = [
-        UserListResponse(username=username, name=username.capitalize())
-        for username in USERS.keys()
-    ]
+    users_list = []
+    for username, user_data in USERS.items():
+        record = _normalize_user_record(username, user_data)
+        users_list.append(UserListResponse(username=username, name=record["name"]))
     
     return {"users": users_list}
 
@@ -200,7 +312,7 @@ async def delete_user(request: CreateUserRequest):
     
     # Validate admin credentials
     admin_username = request.admin_username.lower().strip()
-    if admin_username not in USERS or USERS[admin_username] != request.admin_password:
+    if not _verify_user_password(USERS, admin_username, request.admin_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid admin credentials",
@@ -246,8 +358,11 @@ async def change_password(request: ChangePasswordRequest):
     
     # Admin can change any password OR user can change their own with old password
     admin_username = request.admin_username.lower().strip()
-    is_admin_change = admin_username in USERS and USERS[admin_username] == request.admin_password
-    is_self_change = username_to_change == admin_username and USERS[username_to_change] == request.old_password
+    is_admin_change = _verify_user_password(USERS, admin_username, request.admin_password)
+    is_self_change = (
+        username_to_change == admin_username and
+        _verify_user_password(USERS, username_to_change, request.old_password)
+    )
     
     if not (is_admin_change or is_self_change):
         raise HTTPException(
@@ -270,7 +385,12 @@ async def change_password(request: ChangePasswordRequest):
         )
     
     # Change password
-    USERS[username_to_change] = request.new_password
+    existing_record = _normalize_user_record(username_to_change, USERS[username_to_change])
+    USERS[username_to_change] = {
+        "password": request.new_password,
+        "role": existing_record.get("role", "driver"),
+        "name": existing_record.get("name", username_to_change.capitalize()),
+    }
     save_users(USERS)
     
     return {"message": f"Password for '{username_to_change}' changed successfully"}

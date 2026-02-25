@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import PageHeader from './PageHeader';
 
@@ -18,7 +19,7 @@ const FEATURES: FeatureCard[] = [
     title: 'Daily Driver Assignment',
     description: 'Upload DOP, Fleet, Cortex, and Route Sheets to generate driver handouts with route assignments and vehicle allocations.',
     icon: '📋',
-    href: '/upload',
+    href: '/upload?view=daily',
     color: 'from-blue-500 to-blue-600',
   },
   {
@@ -53,10 +54,44 @@ const FEATURES: FeatureCard[] = [
     href: '#',
     color: 'from-green-500 to-green-600',
   },
+  {
+    id: 'financial-data',
+    title: 'Financial Data',
+    description: 'Upload variable, fleet, and incentive invoices. Admin and Manager roles only.',
+    icon: '💰',
+    href: '/upload?view=financial',
+    color: 'from-amber-500 to-amber-600',
+  },
+  {
+    id: 'performance-data',
+    title: 'Performance & Delivery Data',
+    description: 'Upload WST performance reports, DSP scorecards, and proof of delivery records. Available to all users.',
+    icon: '📊',
+    href: '/upload?view=performance',
+    color: 'from-teal-500 to-teal-600',
+  },
 ];
 
 export default function Dashboard() {
   const router = useRouter();
+  const [userRole, setUserRole] = useState<string | null>(null);
+
+  // Extract user role from JWT token
+  useEffect(() => {
+    try {
+      const token = localStorage.getItem('access_token');
+      if (token) {
+        // Decode JWT manually (split by '.' and decode payload)
+        const parts = token.split('.');
+        if (parts.length === 3) {
+          const payload = JSON.parse(atob(parts[1]));
+          setUserRole(payload.role);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to extract role from token:', error);
+    }
+  }, []);
 
   const handleFeatureClick = (href: string) => {
     if (href !== '#') {
@@ -81,7 +116,12 @@ export default function Dashboard() {
 
         {/* Feature Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
-          {FEATURES.map((feature) => (
+          {FEATURES.filter((feature) => {
+            if (feature.id === 'financial-data') {
+              return userRole === 'admin' || userRole === 'manager';
+            }
+            return true;
+          }).map((feature) => (
             <div
               key={feature.id}
               onClick={() => handleFeatureClick(feature.href)}

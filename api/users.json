@@ -1,9 +1,32 @@
 {
-  "admin": "NDAY_2026",
-  "test": "testpass123",
-  "jefe": "GoRRRRRRRRR",
-  "dylan": "IndianaBears",
-  "tam": "HotGrammy",
-  "galo": "Paperwork26",
-  "spencer": "BelCanto"
+  "test": {
+    "password": "testpass123",
+    "role": "dispatcher",
+    "name": "Test User"
+  },
+  "jefe": {
+    "password": "GoRRRRRRRRR",
+    "role": "dispatcher",
+    "name": "Jefe"
+  },
+  "dylan": {
+    "password": "IndianaBears",
+    "role": "dispatcher",
+    "name": "Dylan"
+  },
+  "tam": {
+    "password": "HotGrammy",
+    "role": "driver",
+    "name": "Tam"
+  },
+  "galo": {
+    "password": "Paperwork26",
+    "role": "dispatcher",
+    "name": "Galo"
+  },
+  "spencer": {
+    "password": "BelCanto",
+    "role": "driver",
+    "name": "Spencer"
+  }
 }

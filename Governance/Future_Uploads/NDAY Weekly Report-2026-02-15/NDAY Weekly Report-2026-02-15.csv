@@ -1,0 +1,62 @@
+﻿Date,Station,DSP Short Code,Service Type,Planned Duration,Total Distance Planned,Total Distance Allowance,Planned Distance Unit,AMZL late cancel,DSP late cancel,Quick coverage,accepted,completed routes
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel Electric - Rivian MEDIUM,10 hr,1382,1382,miles,0,,,,22
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Custom Delivery Van 14ft,10 hr,127,127,miles,0,,,,1
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Extra Large Van - US,10 hr,1064,1064,miles,0,,,,8
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 1,10 hr,469,469,miles,0,,,,4
+2026-02-15,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Custom Delivery Van 16ft,10 hr,395,395,miles,0,,,,3
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 1 - Electric Vehicle,10 hr,373,373,miles,0,,,,4
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Custom Delivery Van 16ft,10 hr,164,164,miles,0,2,,,1
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,4WD P31 Delivery Truck,10 hr,148,148,miles,0,,,,1
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel Electric - Rivian MEDIUM,10 hr,1397,1397,miles,0,,,,22
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Custom Delivery Van 14ft,10 hr,152,152,miles,0,,,,1
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Extra Large Van - US,10 hr,327,327,miles,0,3,,,2
+2026-02-16,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 2 - Electric Vehicle,10 hr,98,98,miles,0,,,,1
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel Electric - Rivian MEDIUM,10 hr,1098,1098,miles,3,,,,20
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Custom Delivery Van 14ft,10 hr,0,0,miles,0,1,,,0
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Extra Large Van - US,10 hr,0,0,miles,0,5,,,0
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Large Van - Recycle,10 hr,0,0,miles,0,,,,0
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 2 - Electric Vehicle,10 hr,0,0,miles,0,2,,,0
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 2,10 hr,0,0,miles,0,3,,,0
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Custom Delivery Van 16ft,10 hr,0,0,miles,0,3,,,0
+2026-02-17,Reno (DLV3)-Amazon.com,NDAY,4WD P31 Delivery Truck,10 hr,0,0,miles,0,1,,,0
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 3,10 hr,0,0,miles,0,,,,0
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 2,9 hr,84,84,miles,N/A,N/A,N/A,N/A,1
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 2,10 hr,86,86,miles,0,,,,1
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - On-Road Experience: Driver,10 hr,109,109,miles,0,,,,1
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 2,8 hr,126,126,miles,0,,,,3
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,4WD P31 Delivery Truck,10 hr,188,188,miles,0,,,,1
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Custom Delivery Van 16ft,10 hr,246,246,miles,1,,,,2
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 3,9 hr,134,134,miles,0,,,,2
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel Electric - Rivian MEDIUM,10 hr,1293,1293,miles,0,,,,24
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Custom Delivery Van 14ft,10 hr,101,101,miles,0,,,,1
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Extra Large Van - US,10 hr,186,186,miles,1,,,,2
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 2 - Electric Vehicle,10 hr,74,74,miles,0,,,,1
+2026-02-18,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 1,10 hr,127,127,miles,0,,,,2
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel Electric - Rivian MEDIUM,10 hr,1050,1050,miles,,,,,21
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Large Van - Recycle,10 hr,0,0,miles,0,,,,0
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Extra Large Van - US,10 hr,210,210,miles,4,,,,6
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Custom Delivery Van 14ft,10 hr,99,99,miles,0,,,,1
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 1,10 hr,124,124,miles,0,,,,2
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 3,10 hr,151,151,miles,0,,,,2
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 2,10 hr,224,224,miles,0,,,,4
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,4WD P31 Delivery Truck,10 hr,138,138,miles,0,,,,1
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - On-Road Experience: Driver,10 hr,206,206,miles,0,,,,2
+2026-02-19,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Custom Delivery Van 16ft,10 hr,115,115,miles,,,,,1
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 2,10 hr,406,406,miles,,,,,4
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 3,10 hr,376,376,miles,0,,,,3
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel Electric - Rivian MEDIUM,10 hr,1040,1040,miles,,,,,17
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,4WD P31 Delivery Truck,10 hr,169,169,miles,0,,,,1
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Custom Delivery Van 16ft,10 hr,433,433,miles,0,,,,3
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Extra Large Van - US,10 hr,271,271,miles,0,,,,2
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Large Van - Recycle,10 hr,492,492,miles,0,,,,5
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Custom Delivery Van 14ft,10 hr,153,153,miles,0,,,,1
+2026-02-20,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 1,10 hr,405,405,miles,0,,,,4
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,4WD P31 Delivery Truck,10 hr,129,129,miles,0,,,,1
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 1,10 hr,186,186,miles,0,,,,2
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Custom Delivery Van 14ft,10 hr,144,144,miles,0,,,,1
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 2,10 hr,283,283,miles,,,,,3
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Custom Delivery Van 16ft,10 hr,384,384,miles,0,,,,3
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel - Extra Large Van - US,10 hr,675,675,miles,0,,,,5
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 3,10 hr,330,330,miles,0,,,,3
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Standard Parcel Electric - Rivian MEDIUM,10 hr,1239,1239,miles,0,,,,22
+2026-02-21,Reno (DLV3)-Amazon.com,NDAY,Nursery Route Level 2,8 hr,189,189,miles,0,,,,2

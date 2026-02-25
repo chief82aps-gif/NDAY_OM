@@ -113,9 +113,98 @@ This document tracks potential improvements, features, and integrations for the 
 
 ---
 
-## 💡 Medium-Low Priority Features
+## � NEW: Driver-Facing Mobile Apps & Operations (Tier 1 Priority)
 
-### 10. SMS/Email Notifications
+### 10. Driver Mobile App
+**Idea:** Comprehensive mobile application for drivers to manage assignments and communicate
+- View van assignments for the day
+- Receive SMS/push notifications with handouts
+- Real-time route tracking and status updates
+- Quick access to current route details, customer info
+- In-app performance metrics dashboard
+- **Technology:** React Native or Flutter (code sharing with Next.js frontend)
+- **Integrations:** Push notifications (Firebase), SMS (Twilio)
+
+### 11. Incident & Accident Reporting App
+**Idea:** Quick mobile tool for drivers to report incidents and accidents
+- Photo capture with timestamp/location (GPS)
+- Incident type selection (accident, damage, safety issue, customer complaint)
+- Driver statement/notes
+- Immediate notification to management
+- Photo storage in cloud (AWS S3 or similar)
+- Integration with incident tracking database
+- **Features:**
+  - Offline capability (queue reports when reconnected)
+  - Auto-attach vehicle/driver/route info
+  - Evidence photo library per incident
+
+### 12. Property Checkout/Sign-Out Sheet (Mobile)
+**Idea:** Track return of company property and vehicle condition at end of shift
+- Digital sign-out form replacing paper sheets
+- Vehicle condition checklist (damage, fuel level, cleanliness)
+- Company property inventory check-off (tablets, scanners, badges, etc.)
+- Photo documentation of vehicle condition
+- Digital signature capture
+- Real-time alerts if property is missing
+- **Integrations:** Van inspection data, property database
+
+### 13. Van Inspection Tool
+**Idea:** Structured vehicle inspection with photo library for damage tracking
+- Pre-shift vehicle walk-around inspection
+- Photo tagging of damage (location, severity)
+- Inspection history timeline per vehicle
+- Damage severity scoring
+- Maintenance alert system (auto-trigger for repeated issues)
+- Comparison photos over time to track progression
+- **Cloud Storage:** Photo library indexed by VIN and date
+- **Reporting:** Generate inspection reports for fleet management
+
+---
+
+## 💰 NEW: Financial & Operational Tools (Tier 1-2 Priority)
+
+### 14. Rescue Tracker & Bonus Calculator
+**Idea:** Track rescue incidents and auto-calculate driver bonuses
+- Log rescue incidents (time, location, type, driver(s) involved)
+- Bonus calculation engine (rules-based: rescue type → bonus amount)
+- Manual override capability for special cases
+- Bonus report generation for payroll
+- Bonus history per driver (transparent to drivers in app)
+- Suggestions for team awards (top rescuer, etc.)
+- **Payroll Integration:** Export bonus data for Stripe/payroll system
+- **Analytics:** Rescue frequency trends, driver rescue performance
+
+### 15. Invoice Audit Tool
+**Idea:** Reconcile invoiced work vs. actual work completed
+- Import invoice data (CSV or API)
+- Compare against actual routes/assignments completed
+- Identify discrepancies (unbilled work, over-billing errors)
+- Flagging system for investigation
+- Reconciliation workflow (approve, dispute, adjust)
+- Financial reporting Dashboard
+- **Data Source Integration:** Route sheets, daily assignments, driver productivity
+- **Export:** Audit reports for finance/legal
+
+### 16. Driver Scorecard & Coaching System
+**Idea:** Performance tracking with coaching recommendations
+- Automated KPI calculation per driver:
+  - On-time completion %
+  - Safety incidents rate
+  - Customer ratings/feedback
+  - Rescue participation
+  - Attendance/punctuality
+- Performance tiers and behavior patterns
+- Coaching suggestions based on weakness areas
+- Historical performance trends
+- 1-on-1 discussion guide for managers
+- Celebration alerts for top performers
+- **AI/ML:** Pattern recognition for coaching topics, predictive performance
+
+---
+
+## �💡 Medium-Low Priority Features
+
+### 17. SMS/Email Notifications
 **Idea:** Automated communications to drivers and managers
 - Driver assignment notifications (day before, morning of)
 - Show time reminders
@@ -124,7 +213,7 @@ This document tracks potential improvements, features, and integrations for the 
 - Manager alerts for staffing issues
 - Customizable notification preferences
 
-### 11. Driver Schedule Self-Service Portal
+### 18. Driver Schedule Self-Service Portal
 **Idea:** Allow drivers to view/manage their own schedule
 - View assigned routes and show times
 - Switch shifts with other drivers (with approval)
@@ -132,14 +221,27 @@ This document tracks potential improvements, features, and integrations for the 
 - View historical assignments
 - Availability calendar management
 
-### 12. Route Batch Processing
+### 19. Attendance App with HR Forms
+**Idea:** Streamlined call-out, time-off, and HR form management
+- Driver call-out/absence reporting
+- Time-off request workflow (vacation, sick, personal)
+- HR form submission (incident reports, suggestions, feedback)
+- Approval workflow for managers
+- Audit trail of all requests
+- Integration with attendance database
+- **Features:**
+  - Mobile-first design
+  - Push notifications for approvals
+  - Suggestion box with routing to management
+
+### 20. Route Batch Processing
 **Idea:** Process multiple route sheets at once
 - Bulk upload multiple PDFs
 - Parallel processing
 - Consolidated report generation
 - Duplicate detection and handling
 
-### 13. Template/Recurring Schedules
+### 21. Template/Recurring Schedules
 **Idea:** Create reusable schedule templates
 - Save schedule templates
 - Apply templates for recurring weeks
@@ -150,7 +252,7 @@ This document tracks potential improvements, features, and integrations for the 
 
 ## 🔧 Technical Improvements
 
-### 14. Backend Optimization
+### 22. Backend Optimization
 **Ideas:**
 - Add request pagination for large datasets
 - Implement caching for frequently accessed data
@@ -158,7 +260,7 @@ This document tracks potential improvements, features, and integrations for the 
 - Add database layer (currently in-memory; consider: SQLite or PostgreSQL)
 - Rate limiting and API security enhancements
 
-### 15. Frontend Enhancements
+### 23. Frontend Enhancements
 **Ideas:**
 - Real-time updates using WebSockets
 - Mobile-responsive design improvements
@@ -167,7 +269,7 @@ This document tracks potential improvements, features, and integrations for the 
 - Drag-and-drop for manual schedule adjustments
 - Export to iCal for driver calendar integration
 
-### 16. Data Export & Reporting
+### 24. Data Export & Reporting
 **Ideas:**
 - Export schedules to CSV/Excel
 - Export to Google Calendar
@@ -175,7 +277,7 @@ This document tracks potential improvements, features, and integrations for the 
 - Email report delivery (scheduled)
 - Historical data archival
 
-### 17. System Reliability
+### 25. System Reliability
 **Ideas:**
 - Add comprehensive error logging
 - Implement retry logic for file uploads
@@ -187,34 +289,34 @@ This document tracks potential improvements, features, and integrations for the 
 
 ## 🔌 Integration Opportunities
 
-### 18. Asana (Discussed Above)
+### 26. Asana (Discussed Above)
 - Hiring/onboarding pipeline integration
 - Task assignment and tracking
 - Status reporting
 
-### 19. Google Calendar / Outlook
+### 27. Google Calendar / Outlook
 - Export driver schedules to personal calendars
 - Show driver availability in real-time
 - Sync with corporate calendar
 
-### 20. Slack Integration
+### 28. Slack Integration
 - Daily schedule summaries
 - Alerts and notifications
 - Quick commands (e.g., `/sweeper-status`)
 - Report delivery to channels
 
-### 21. Twilio SMS
+### 29. Twilio SMS
 - Send schedule notifications via text
 - Driver confirmations
 - Route updates
 
-### 21. Custom Vehicle Telematics
+### 30. Custom Vehicle Telematics
 - Real-time GPS tracking
 - ETA calculations
 - Route deviation detection
 - Fuel/charging management
 
-### 22. Google Maps API
+### 31. Google Maps API
 - Route optimization
 - Drive time calculations
 - Traffic-aware scheduling
@@ -224,7 +326,7 @@ This document tracks potential improvements, features, and integrations for the 
 
 ## 📊 Reporting & Insights
 
-### 23. Dashboard Enhancements
+### 32. Dashboard Enhancements
 **Current:** Basic upload/assignment/database views
 **Proposed:**
 - Live daily dashboard (current assignments, in-progress, completed)
@@ -232,13 +334,13 @@ This document tracks potential improvements, features, and integrations for the 
 - KPI cards (on-time %, packages delivered, efficiency)
 - Geographic heat map of current deliveries
 
-### 24. Historical Analytics
+### 33. Historical Analytics
 - Driver performance over time
 - Route performance trends
 - Seasonal demand patterns
 - Staffing optimization recommendations
 
-### 25. Forecast & Planning
+### 34. Forecast & Planning
 - Demand forecasting for upcoming weeks
 - Staffing requirements prediction
 - Hiring recommendations
@@ -248,12 +350,12 @@ This document tracks potential improvements, features, and integrations for the 
 
 ## 🎓 Training & Onboarding
 
-### 26. Interactive Tutorials
+### 35. Interactive Tutorials
 - In-app guided tours for new users
 - Video demos for key features
 - Help documentation with screenshots
 
-### 27. Driver Onboarding Workflow
+### 36. Driver Onboarding Workflow
 - Automated welcome emails
 - Required training modules
 - System orientation
@@ -263,13 +365,13 @@ This document tracks potential improvements, features, and integrations for the 
 
 ## 🔐 Security & Compliance
 
-### 28. Enhanced Access Control
+### 37. Enhanced Access Control
 - Role-based permissions (admin, manager, driver, sweeper)
 - Audit logging for data changes
 - Two-factor authentication
 - Session management
 
-### 29. Data Privacy
+### 38. Data Privacy
 - GDPR/CCPA compliance
 - Data retention policies
 - Personal data masking
@@ -277,44 +379,62 @@ This document tracks potential improvements, features, and integrations for the 
 
 ---
 
-## 🐛 Known Issues to Address
-- [ ] Ensure upload directory resilience in Render environment
-- [ ] Handle large file uploads more gracefully
-- [ ] Improve error messaging for common failures
-- [ ] Add retry logic for network failures
-- [ ] Handle timezone differences in display
+## � Implementation Priority Matrix
+
+### Quick Wins (Could do this week)
+- SMS notifications using Twilio (Item #17)
+- Export to CSV (Item #24)
+- Slack integration (Item #28)
+- Driver portal - view-only initially (Item #18)
+- Attendance app basics (Item #19)
+
+### High Impact / Medium Effort (2-4 weeks)
+- Driver Mobile App MVP (Item #10) - View assignments, push notifications
+- Incident Reporting (Item #11) - Photo capture, incident logging
+- Rescue Tracker & Bonus Calculator (Item #14)
+- Invoice Audit Tool (Item #15)
+- Driver Scorecard System (Item #16)
+- Asana integration basics (Item #1 - High Priority)
+- Advanced load balancing (Item #5)
+- Vehicle maintenance tracking (Item #7)
+
+### Larger Projects (4+ weeks)
+- Full Driver Mobile App (Item #10 - with offline, real-time tracking)
+- Van Inspection Tool (Item #13) - Full photo library, AI damage detection
+- Property Checkout System (Item #12) - Integration with all workflows
+- Real-time tracking system (Item #3 - High Priority)
+- Comprehensive analytics dashboard (Item #8, #32, #33)
+- Database migration from in-memory to persistent (Item #14 - Technical)
 
 ---
 
-## 📝 Notes for Implementation
+## 🎯 NEW ITEMS SUMMARY (Feb 23, 2026)
+Added 9 new driver-facing and operational tools based on business needs:
 
-### Quick Wins (Could do this week)
-- SMS notifications using Twilio
-- Export to CSV
-- Slack integration
-- Driver portal (view-only initially)
+**Driver-Facing Mobile (Items #10-13):**
+- Driver Mobile App - assignments, notifications, tracking
+- Incident & Accident Reporting - photo evidence, GPS tagging
+- Sign-Out/Property Checkout - condition reports, inventory
+- Van Inspection Tool - damage tracking, photo library
 
-### Medium Effort (1-2 weeks)
-- Asana integration basics
-- Advanced load balancing
-- Vehicle maintenance tracking
-- Performance dashboard
+**Financial & Operational (Items #14-16):**
+- Rescue Tracker & Bonus Calculator - incident tracking, payroll integration
+- Invoice Audit Tool - reconciliation vs. actual work
+- Driver Scorecard & Coaching - performance metrics, manager coaching tools
 
-### Larger Projects (3+ weeks)
-- Real-time tracking system
-- Comprehensive analytics
-- Database migration
-- Mobile app
+**Plus:**
+- Attendance App with HR Forms (Item #19) - call-outs, time-off, suggestions
 
 ---
 
 ## 💬 Discussion Items
-1. **Priority:** What matters most right now?
-2. **Asana:** Should this be priority #1 for hiring workflow?
-3. **Database:** Should we migrate to persistent DB sooner?
-4. **Mobile:** Is mobile app needed or just mobile-responsive web?
-5. **Integrations:** Which external systems are most critical?
+1. **Priority:** What should we tackle first post-stable v1.2?
+2. **Mobile App:** React Native vs Flutter vs PWA (progressive web app)?
+3. **Database:** Ready to migrate to PostgreSQL for these new features?
+4. **Cloud Storage:** S3 for incident photos, inspection photos?
+5. **Integrations:** Which systems should we connect first (Asana, Twilio, Stripe)?
+6. **Timeline:** What's the realistic roadmap - which quarter for each?
 
 ---
 
-Last Updated: February 22, 2026
+Last Updated: February 23, 2026

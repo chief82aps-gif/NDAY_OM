@@ -5,3 +5,4 @@ openpyxl
 pdfplumber
 python-multipart
 reportlab
+sqlalchemy==2.0.46

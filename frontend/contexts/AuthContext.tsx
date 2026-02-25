@@ -5,6 +5,7 @@ import { createContext, useContext, useState, useEffect, ReactNode } from 'react
 interface User {
   username: string;
   name: string;
+  role?: string;
 }
 
 interface AuthContextType {
@@ -61,10 +62,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const mockUser: User = {
         username,
         name: data.name || username.charAt(0).toUpperCase() + username.slice(1),
+        role: data.role,
       };
 
       setUser(mockUser);
       localStorage.setItem('user', JSON.stringify(mockUser));
+      if (data.access_token) {
+        localStorage.setItem('access_token', data.access_token);
+      }
     } catch (error) {
       throw error instanceof Error ? error : new Error('Authentication failed');
     }
@@ -73,6 +78,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = () => {
     setUser(null);
     localStorage.removeItem('user');
+    localStorage.removeItem('access_token');
   };
 
   return (

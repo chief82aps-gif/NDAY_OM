@@ -15,6 +15,11 @@ from api.src.driver_schedule_report import DriverScheduleReportGenerator
 
 class IngestOrchestrator:
     """Orchestrates ingest, validation, and status tracking."""
+
+    @staticmethod
+    def _dedupe_keep_order(items: list) -> list:
+        """Remove duplicates while preserving original order."""
+        return list(dict.fromkeys(items))
     
     def __init__(self):
         self.status = IngestStatus()
@@ -176,6 +181,9 @@ class IngestOrchestrator:
     
     def get_status(self) -> dict:
         """Return current ingest status as dict."""
+        validation_errors = self._dedupe_keep_order(self.status.validation_errors)
+        validation_warnings = self._dedupe_keep_order(self.status.validation_warnings)
+
         return {
             "dop_uploaded": self.status.dop_uploaded,
             "fleet_uploaded": self.status.fleet_uploaded,
@@ -186,8 +194,8 @@ class IngestOrchestrator:
             "cortex_record_count": len(self.status.cortex_records),
             "route_sheets_count": len(self.status.route_sheets),
             "assignments_count": len(self.assignments),
-            "validation_errors": self.status.validation_errors,
-            "validation_warnings": self.status.validation_warnings,
+            "validation_errors": validation_errors,
+            "validation_warnings": validation_warnings,
             "last_updated": self.status.last_updated.isoformat(),
         }
     

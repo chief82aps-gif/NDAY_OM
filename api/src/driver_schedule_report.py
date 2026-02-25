@@ -66,6 +66,16 @@ class DriverScheduleReportGenerator:
             alignment=TA_LEFT,
         ))
     
+    def _build_show_time_color_map(self, show_times: List[str]) -> Dict[str, object]:
+        """Build a consistent color mapping for all show times."""
+        color_palette = [self.COLOR_GREEN, self.COLOR_PURPLE, self.COLOR_ORANGE, self.COLOR_LIGHT_GRAY]
+        color_map = {}
+        
+        for i, show_time in enumerate(sorted(set(st for st in show_times if st))):
+            color_map[show_time] = color_palette[i % len(color_palette)]
+        
+        return color_map
+    
     def generate_schedule_report(
         self,
         schedule: DriverScheduleSummary,
@@ -105,16 +115,22 @@ class DriverScheduleReportGenerator:
         )
         story.append(metadata)
         
+        # Build consistent color map for all show times
+        all_show_times = [a.show_time for a in schedule.assignments if a.show_time]
+        if schedule.sweepers and schedule.show_times:
+            all_show_times.extend([schedule.show_times.get(s) for s in schedule.sweepers if schedule.show_times.get(s)])
+        show_time_color_map = self._build_show_time_color_map(all_show_times)
+        
         # Group drivers by show time
         drivers_by_showtime = self._group_drivers_by_showtime(schedule)
         
         # Add assignment section
-        story.extend(self._build_assignments_section(schedule, drivers_by_showtime))
+        story.extend(self._build_assignments_section(schedule, drivers_by_showtime, show_time_color_map))
         
         # Add sweepers section if any
         if schedule.sweepers:
             story.append(PageBreak())
-            story.extend(self._build_sweepers_section(schedule))
+            story.extend(self._build_sweepers_section(schedule, show_time_color_map))
         
         # Build PDF
         doc.build(story)
@@ -139,6 +155,7 @@ class DriverScheduleReportGenerator:
         self,
         schedule: DriverScheduleSummary,
         drivers_by_showtime: Dict[str, List[str]],
+        show_time_color_map: Dict[str, object],
     ) -> List[Table]:
         """Build assignments table section."""
         story = []
@@ -184,6 +201,7 @@ class DriverScheduleReportGenerator:
             ),
         )
         
+        # Build color mapping for show times
         # Add rows for each driver
         for assignment in sorted_assignments:
             table_data.append([
@@ -192,16 +210,10 @@ class DriverScheduleReportGenerator:
                 Paragraph(assignment.wave_time or "", self.styles['TableCell']),
             ])
             
-            # Determine color based on show time
+            # Determine color based on show time mapping
             show_time = assignment.show_time
-            if "9:55" in str(show_time):
-                row_colors.append(self.COLOR_GREEN)
-            elif "10:20" in str(show_time):
-                row_colors.append(self.COLOR_PURPLE)
-            elif "10:45" in str(show_time):
-                row_colors.append(self.COLOR_ORANGE)
-            else:
-                row_colors.append(colors.white)
+            row_color = show_time_color_map.get(show_time, colors.white) if show_time else colors.white
+            row_colors.append(row_color)
         
         # Create table
         table = Table(
@@ -226,7 +238,7 @@ class DriverScheduleReportGenerator:
         
         story.append(table)
         return story
-    def _build_sweepers_section(self, schedule: DriverScheduleSummary) -> List:
+    def _build_sweepers_section(self, schedule: DriverScheduleSummary, show_time_color_map: Dict[str, object]) -> List:
         """Build sweepers section."""
         story = []
         
@@ -258,15 +270,8 @@ class DriverScheduleReportGenerator:
             Paragraph("<b>Show Time</b>", self.styles['TableHeader']),
         ]]
         
-        # Determine color for all sweepers
-        if "9:55" in str(sweeper_show_time):
-            sweeper_color = self.COLOR_GREEN
-        elif "10:20" in str(sweeper_show_time):
-            sweeper_color = self.COLOR_PURPLE
-        elif "10:00" in str(sweeper_show_time):
-            sweeper_color = self.COLOR_ORANGE
-        else:
-            sweeper_color = colors.white
+        # Get color for sweeper show time from the color map
+        sweeper_color = show_time_color_map.get(sweeper_show_time, colors.white)
         
         row_colors = [self.COLOR_BLUE]  # Header
         

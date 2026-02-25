@@ -351,6 +351,26 @@ class DriverHandoutGenerator:
             return f"{hour_ret}:{minute_ret:02d} {period}"
         except Exception:
             return "TBD"
+
+    def _get_primary_driver_name(self, driver_name: Optional[str]) -> str:
+        """Return a single primary driver name from a combined driver string."""
+        if not driver_name:
+            return "TBD"
+
+        name_text = str(driver_name).strip()
+        if not name_text:
+            return "TBD"
+
+        separators = ["/", "&", ",", ";", " and ", "+"]
+        for sep in separators:
+            if sep in name_text:
+                parts = [part.strip() for part in name_text.split(sep)]
+                for part in parts:
+                    if part:
+                        return part
+                break
+
+        return name_text
     
     def _extract_wave_number(self, wave_time: Optional[str]) -> int:
         """
@@ -454,9 +474,10 @@ class DriverHandoutGenerator:
                 expected_rts = route_sheet.expected_return
             elif assignment.wave_time and assignment.route_duration:
                 expected_rts = self._calculate_expected_return(assignment.wave_time, assignment.route_duration)
+            primary_driver = self._get_primary_driver_name(assignment.driver_name)
             
             table_data.append([
-                Paragraph(assignment.driver_name or "", self.styles['TableCell']),
+                Paragraph(primary_driver, self.styles['TableCell']),
                 Paragraph(assignment.vehicle_name or "", self.styles['TableCell']),
                 Paragraph(route_code or "", self.styles['TableCell']),
                 Paragraph(assignment.wave_time or "", self.styles['TableCell']),
@@ -642,7 +663,7 @@ class DriverHandoutGenerator:
         )
 
         # Driver name opposite route code, same size as route code
-        driver_text = assignment.driver_name or "TBD"
+        driver_text = self._get_primary_driver_name(assignment.driver_name)
         driver_style = ParagraphStyle(
             name='DriverNameTopRight',
             fontSize=16,

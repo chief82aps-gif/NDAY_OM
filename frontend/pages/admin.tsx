@@ -321,6 +321,36 @@ export default function AdminPage() {
             </div>
           ) : (
             <>
+              {/* Admin Navigation */}
+              <div className="mb-8 p-4 bg-white rounded-lg shadow-md">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                  <button
+                    onClick={() => router.push('/upload?view=financial')}
+                    className="flex items-center justify-center gap-2 px-4 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-semibold transition"
+                  >
+                    💰 Financial Data
+                  </button>
+                  <button
+                    onClick={() => router.push('/upload?view=performance')}
+                    className="flex items-center justify-center gap-2 px-4 py-3 bg-teal-500 hover:bg-teal-600 text-white rounded-lg font-semibold transition"
+                  >
+                    📊 Performance Data
+                  </button>
+                  <button
+                    onClick={() => router.push('/upload?view=daily')}
+                    className="flex items-center justify-center gap-2 px-4 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-semibold transition"
+                  >
+                    📋 Daily Assignment
+                  </button>
+                  <button
+                    onClick={() => router.push('/')}
+                    className="flex items-center justify-center gap-2 px-4 py-3 bg-gray-500 hover:bg-gray-600 text-white rounded-lg font-semibold transition"
+                  >
+                    🏠 Dashboard
+                  </button>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
                 {/* Create User Form */}
                 <div className="lg:col-span-2">

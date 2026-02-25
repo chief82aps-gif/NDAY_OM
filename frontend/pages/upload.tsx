@@ -143,9 +143,13 @@ export default function Upload() {
         const fieldName = endpoint === '/route-sheets' ? 'files' : 'file';
         files.forEach((file) => formData.append(fieldName, file));
 
+        const token = localStorage.getItem('access_token');
         const response = await fetch(`${API_URL}/upload${endpoint}`, {
           method: 'POST',
           body: formData,
+          headers: {
+            ...(token && { 'Authorization': `Bearer ${token}` }),
+          },
         });
 
         if (!response.ok) {
@@ -172,8 +176,11 @@ export default function Upload() {
   const handleAssignVehicles = async () => {
     setIsLoading(true);
     try {
+      const token = localStorage.getItem('access_token');
+      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
       const response = await fetch(`${API_URL}/upload/assign-vehicles`, {
         method: 'POST',
+        headers,
       });
 
       if (!response.ok) {
@@ -182,6 +189,7 @@ export default function Upload() {
 
       const result = await fetch(`${API_URL}/upload/assign-vehicles`, {
         method: 'POST',
+        headers,
       }).then(r => r.json());
 
       // Check if there are failed routes requiring manual assignment
@@ -201,7 +209,9 @@ export default function Upload() {
         );
 
         // Fetch updated status
-        const statusResponse = await fetch(`${API_URL}/upload/status`);
+        const statusResponse = await fetch(`${API_URL}/upload/status`, {
+          headers,
+        });
         const statusData = await statusResponse.json();
         setStatus(statusData);
         
@@ -210,7 +220,9 @@ export default function Upload() {
         
         // Fetch and store assignment details in sessionStorage for database view
         try {
-          const detailsResponse = await fetch(`${API_URL}/upload/assignments`);
+          const detailsResponse = await fetch(`${API_URL}/upload/assignments`, {
+            headers,
+          });
           const detailsData = await detailsResponse.json();
           if (detailsData.assignments) {
             sessionStorage.setItem('assignments', JSON.stringify(detailsData.assignments));
@@ -235,8 +247,11 @@ export default function Upload() {
   const handleGenerateHandouts = async () => {
     setIsLoading(true);
     try {
+      const token = localStorage.getItem('access_token');
+      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
       const response = await fetch(`${API_URL}/upload/generate-handouts`, {
         method: 'POST',
+        headers,
       });
 
       if (!response.ok) {

@@ -6,3 +6,7 @@ pdfplumber
 python-multipart
 reportlab
 sqlalchemy==2.0.46
+pyjwt
+python-jose[cryptography]
+passlib[bcrypt]
+psycopg2-binary

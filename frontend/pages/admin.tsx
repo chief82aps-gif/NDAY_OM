@@ -323,12 +323,18 @@ export default function AdminPage() {
             <>
               {/* Admin Navigation */}
               <div className="mb-8 p-4 bg-white rounded-lg shadow-md">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
                   <button
                     onClick={() => router.push('/upload?view=financial')}
                     className="flex items-center justify-center gap-2 px-4 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-semibold transition"
                   >
                     💰 Financial Data
+                  </button>
+                  <button
+                    onClick={() => router.push('/audit')}
+                    className="flex items-center justify-center gap-2 px-4 py-3 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-semibold transition"
+                  >
+                    🔍 Audit Invoices
                   </button>
                   <button
                     onClick={() => router.push('/upload?view=performance')}

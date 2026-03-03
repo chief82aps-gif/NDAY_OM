@@ -69,7 +69,7 @@ export default function PrimaryDriverSelection({
 
     try {
       const token = localStorage.getItem('access_token');
-      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+      const headers: HeadersInit = token ? { 'Authorization': `Bearer ${token}` } : {};
 
       for (const route of routes) {
         const selected = selections[route.route_code] || defaultSelections[route.route_code];

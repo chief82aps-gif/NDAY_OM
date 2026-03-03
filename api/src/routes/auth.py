@@ -46,6 +46,13 @@ class ChangePasswordRequest(BaseModel):
     admin_password: str
 
 
+class AssignRoleRequest(BaseModel):
+    username: str
+    new_role: str
+    admin_username: str
+    admin_password: str
+
+
 # Path to users.json file (for persistent storage when available)
 USERS_FILE = os.path.join(os.path.dirname(__file__), '..', '..', 'users.json')
 
@@ -394,3 +401,58 @@ async def change_password(request: ChangePasswordRequest):
     save_users(USERS)
     
     return {"message": f"Password for '{username_to_change}' changed successfully"}
+
+
+@router.post("/assign-role")
+async def assign_role(request: AssignRoleRequest):
+    """
+    Assign or update a user's role. Requires valid admin credentials.
+    Allowed roles: admin, manager, dispatcher, driver
+    """
+    USERS = load_users()  # Reload users
+    
+    # Validate admin credentials
+    admin_username = request.admin_username.lower().strip()
+    if not _verify_user_password(USERS, admin_username, request.admin_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid admin credentials",
+        )
+    
+    # Validate role
+    valid_roles = ["admin", "manager", "dispatcher", "driver"]
+    if request.new_role.lower() not in valid_roles:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid role. Must be one of: {', '.join(valid_roles)}",
+        )
+    
+    # Check if user exists
+    username_to_update = request.username.lower().strip()
+    if username_to_update not in USERS:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+    
+    # Prevent changing admin role to non-admin (safety check)
+    if username_to_update == "admin" and request.new_role.lower() != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot change the admin user's role to non-admin",
+        )
+    
+    # Update role
+    existing_record = _normalize_user_record(username_to_update, USERS[username_to_update])
+    USERS[username_to_update] = {
+        "password": existing_record.get("password"),
+        "role": request.new_role.lower(),
+        "name": existing_record.get("name", username_to_update.capitalize()),
+    }
+    save_users(USERS)
+    
+    return {
+        "message": f"Role for '{username_to_update}' updated to '{request.new_role.lower()}' successfully",
+        "username": username_to_update,
+        "new_role": request.new_role.lower(),
+    }

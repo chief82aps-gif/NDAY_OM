@@ -40,6 +40,11 @@ export default function AdminPage() {
   const [newPasswordForUser, setNewPasswordForUser] = useState('');
   const [confirmNewPasswordForUser, setConfirmNewPasswordForUser] = useState('');
 
+  // Role assignment modal
+  const [showRoleModal, setShowRoleModal] = useState(false);
+  const [roleAssignUser, setRoleAssignUser] = useState('');
+  const [selectedRole, setSelectedRole] = useState('driver');
+
   const showMessage = (type: 'success' | 'error' | 'info', text: string) => {
     setMessage({ type, text });
     setTimeout(() => setMessage(null), 5000);
@@ -251,6 +256,43 @@ export default function AdminPage() {
       setShowPasswordModal(false);
     } catch (error) {
       showMessage('error', error instanceof Error ? error.message : 'Failed to change password');
+    }
+  };
+
+  const openRoleModal = (username: string) => {
+    setRoleAssignUser(username);
+    setSelectedRole('driver');
+    setShowRoleModal(true);
+  };
+
+  const handleAssignRole = async () => {
+    if (!authenticated) {
+      showMessage('error', 'Please authenticate first');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/auth/assign-role`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: roleAssignUser,
+          new_role: selectedRole,
+          admin_username: user?.username,
+          admin_password: adminPassword,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to assign role');
+      }
+
+      showMessage('success', `Role for '${roleAssignUser}' updated to '${selectedRole}' successfully`);
+      setShowRoleModal(false);
+      await loadUsers();
+    } catch (error) {
+      showMessage('error', error instanceof Error ? error.message : 'Failed to assign role');
     }
   };
 
@@ -468,6 +510,12 @@ export default function AdminPage() {
                                   ) : (
                                     <>
                                       <button
+                                        onClick={() => openRoleModal(u.username)}
+                                        className="text-purple-600 hover:text-purple-800 font-semibold text-xs transition"
+                                      >
+                                        Assign Role
+                                      </button>
+                                      <button
                                         onClick={() => openPasswordModal(u.username)}
                                         className="text-blue-600 hover:text-blue-800 font-semibold text-xs transition"
                                       >
@@ -556,6 +604,51 @@ export default function AdminPage() {
                   className="flex-1 px-4 py-2 bg-ndl-blue hover:bg-blue-700 text-white rounded-lg font-semibold transition"
                 >
                   Change Password
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Role Assignment Modal */}
+        {showRoleModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg shadow-2xl max-w-md w-full p-6">
+              <h2 className="text-2xl font-bold text-ndl-blue mb-4">Assign Role</h2>
+              <p className="text-gray-600 mb-4">
+                Assigning role for: <span className="font-semibold text-gray-900">{roleAssignUser}</span>
+              </p>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">
+                    Select Role
+                  </label>
+                  <select
+                    value={selectedRole}
+                    onChange={(e) => setSelectedRole(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-ndl-blue"
+                  >
+                    <option value="admin">Admin - Full system access</option>
+                    <option value="manager">Manager - Financial & reports access</option>
+                    <option value="dispatcher">Dispatcher - Operational access</option>
+                    <option value="driver">Driver - Limited operational access</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => setShowRoleModal(false)}
+                  className="flex-1 px-4 py-2 bg-gray-300 hover:bg-gray-400 rounded-lg font-semibold transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAssignRole}
+                  className="flex-1 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-semibold transition"
+                >
+                  Assign Role
                 </button>
               </div>
             </div>

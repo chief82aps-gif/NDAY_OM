@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import { format } from 'date-fns';
 import PageHeader from '../components/PageHeader';
 import { ProtectedRoute } from '../components/ProtectedRoute';
 
@@ -35,7 +34,7 @@ interface DisputeRecord {
 export default function DailyScreenshotAudit() {
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
   const [step, setStep] = useState<'entry' | 'validation' | 'disputes'>('entry');
-  const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10));
 
   // ===== STEP 1: DATA ENTRY =====
   const [cortexRoutes, setCortexRoutes] = useState('');
@@ -232,7 +231,12 @@ export default function DailyScreenshotAudit() {
   };
 
   const logAction = (action: string) => {
-    const timestamp = format(new Date(), 'HH:mm:ss');
+    const timestamp = new Date().toLocaleTimeString('en-US', {
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
     setAuditLog([`${timestamp} - ${action}`, ...auditLog]);
   };
 
@@ -251,7 +255,7 @@ export default function DailyScreenshotAudit() {
 
   return (
     <ProtectedRoute>
-      <PageHeader title="Daily Screenshot Audit" subtitle="Validate Cortex & WST metrics" />
+      <PageHeader title="Daily Screenshot Audit" />
 
       <div className="p-6 max-w-6xl mx-auto">
         {/* STEP INDICATORS */}

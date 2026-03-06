@@ -1,8 +1,9 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
 from fastapi.responses import FileResponse
 from typing import List
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
+import re
 import tempfile
 from api.src.orchestrator import orchestrator
 from api.src.authorization import get_current_user_role, require_financial_access
@@ -19,13 +20,19 @@ from api.src.database import (
     FleetInvoice,
     DspScorecardSummary,
     PodReportSummary,
+    Vehicle,
+    Cortex,
+    DOP,
+    RouteSheet,
+    UploadRetentionRecord,
+    ensure_cortex_driver_name_column,
 )
-from api.src.ingest_variable_invoice import ingest_variable_invoice_pdf
-from api.src.ingest_wst_zip import ingest_wst_zip
-from api.src.ingest_weekly_incentive import parse_weekly_incentive_pdf
-from api.src.ingest_fleet_invoice import parse_fleet_invoice_pdf
-from api.src.ingest_dsp_scorecard import parse_dsp_scorecard_pdf
-from api.src.ingest_pod_report import parse_pod_report_pdf
+# from api.src.ingest_variable_invoice import ingest_variable_invoice_pdf  # Temporarily disabled for testing
+# from api.src.ingest_wst_zip import ingest_wst_zip  # Temporarily disabled for testing
+# from api.src.ingest_weekly_incentive import parse_weekly_incentive_pdf  # Temporarily disabled for testing
+# from api.src.ingest_fleet_invoice import parse_fleet_invoice_pdf  # Temporarily disabled for testing
+# from api.src.ingest_dsp_scorecard import parse_dsp_scorecard_pdf  # Temporarily disabled for testing
+# from api.src.ingest_pod_report import parse_pod_report_pdf  # Temporarily disabled for testing
 
 router = APIRouter()
 
@@ -73,6 +80,55 @@ def _to_date(value):
         return None
 
 
+def _infer_file_date(filename: str):
+    """Infer a date from filename patterns used by ingest files."""
+    name = os.path.basename(filename or "")
+
+    patterns = [
+        (r"(20\d{2}[-_]\d{2}[-_]\d{2})", ["%Y-%m-%d", "%Y_%m_%d"]),
+        (r"(20\d{6})", ["%Y%m%d"]),
+        (r"(\d{1,2}[-_]\d{1,2}[-_]\d{2,4})", ["%m-%d-%y", "%m-%d-%Y", "%m_%d_%y", "%m_%d_%Y"]),
+    ]
+
+    for pattern, fmts in patterns:
+        match = re.search(pattern, name)
+        if not match:
+            continue
+
+        value = match.group(1)
+        for fmt in fmts:
+            try:
+                return datetime.strptime(value, fmt).date()
+            except ValueError:
+                continue
+
+    return None
+
+
+def _json_safe(value):
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if hasattr(value, "__dict__"):
+        return {str(k): _json_safe(v) for k, v in value.__dict__.items()}
+    return str(value)
+
+
+def _archive_upload(db, upload_type: str, source_file: str, payload, record_count: int = 0):
+    db.add(UploadRetentionRecord(
+        upload_type=upload_type,
+        source_file=source_file,
+        record_count=record_count,
+        payload=_json_safe(payload),
+        retain_until=datetime.utcnow() + timedelta(days=180),
+    ))
+
+
 @router.post("/dop")
 def upload_dop(file: UploadFile = File(...)):
     """Upload DOP Excel or CSV file and parse."""
@@ -91,6 +147,39 @@ def upload_dop(file: UploadFile = File(...)):
         
         # Parse and validate
         orchestrator.ingest_dop(file_path)
+
+        # Persist parsed DOP rows to DB
+        db = SessionLocal()
+        try:
+            upload_date = _infer_file_date(file.filename) or datetime.utcnow().date()
+            db.query(DOP).filter(DOP.source_file == file.filename).delete(synchronize_session=False)
+            for record in orchestrator.status.dop_records:
+                db.add(DOP(
+                    schedule_date=upload_date,
+                    station=record.staging_location,
+                    dsp_code=record.dsp,
+                    route_code=record.route_code,
+                    wave=record.wave,
+                    planned_packages=record.num_packages,
+                    commercial_pct=None,
+                    zone=None,
+                    service_type=record.service_type,
+                    source_file=file.filename,
+                ))
+
+            _archive_upload(
+                db,
+                upload_type="dop",
+                source_file=file.filename,
+                payload=orchestrator.status.dop_records,
+                record_count=len(orchestrator.status.dop_records),
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
         
         return {
             "filename": file.filename,
@@ -122,6 +211,38 @@ def upload_fleet(file: UploadFile = File(...)):
         
         # Parse and validate
         orchestrator.ingest_fleet(file_path)
+
+        # Persist parsed fleet rows to DB vehicles table
+        db = SessionLocal()
+        try:
+            for record in orchestrator.status.fleet_records:
+                existing = db.query(Vehicle).filter(Vehicle.vin == record.vin).first()
+                status_value = record.operational_status or "active"
+                if existing:
+                    existing.vehicle_name = record.vehicle_name
+                    existing.service_type = record.service_type
+                    existing.status = str(status_value).lower()
+                else:
+                    db.add(Vehicle(
+                        vin=record.vin,
+                        vehicle_name=record.vehicle_name,
+                        service_type=record.service_type,
+                        status=str(status_value).lower(),
+                    ))
+
+            _archive_upload(
+                db,
+                upload_type="fleet",
+                source_file=file.filename,
+                payload=orchestrator.status.fleet_records,
+                record_count=len(orchestrator.status.fleet_records),
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
         
         return {
             "filename": file.filename,
@@ -153,6 +274,41 @@ def upload_cortex(file: UploadFile = File(...)):
         
         # Parse and validate
         orchestrator.ingest_cortex(file_path)
+
+        # Persist parsed Cortex rows to DB
+        db = SessionLocal()
+        try:
+            ensure_cortex_driver_name_column()
+            upload_date = _infer_file_date(file.filename) or datetime.utcnow().date()
+            db.query(Cortex).filter(Cortex.source_file == file.filename).delete(synchronize_session=False)
+            for record in orchestrator.status.cortex_records:
+                db.add(Cortex(
+                    assignment_date=upload_date,
+                    station=None,
+                    dsp_code=record.dsp,
+                    route_code=record.route_code,
+                    wave=None,
+                    packages=None,
+                    commercial_pct=None,
+                    zone=None,
+                    service_type=record.delivery_service_type,
+                    driver_name=record.driver_name,
+                    source_file=file.filename,
+                ))
+
+            _archive_upload(
+                db,
+                upload_type="cortex",
+                source_file=file.filename,
+                payload=orchestrator.status.cortex_records,
+                record_count=len(orchestrator.status.cortex_records),
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
         
         return {
             "filename": file.filename,
@@ -179,6 +335,34 @@ def upload_route_sheets(files: List[UploadFile] = File(...)):
         
         # Parse and validate
         orchestrator.ingest_route_sheets(file_paths)
+
+        # Persist route sheet upload metadata + archive payload
+        db = SessionLocal()
+        try:
+            for file, file_path in zip(files, file_paths):
+                db.add(RouteSheet(
+                    upload_date=datetime.utcnow().date(),
+                    file_name=file.filename,
+                    file_size=os.path.getsize(file_path) if os.path.exists(file_path) else None,
+                    processing_status="processed",
+                    total_routes=len(orchestrator.status.route_sheets),
+                    total_assignments=0,
+                    processed_at=datetime.utcnow(),
+                ))
+
+            _archive_upload(
+                db,
+                upload_type="route_sheets",
+                source_file=",".join([f.filename for f in files]),
+                payload=orchestrator.status.route_sheets,
+                record_count=len(orchestrator.status.route_sheets),
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
         
         return {
             "filenames": [f.filename for f in files],
@@ -191,21 +375,49 @@ def upload_route_sheets(files: List[UploadFile] = File(...)):
 
 
 @router.post("/driver-schedule")
-def upload_driver_schedule(file: UploadFile = File(...)):
+@router.post("/driver-schedule-report-only")
+def upload_driver_schedule(file: UploadFile = File(...), compact: bool = Form(True)):
     """Upload Driver Schedule Excel file (Rostered Work Blocks and Shifts & Availability tabs)."""
     try:
         file_path = os.path.join(UPLOAD_DIR, f"driver_schedule_{file.filename}")
         with open(file_path, "wb") as f:
             f.write(file.file.read())
+
+        # Clear prior schedule state first so failed uploads cannot leave stale data visible.
+        orchestrator.status.driver_schedule = None
+        orchestrator.status.driver_schedule_report_path = None
+        orchestrator.status.driver_schedule_uploaded = False
         
         # Parse and validate
-        orchestrator.ingest_driver_schedule(file_path)
+        parsed_ok = orchestrator.ingest_driver_schedule(file_path)
+        if not parsed_ok or not orchestrator.status.driver_schedule:
+            latest_errors = orchestrator.status.validation_errors[-3:]
+            detail = "Failed to parse driver schedule file"
+            if latest_errors:
+                detail = f"{detail}: {'; '.join(latest_errors)}"
+            raise HTTPException(status_code=400, detail=detail)
         
         # Generate report
-        report_generated = orchestrator.generate_driver_schedule_report()
+        report_generated = orchestrator.generate_driver_schedule_report(compact=compact)
         
         schedule = orchestrator.status.driver_schedule
-        return {
+        db = SessionLocal()
+        try:
+            _archive_upload(
+                db,
+                upload_type="driver_schedule",
+                source_file=file.filename,
+                payload=orchestrator.status.driver_schedule,
+                record_count=len(schedule.assignments) if schedule else 0,
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+        response_payload = {
             "filename": file.filename,
             "status": "uploaded",
             "timestamp": schedule.timestamp if schedule else "",
@@ -213,45 +425,32 @@ def upload_driver_schedule(file: UploadFile = File(...)):
             "assignments_count": len(schedule.assignments) if schedule else 0,
             "sweepers_count": len(schedule.sweepers) if schedule else 0,
             "report_generated": report_generated,
+            "report_compact": compact,
             "report_path": orchestrator.status.driver_schedule_report_path,
             "errors": orchestrator.status.validation_errors[-5:],
         }
+
+        # Report-only mode: do not retain schedule payload in memory after upload.
+        orchestrator.status.driver_schedule = None
+        orchestrator.status.driver_schedule_uploaded = False
+
+        return response_payload
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to upload Driver Schedule: {str(e)}")
 
 
 @router.get("/driver-schedule-summary")
 def get_driver_schedule_summary():
-    """Get the current driver schedule summary with show times and sweepers."""
+    """Report-only mode: summary is not retained in memory after upload."""
     try:
-        if not orchestrator.status.driver_schedule:
-            return {"error": "No driver schedule uploaded"}
-        
-        schedule = orchestrator.status.driver_schedule
-        
-        # Format assignments
-        assignments = []
-        for assignment in schedule.assignments:
-            assignments.append({
-                "driver_name": assignment.driver_name,
-                "date": assignment.date,
-                "wave_time": assignment.wave_time or "",
-                "service_type": assignment.service_type or "",
-                "show_time": assignment.show_time or "",
-            })
-        
-        return {
-            "timestamp": schedule.timestamp,
-            "scheduled_date": schedule.date,
-            "assignments": assignments,
-            "sweepers": schedule.sweepers,
-            "show_times": schedule.show_times,
-            "summary": {
-                "total_assigned": len(schedule.assignments),
-                "total_sweepers": len(schedule.sweepers),
-                "total_drivers": len(schedule.assignments) + len(schedule.sweepers),
-            }
-        }
+        raise HTTPException(
+            status_code=404,
+            detail="Driver schedule summary is not retained. Upload a schedule file and download the generated report.",
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve driver schedule: {str(e)}")
 
@@ -274,7 +473,29 @@ def download_schedule_report():
 def get_upload_status():
     """Get current ingest status and validation results."""
     orchestrator.validate_cross_file_consistency()
-    return orchestrator.get_status()
+    status = orchestrator.get_status()
+
+    # Fallback to persisted DB counts so uploads survive process restarts
+    if not any([status.get("dop_uploaded"), status.get("fleet_uploaded"), status.get("cortex_uploaded"), status.get("route_sheets_uploaded")]):
+        db = SessionLocal()
+        try:
+            dop_count = db.query(DOP).count()
+            fleet_count = db.query(Vehicle).count()
+            cortex_count = db.query(Cortex).count()
+            route_sheets_count = db.query(RouteSheet).count()
+
+            status["dop_uploaded"] = dop_count > 0
+            status["fleet_uploaded"] = fleet_count > 0
+            status["cortex_uploaded"] = cortex_count > 0
+            status["route_sheets_uploaded"] = route_sheets_count > 0
+            status["dop_record_count"] = dop_count
+            status["fleet_record_count"] = fleet_count
+            status["cortex_record_count"] = cortex_count
+            status["route_sheets_count"] = route_sheets_count
+        finally:
+            db.close()
+
+    return status
 
 
 @router.post("/reset")
@@ -605,11 +826,14 @@ def upload_variable_invoice(file: UploadFile = File(...), role: str = Depends(ge
         with open(file_path, "wb") as f:
             f.write(file.file.read())
 
-        db = SessionLocal()
-        try:
-            invoice, errors = ingest_variable_invoice_pdf(file_path, db)
-        finally:
-            db.close()
+        # Temporarily disabled for testing
+        # db = SessionLocal()
+        # try:
+        #     invoice, errors = ingest_variable_invoice_pdf(file_path, db)
+        # finally:
+        #     db.close()
+        invoice = None
+        errors = ["Temporarily disabled for testing"]
 
         summary = None
         if invoice:

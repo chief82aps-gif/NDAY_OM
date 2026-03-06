@@ -1,7 +1,7 @@
 """Driver schedule ingest from Excel file (Rostered Work Blocks and Shifts & Availability tabs)."""
 import re
 from typing import List, Dict, Tuple, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import openpyxl
 from api.src.models import DriverAssignment, DriverAvailability, DriverScheduleSummary
 
@@ -50,16 +50,13 @@ def parse_driver_schedule_excel(file_path: str) -> Tuple[DriverScheduleSummary, 
         else:
             errors.append("'Shifts & Availability' tab not found in file")
         
-        # Use current date as the scheduled date (for the report)
-        from datetime import date
-        today_date = date.today()
-        scheduled_date = today_date.strftime('%m/%d/%Y')
-        
-        # Find the first date in the file to match assignments against
-        file_date = assigned_dates[0] if assigned_dates else ""
-        
-        # Filter assignments to only those matching the first file date
-        assignments_for_scheduled_date = [a for a in assignments if a.date == file_date]
+        # Resolve scheduled date from file timestamp and matching header date
+        timestamp_date = _parse_timestamp_date(timestamp_str)
+        selected_date_label, selected_date_value = _resolve_selected_schedule_date(assigned_dates, timestamp_date)
+        scheduled_date = selected_date_value.strftime('%m/%d/%Y') if selected_date_value else ""
+
+        # Filter assignments to only those matching selected file date column
+        assignments_for_scheduled_date = [a for a in assignments if a.date == selected_date_label]
         
         # Calculate show times from assignments
         assignments_with_show_times = _calculate_show_times(assignments_for_scheduled_date)
@@ -72,7 +69,7 @@ def parse_driver_schedule_excel(file_path: str) -> Tuple[DriverScheduleSummary, 
         sweepers = _identify_sweepers(
             set(driver.driver_name for driver in assignments_with_show_times),
             availability_by_driver,
-            scheduled_date
+            selected_date_label
         )
         
         # Get earliest wave show time for sweepers
@@ -375,7 +372,7 @@ def _subtract_minutes_from_time(time_str: str, minutes: int) -> str:
 def _identify_sweepers(
     assigned_driver_names: set,
     availability_by_driver: Dict[str, List[DriverAvailability]],
-    scheduled_date: str
+    scheduled_date_label: str
 ) -> List[str]:
     """
     Identify sweepers: drivers scheduled (in Shifts & Availability) but not assigned (in Rostered Work Blocks).
@@ -392,7 +389,7 @@ def _identify_sweepers(
             # Check if driver has availability on the SCHEDULED DATE
             # Valid availability: anything except "Unavailable" or blank
             for av in availabilities:
-                if av.date == scheduled_date:
+                if av.date == scheduled_date_label:
                     availability_status = av.availability.lower().strip()
                     # Include if not unavailable and not blank
                     if availability_status and availability_status != 'unavailable':
@@ -410,3 +407,63 @@ def _get_earliest_show_time(assignments: List[DriverAssignment]) -> str:
     
     earliest = min(show_times, key=_time_to_minutes)
     return earliest
+
+
+def _parse_timestamp_date(timestamp_str: str) -> Optional[date]:
+    """Parse timestamp cell text into a date, if possible."""
+    candidates = [
+        "%m/%d/%y, %I:%M:%S %p",
+        "%m/%d/%Y, %I:%M:%S %p",
+        "%m/%d/%y %I:%M:%S %p",
+        "%m/%d/%Y %I:%M:%S %p",
+        "%m/%d/%y",
+        "%m/%d/%Y",
+    ]
+    value = (timestamp_str or "").strip()
+    for fmt in candidates:
+        try:
+            return datetime.strptime(value, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _parse_schedule_header_date(header_value: str, year_hint: int) -> Optional[date]:
+    """Parse schedule header values like 'Sun, 22/Feb' into a date with year hint."""
+    value = (header_value or "").strip()
+    try:
+        if "," in value:
+            value = value.split(",", 1)[1].strip()
+        parsed = datetime.strptime(f"{value}/{year_hint}", "%d/%b/%Y")
+        return parsed.date()
+    except ValueError:
+        return None
+
+
+def _resolve_selected_schedule_date(assigned_dates: List[str], timestamp_date: Optional[date]) -> Tuple[str, Optional[date]]:
+    """Pick the date label from file headers that best matches the schedule timestamp date."""
+    if not assigned_dates:
+        return "", timestamp_date
+
+    year_hint = timestamp_date.year if timestamp_date else date.today().year
+    parsed_headers: List[Tuple[str, date]] = []
+
+    for label in assigned_dates:
+        parsed_date = _parse_schedule_header_date(label, year_hint)
+        if parsed_date:
+            parsed_headers.append((label, parsed_date))
+
+    if parsed_headers and timestamp_date:
+        for label, parsed_date in parsed_headers:
+            if parsed_date == timestamp_date:
+                return label, parsed_date
+
+        # If no exact match exists, use the nearest header date to avoid defaulting to stale columns.
+        return min(parsed_headers, key=lambda item: abs((item[1] - timestamp_date).days))
+
+    if parsed_headers:
+        # Prefer the most recent parsed date when timestamp parsing is unavailable.
+        return max(parsed_headers, key=lambda item: item[1])
+
+    # Final fallback: use right-most header value instead of first column.
+    return assigned_dates[-1], timestamp_date

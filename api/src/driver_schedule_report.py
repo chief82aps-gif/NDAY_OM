@@ -5,7 +5,7 @@ import re
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, PageBreak
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from api.src.models import DriverScheduleSummary
@@ -25,6 +25,43 @@ class DriverScheduleReportGenerator:
         """Initialize report generator."""
         self.styles = getSampleStyleSheet()
         self._setup_custom_styles()
+        self.compact_mode = True
+
+    def _set_layout_mode(self, compact: bool):
+        """Apply compact/readable style values before rendering."""
+        self.compact_mode = compact
+
+        title_style = self.styles['ReportTitle']
+        section_style = self.styles['SectionHeader']
+        table_header_style = self.styles['TableHeader']
+        table_cell_style = self.styles['TableCell']
+
+        if compact:
+            title_style.fontSize = 12
+            title_style.spaceAfter = 3
+
+            section_style.fontSize = 9
+            section_style.spaceAfter = 2
+            section_style.spaceBefore = 4
+
+            table_header_style.fontSize = 7
+            table_header_style.leading = 7
+
+            table_cell_style.fontSize = 6
+            table_cell_style.leading = 6
+        else:
+            title_style.fontSize = 14
+            title_style.spaceAfter = 6
+
+            section_style.fontSize = 11
+            section_style.spaceAfter = 4
+            section_style.spaceBefore = 8
+
+            table_header_style.fontSize = 8
+            table_header_style.leading = 8
+
+            table_cell_style.fontSize = 7
+            table_cell_style.leading = 8
     
     def _setup_custom_styles(self):
         """Define custom text styles for reports."""
@@ -52,18 +89,24 @@ class DriverScheduleReportGenerator:
             name='TableHeader',
             parent=self.styles['Normal'],
             fontSize=8,
+            leading=8,
             textColor=colors.whitesmoke,
             fontName='Helvetica-Bold',
             alignment=TA_CENTER,
+            spaceBefore=0,
+            spaceAfter=0,
         ))
         
         self.styles.add(ParagraphStyle(
             name='TableCell',
             parent=self.styles['Normal'],
             fontSize=7,
+            leading=8,
             textColor=colors.black,
             fontName='Helvetica',
             alignment=TA_LEFT,
+            spaceBefore=0,
+            spaceAfter=0,
         ))
     
     def _build_show_time_color_map(self, show_times: List[str]) -> Dict[str, object]:
@@ -80,6 +123,7 @@ class DriverScheduleReportGenerator:
         self,
         schedule: DriverScheduleSummary,
         output_path: str,
+        compact: bool = True,
     ) -> str:
         """
         Generate driver schedule report PDF.
@@ -91,7 +135,24 @@ class DriverScheduleReportGenerator:
         Returns:
             Path to generated PDF
         """
-        doc = SimpleDocTemplate(output_path, pagesize=letter, topMargin=0.5*inch, bottomMargin=0.5*inch)
+        self._set_layout_mode(compact)
+
+        if compact:
+            doc = SimpleDocTemplate(
+                output_path,
+                pagesize=letter,
+                topMargin=0.35 * inch,
+                bottomMargin=0.35 * inch,
+                leftMargin=0.35 * inch,
+                rightMargin=0.35 * inch,
+            )
+        else:
+            doc = SimpleDocTemplate(
+                output_path,
+                pagesize=letter,
+                topMargin=0.5 * inch,
+                bottomMargin=0.5 * inch,
+            )
         story = []
         
         # Title
@@ -107,10 +168,10 @@ class DriverScheduleReportGenerator:
             f"File Timestamp: {schedule.timestamp} | Scheduled Date: {schedule.date}</font>",
             ParagraphStyle(
                 name='Metadata',
-                fontSize=7,
+                fontSize=6 if compact else 7,
                 textColor=colors.grey,
                 alignment=TA_CENTER,
-                spaceAfter=8,
+                spaceAfter=3 if compact else 8,
             )
         )
         story.append(metadata)
@@ -129,7 +190,8 @@ class DriverScheduleReportGenerator:
         
         # Add sweepers section if any
         if schedule.sweepers:
-            story.append(PageBreak())
+            if not compact:
+                story.append(PageBreak())
             story.extend(self._build_sweepers_section(schedule, show_time_color_map))
         
         # Build PDF
@@ -216,6 +278,8 @@ class DriverScheduleReportGenerator:
             row_colors.append(row_color)
         
         # Create table
+        compact = self.compact_mode
+
         table = Table(
             table_data,
             colWidths=[2.5*inch, 1.5*inch, 1.5*inch],
@@ -225,13 +289,13 @@ class DriverScheduleReportGenerator:
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                 ('ALIGN', (0, 0), (0, -1), 'LEFT'),  # Name column left-aligned
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 8),
-                ('TOPPADDING', (0, 0), (-1, -1), 3),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-                ('LEFTPADDING', (0, 0), (-1, -1), 4),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+                ('FONTSIZE', (0, 0), (-1, 0), 7 if compact else 8),
+                ('TOPPADDING', (0, 0), (-1, -1), 0.5 if compact else 3),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 0.5 if compact else 3),
+                ('LEFTPADDING', (0, 0), (-1, -1), 1 if compact else 4),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 1 if compact else 4),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                ('FONTSIZE', (0, 1), (-1, -1), 7),
+                ('FONTSIZE', (0, 1), (-1, -1), 6 if compact else 7),
                 ('ROWBACKGROUNDS', (0, 0), (-1, -1), row_colors),
             ])
         )
@@ -239,8 +303,9 @@ class DriverScheduleReportGenerator:
         story.append(table)
         return story
     def _build_sweepers_section(self, schedule: DriverScheduleSummary, show_time_color_map: Dict[str, object]) -> List:
-        """Build sweepers section."""
+        """Build sweepers section in compact or readable mode."""
         story = []
+        compact = self.compact_mode
         
         # Section header
         header = Paragraph(
@@ -256,42 +321,53 @@ class DriverScheduleReportGenerator:
             f"<font size=8>Show Time: <b>{sweeper_show_time}</b></font>",
             ParagraphStyle(
                 name='SweeperSubtitle',
-                fontSize=8,
+                fontSize=7 if compact else 8,
                 textColor=self.COLOR_BLUE,
                 fontName='Helvetica-Bold',
-                spaceAfter=4,
+                spaceAfter=2 if compact else 4,
             )
         )
         story.append(subtitle)
         
-        # Build sweeper table
+        if compact:
+            names = ", ".join(sorted(schedule.sweepers))
+            compact_names = Paragraph(
+                f"<font size=6><b>Drivers:</b> {names}</font>",
+                ParagraphStyle(
+                    name='SweeperNames',
+                    fontSize=6,
+                    leading=6,
+                    textColor=colors.black,
+                    fontName='Helvetica',
+                    spaceAfter=1,
+                )
+            )
+            story.append(compact_names)
+            return story
+
         table_data = [[
             Paragraph("<b>Name</b>", self.styles['TableHeader']),
             Paragraph("<b>Show Time</b>", self.styles['TableHeader']),
         ]]
-        
-        # Get color for sweeper show time from the color map
+
         sweeper_color = show_time_color_map.get(sweeper_show_time, colors.white)
-        
-        row_colors = [self.COLOR_BLUE]  # Header
-        
-        # Add sweepers
+        row_colors = [self.COLOR_BLUE]
+
         for sweeper in sorted(schedule.sweepers):
             table_data.append([
                 Paragraph(sweeper, self.styles['TableCell']),
                 Paragraph(sweeper_show_time, self.styles['TableCell']),
             ])
             row_colors.append(sweeper_color)
-        
-        # Create table
+
         table = Table(
             table_data,
-            colWidths=[2.5*inch, 1.5*inch],
+            colWidths=[2.5 * inch, 1.5 * inch],
             style=TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), self.COLOR_BLUE),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('ALIGN', (0, 0), (0, -1), 'LEFT'),  # Name column left-aligned
+                ('ALIGN', (0, 0), (0, -1), 'LEFT'),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
                 ('FONTSIZE', (0, 0), (-1, 0), 8),
                 ('TOPPADDING', (0, 0), (-1, -1), 3),
@@ -303,6 +379,6 @@ class DriverScheduleReportGenerator:
                 ('ROWBACKGROUNDS', (0, 0), (-1, -1), row_colors),
             ])
         )
-        
+
         story.append(table)
         return story

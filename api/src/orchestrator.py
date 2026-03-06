@@ -78,12 +78,28 @@ class IngestOrchestrator:
     def ingest_driver_schedule(self, file_path: str) -> bool:
         """Ingest driver schedule Excel file (Rostered Work Blocks and Shifts & Availability)."""
         schedule, errors = parse_driver_schedule_excel(file_path)
-        self.status.driver_schedule = schedule
         self.status.validation_errors.extend(errors)
-        self.status.driver_schedule_uploaded = True
-        return True
+
+        has_schedule_data = bool(
+            schedule and (
+                schedule.timestamp
+                or schedule.date
+                or schedule.assignments
+                or schedule.sweepers
+            )
+        )
+
+        if has_schedule_data:
+            self.status.driver_schedule = schedule
+            self.status.driver_schedule_uploaded = True
+            return True
+
+        self.status.driver_schedule = None
+        self.status.driver_schedule_uploaded = False
+        self.status.driver_schedule_report_path = None
+        return False
     
-    def generate_driver_schedule_report(self) -> bool:
+    def generate_driver_schedule_report(self, compact: bool = True) -> bool:
         """Generate PDF report for current driver schedule."""
         if not self.status.driver_schedule:
             self.status.validation_errors.append("No driver schedule data available for report generation")
@@ -93,7 +109,8 @@ class IngestOrchestrator:
         try:
             self.schedule_report_generator.generate_schedule_report(
                 self.status.driver_schedule,
-                output_path
+                output_path,
+                compact=compact,
             )
             self.status.driver_schedule_report_path = output_path
             return True

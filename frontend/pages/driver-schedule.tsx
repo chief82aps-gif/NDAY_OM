@@ -34,6 +34,9 @@ interface UploadResponse {
   scheduled_date: string;
   assignments_count: number;
   sweepers_count: number;
+  report_generated?: boolean;
+  report_compact?: boolean;
+  report_path?: string;
   errors: string[];
 }
 
@@ -45,6 +48,8 @@ export default function DriverSchedulePage() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [schedule, setSchedule] = useState<DriverScheduleSummary | null>(null);
   const [reportDownloading, setReportDownloading] = useState(false);
+  const [reportAvailable, setReportAvailable] = useState(false);
+  const [compactReport, setCompactReport] = useState(true);
 
   const sortedAssignments = useMemo(() => {
     if (!schedule?.assignments) return [];
@@ -89,12 +94,15 @@ export default function DriverSchedulePage() {
     setIsLoading(true);
     setUploadError(null);
     setUploadStatus('Uploading driver schedule...');
+    setSchedule(null);
+    setReportAvailable(false);
 
     try {
       const formData = new FormData();
       formData.append('file', files[0]);
+      formData.append('compact', compactReport ? 'true' : 'false');
 
-      const response = await fetch(`${API_URL}/upload/driver-schedule`, {
+      const response = await fetch(`${API_URL}/upload/driver-schedule-report-only`, {
         method: 'POST',
         body: formData,
         headers: {
@@ -111,37 +119,18 @@ export default function DriverSchedulePage() {
       setUploadStatus(
         `✓ Uploaded: ${data.filename} | ${data.assignments_count} assignments, ${data.sweepers_count} sweepers`
       );
-
-      // Fetch the schedule summary
-      await fetchScheduleSummary();
+      setReportAvailable(Boolean(data.report_generated));
     } catch (error) {
+      setSchedule(null);
       setUploadError(
         error instanceof Error ? error.message : 'Failed to upload driver schedule'
       );
       setUploadStatus(null);
+      setReportAvailable(false);
     } finally {
       setIsLoading(false);
     }
-  }, []);
-
-  const fetchScheduleSummary = async () => {
-    try {
-      const response = await fetch(`${API_URL}/upload/driver-schedule-summary`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch schedule summary');
-      }
-
-      const data: DriverScheduleSummary = await response.json();
-      setSchedule(data);
-    } catch (error) {
-      console.error('Error fetching schedule:', error);
-    }
-  };
+  }, [compactReport]);
 
   const handleDownloadReport = async () => {
     setReportDownloading(true);
@@ -212,6 +201,19 @@ export default function DriverSchedulePage() {
               <p className="text-sm text-gray-500">or click to browse</p>
             </UploadZone>
 
+            <div className="mt-4 flex items-center gap-2">
+              <input
+                id="compact-report"
+                type="checkbox"
+                checked={compactReport}
+                onChange={(event) => setCompactReport(event.target.checked)}
+                className="h-4 w-4"
+              />
+              <label htmlFor="compact-report" className="text-sm text-gray-700">
+                Force compact one-page report
+              </label>
+            </div>
+
             {isLoading && (
               <div className="mt-4 text-center">
                 <div className="inline-block animate-spin">
@@ -229,6 +231,22 @@ export default function DriverSchedulePage() {
 
             {uploadError && (
               <StatusDisplay messages={[{ type: 'error', text: uploadError }]} />
+            )}
+
+            {reportAvailable && (
+              <div className="mt-6 flex items-center justify-between rounded-lg border border-indigo-200 bg-indigo-50 p-4">
+                <div>
+                  <p className="font-semibold text-indigo-900">Driver Schedule Report Ready</p>
+                  <p className="text-sm text-indigo-700">Schedule data is not retained. Download the report now.</p>
+                </div>
+                <button
+                  onClick={handleDownloadReport}
+                  disabled={reportDownloading}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-gray-400 flex items-center gap-2"
+                >
+                  {reportDownloading ? 'Downloading...' : 'Download Report'}
+                </button>
+              </div>
             )}
           </div>
 

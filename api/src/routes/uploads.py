@@ -412,21 +412,6 @@ def upload_driver_schedule(file: UploadFile = File(...), compact: bool = Form(Tr
         report_generated = orchestrator.generate_driver_schedule_report(compact=compact)
         
         schedule = orchestrator.status.driver_schedule
-        db = SessionLocal()
-        try:
-            _archive_upload(
-                db,
-                upload_type="driver_schedule",
-                source_file=file.filename,
-                payload=orchestrator.status.driver_schedule,
-                record_count=len(schedule.assignments) if schedule else 0,
-            )
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
-        finally:
-            db.close()
 
         response_payload = {
             "filename": file.filename,

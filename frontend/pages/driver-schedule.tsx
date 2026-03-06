@@ -1,31 +1,10 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback } from 'react';
 import PageHeader from '../components/PageHeader';
 import UploadZone from '../components/UploadZone';
 import StatusDisplay from '../components/StatusDisplay';
 import { ProtectedRoute } from '../components/ProtectedRoute';
-
-interface DriverAssignment {
-  driver_name: string;
-  date: string;
-  wave_time: string;
-  service_type: string;
-  show_time: string;
-}
-
-interface DriverScheduleSummary {
-  timestamp: string;
-  scheduled_date: string;
-  assignments: DriverAssignment[];
-  sweepers: string[];
-  show_times: Record<string, string>;
-  summary: {
-    total_assigned: number;
-    total_sweepers: number;
-    total_drivers: number;
-  };
-}
 
 interface UploadResponse {
   filename: string;
@@ -46,47 +25,9 @@ export default function DriverSchedulePage() {
   const [isLoading, setIsLoading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [schedule, setSchedule] = useState<DriverScheduleSummary | null>(null);
   const [reportDownloading, setReportDownloading] = useState(false);
   const [reportAvailable, setReportAvailable] = useState(false);
   const [compactReport, setCompactReport] = useState(true);
-
-  const sortedAssignments = useMemo(() => {
-    if (!schedule?.assignments) return [];
-
-    const parseTimeToMinutes = (value: string) => {
-      const trimmed = value.trim();
-      const match = trimmed.match(/^(\d{1,2}):(\d{2})(?:\s*([AaPp][Mm]))?$/);
-
-      if (!match) {
-        return Number.MAX_SAFE_INTEGER;
-      }
-
-      let hours = Number.parseInt(match[1], 10);
-      const minutes = Number.parseInt(match[2], 10);
-      const meridiem = match[3]?.toUpperCase();
-
-      if (meridiem === 'PM' && hours < 12) {
-        hours += 12;
-      }
-
-      if (meridiem === 'AM' && hours === 12) {
-        hours = 0;
-      }
-
-      return hours * 60 + minutes;
-    };
-
-    return [...schedule.assignments].sort((first, second) => {
-      const timeDifference = parseTimeToMinutes(first.wave_time) - parseTimeToMinutes(second.wave_time);
-
-      if (timeDifference !== 0) {
-        return timeDifference;
-      }
-
-      return first.driver_name.localeCompare(second.driver_name);
-    });
-  }, [schedule]);
 
   const handleDrop = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
@@ -94,7 +35,6 @@ export default function DriverSchedulePage() {
     setIsLoading(true);
     setUploadError(null);
     setUploadStatus('Uploading driver schedule...');
-    setSchedule(null);
     setReportAvailable(false);
 
     try {
@@ -121,7 +61,6 @@ export default function DriverSchedulePage() {
       );
       setReportAvailable(Boolean(data.report_generated));
     } catch (error) {
-      setSchedule(null);
       setUploadError(
         error instanceof Error ? error.message : 'Failed to upload driver schedule'
       );
@@ -237,7 +176,7 @@ export default function DriverSchedulePage() {
               <div className="mt-6 flex items-center justify-between rounded-lg border border-indigo-200 bg-indigo-50 p-4">
                 <div>
                   <p className="font-semibold text-indigo-900">Driver Schedule Report Ready</p>
-                  <p className="text-sm text-indigo-700">Schedule data is not retained. Download the report now.</p>
+                  <p className="text-sm text-indigo-700">Report-only mode is active. Schedule matrix is not persisted.</p>
                 </div>
                 <button
                   onClick={handleDownloadReport}
@@ -250,128 +189,13 @@ export default function DriverSchedulePage() {
             )}
           </div>
 
-          {/* Schedule Summary */}
-          {schedule && (
-            <div className="space-y-6">
-              {/* Header Info */}
-              <div className="bg-white rounded-lg shadow-md p-6">
-                <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-2xl font-bold text-gray-800">Schedule Summary</h2>
-                  <button
-                    onClick={handleDownloadReport}
-                    disabled={reportDownloading}
-                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-gray-400 flex items-center gap-2"
-                  >
-                    {reportDownloading ? (
-                      <>
-                        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" opacity="0.25"></circle>
-                          <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        Downloading...
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                        </svg>
-                        Download Report
-                      </>
-                    )}
-                  </button>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <p className="text-sm text-gray-600">File Timestamp</p>
-                    <p className="text-lg font-semibold text-gray-800">{schedule.timestamp}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Scheduled Date</p>
-                    <p className="text-lg font-semibold text-gray-800">{schedule.scheduled_date}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Total Drivers</p>
-                    <p className="text-lg font-semibold text-indigo-600">{schedule.summary.total_drivers}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Show Times Summary */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-blue-50 rounded-lg shadow-md p-6 border-l-4 border-blue-500">
-                  <p className="text-sm text-gray-600 mb-2">Assigned Drivers</p>
-                  <p className="text-3xl font-bold text-blue-600">{schedule.summary.total_assigned}</p>
-                </div>
-                <div className="bg-orange-50 rounded-lg shadow-md p-6 border-l-4 border-orange-500">
-                  <p className="text-sm text-gray-600 mb-2">Sweepers</p>
-                  <p className="text-3xl font-bold text-orange-600">{schedule.summary.total_sweepers}</p>
-                </div>
-                <div className="bg-green-50 rounded-lg shadow-md p-6 border-l-4 border-green-500">
-                  <p className="text-sm text-gray-600 mb-2">Earliest Show Time</p>
-                  <p className="text-3xl font-bold text-green-600">
-                    {Object.values(schedule.show_times)[0] || 'N/A'}
-                  </p>
-                </div>
-              </div>
-
-              {/* Assignments Table */}
-              <div className="bg-white rounded-lg shadow-md p-6">
-                <h3 className="text-xl font-bold text-gray-800 mb-4">Driver Assignments</h3>
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="bg-gray-100 border-b">
-                        <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">Driver Name</th>
-                        <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">Wave Time</th>
-                        <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">Show Time</th>
-                        <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">Service Type</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sortedAssignments.map((assignment, idx) => (
-                        <tr key={idx} className="border-b hover:bg-gray-50">
-                          <td className="px-4 py-3 text-sm text-gray-800">{assignment.driver_name}</td>
-                          <td className="px-4 py-3 text-sm text-gray-800">{assignment.wave_time}</td>
-                          <td className="px-4 py-3 text-sm font-semibold text-indigo-600">{assignment.show_time}</td>
-                          <td className="px-4 py-3 text-sm text-gray-600">{assignment.service_type}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Sweepers List */}
-              {schedule.sweepers.length > 0 && (
-                <div className="bg-white rounded-lg shadow-md p-6">
-                  <h3 className="text-xl font-bold text-gray-800 mb-4">Sweepers (Unassigned but Available)</h3>
-                  <div className="bg-orange-50 border border-orange-200 rounded p-4">
-                    <div className="flex flex-wrap gap-2">
-                      {schedule.sweepers.map((sweeper, idx) => (
-                        <span
-                          key={idx}
-                          className="px-3 py-1 bg-orange-200 text-orange-800 rounded-full text-sm font-medium"
-                        >
-                          {sweeper}
-                        </span>
-                      ))}
-                    </div>
-                    <p className="text-sm text-orange-700 mt-3">
-                      💡 All sweepers have show time: <strong>{schedule.show_times[schedule.sweepers[0]] || 'Wave 1 & 2 time'}</strong>
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
           {/* Info Section */}
           <div className="bg-indigo-50 border-l-4 border-indigo-500 rounded-lg p-6 mt-8">
-            <h3 className="font-bold text-indigo-900 mb-2">ℹ️ How It Works</h3>
+            <h3 className="font-bold text-indigo-900 mb-2">How It Works</h3>
             <ul className="text-sm text-indigo-800 space-y-2">
               <li>• <strong>Show Time:</strong> Calculated 25 minutes before wave time</li>
               <li>• <strong>Wave Consolidation:</strong> Waves within 5 minutes share the same show time</li>
-              <li>• <strong>Sweepers:</strong> Available drivers not assigned to routes, scheduled for Wave 1 & 2 show time</li>
+              <li>• <strong>Report-only:</strong> The on-screen schedule matrix is intentionally not retained</li>
               <li>• <strong>File Format:</strong> Excel with "Rostered Work Blocks" and "Shifts & Availability" tabs</li>
               <li>• <strong>Upload Time:</strong> Expected around 7 PM daily</li>
             </ul>

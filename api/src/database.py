@@ -1,3 +1,7 @@
+# ...existing code...
+
+# Place this after Base and engine are defined
+
 """
 SQLAlchemy ORM Models for NDAY Route Manager
 
@@ -7,7 +11,7 @@ Maps Python classes to PostgreSQL database tables.
 from datetime import datetime, date, time
 from sqlalchemy import (
     create_engine, Column, Integer, String, Boolean, DateTime, Date, Time,
-    DECIMAL, ForeignKey, Text, TIMESTAMP, JSON, Index, func
+    DECIMAL, ForeignKey, Text, TIMESTAMP, JSON, Index, func, text, Float
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
@@ -17,22 +21,31 @@ import os
 from api.src.permissions import Role
 
 # Database URL
-DATABASE_URL = os.getenv(
-    'DATABASE_URL',
-    'postgresql://user:password@localhost:5432/nday_om'
-)
+# Priority:
+# 1) Explicit DATABASE_URL from hosting platform (Render/managed DB)
+# 2) Local fallback to sqlite for environments without a provisioned DB yet
+DATABASE_URL = os.getenv('DATABASE_URL')
+if not DATABASE_URL:
+    DATABASE_URL = 'sqlite:///./nday_om.db'
 
 # Create base class for all models
 Base = declarative_base()
 
 # Create engine
-engine = create_engine(
-    DATABASE_URL,
-    pool_size=5,
-    max_overflow=10,
-    pool_recycle=3600,
-    pool_pre_ping=True
-)
+if DATABASE_URL.startswith('sqlite'):
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={'check_same_thread': False},
+        pool_pre_ping=True,
+    )
+else:
+    engine = create_engine(
+        DATABASE_URL,
+        pool_size=5,
+        max_overflow=10,
+        pool_recycle=3600,
+        pool_pre_ping=True,
+    )
 
 # Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -422,6 +435,18 @@ class VariableInvoiceLineItem(Base):
         return f"<VariableInvoiceLineItem(desc={self.description}, amount={self.amount})>"
 
 
+class InvoiceAuditMapping(Base):
+    """Mapping from invoice line descriptions to WST audit metrics."""
+    __tablename__ = "invoice_audit_mappings"
+
+    id = Column(Integer, primary_key=True)
+    description = Column(String(255), nullable=False)
+    description_normalized = Column(String(255), nullable=False, unique=True, index=True)
+    metric_key = Column(String(64), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 # ============================================================================
 # WST (WORK SUMMARY TOOL) REPORTS
 # ============================================================================
@@ -525,6 +550,29 @@ class WstWeeklyReport(Base):
     completed_routes = Column(Integer)
     source_file = Column(String(255))
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ServiceTypeAlias(Base):
+    """Canonical service type aliases across all ingest sources."""
+    __tablename__ = "service_type_aliases"
+
+    canonical_key = Column(String(100), primary_key=True)
+    canonical_display = Column(String(255), nullable=False)
+
+    dop_aliases = Column(JSON, default=list, nullable=True)
+    fleet_aliases = Column(JSON, default=list, nullable=True)
+    invoice_aliases = Column(JSON, default=list, nullable=True)
+    wst_aliases = Column(JSON, default=list, nullable=True)
+    cortex_aliases = Column(JSON, default=list, nullable=True)
+    schedule_aliases = Column(JSON, default=list, nullable=True)
+
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    def __repr__(self):
+        return f"<ServiceTypeAlias(canonical_key={self.canonical_key})>"
 
 
 # ============================================================================
@@ -704,13 +752,449 @@ class PodReportDriver(Base):
 
 
 # ============================================================================
+# CORTEX (ROUTE ASSIGNMENTS)
+# ============================================================================
+
+class Cortex(Base):
+    """Cortex route assignment data (planned/historical)"""
+    __tablename__ = "cortex_routes"
+
+    id = Column(Integer, primary_key=True)
+    assignment_date = Column(Date, index=True)
+    station = Column(String(50), index=True)
+    dsp_code = Column(String(100), index=True)
+    route_code = Column(String(50), index=True)
+    wave = Column(String(20))
+    packages = Column(Integer)
+    commercial_pct = Column(DECIMAL(10, 2))
+    zone = Column(String(50))
+    service_type = Column(String(255))
+    driver_name = Column(String(255), index=True)
+    source_file = Column(String(255))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ============================================================================
+# DOP (DAY OF PLAN)
+# ============================================================================
+
+class DOP(Base):
+    """DOP (Day of Plan) route scheduling data"""
+    __tablename__ = "dop_routes"
+
+    id = Column(Integer, primary_key=True)
+    schedule_date = Column(Date, index=True)
+    station = Column(String(50), index=True)
+    dsp_code = Column(String(100), index=True)
+    route_code = Column(String(50), index=True)
+    wave = Column(String(20))
+    planned_packages = Column(Integer)
+    commercial_pct = Column(DECIMAL(10, 2))
+    zone = Column(String(50))
+    service_type = Column(String(255))
+    source_file = Column(String(255))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class UploadRetentionRecord(Base):
+    """Archive metadata/payload for uploaded files with explicit retention window."""
+    __tablename__ = "upload_retention_records"
+
+    id = Column(Integer, primary_key=True)
+    upload_type = Column(String(100), nullable=False, index=True)
+    source_file = Column(String(255), nullable=False, index=True)
+    record_count = Column(Integer, default=0)
+    payload = Column(JSON)
+    uploaded_at = Column(DateTime, default=datetime.utcnow, index=True)
+    retain_until = Column(DateTime, nullable=False, index=True)
+
+
+class AuditMismatchReview(Base):
+    """Manager review decisions for invoice audit mismatches."""
+    __tablename__ = "audit_mismatch_reviews"
+
+    id = Column(Integer, primary_key=True)
+    invoice_number = Column(String(100), nullable=False, index=True)
+    mismatch_key = Column(String(64), nullable=False, index=True)
+    line_description = Column(Text)
+    action_status = Column(String(40), nullable=False, default="pending", index=True)
+    manager_note = Column(Text)
+    dispute_portal_reference = Column(String(255))
+    dispute_verified = Column(Boolean, default=False)
+    reviewed_role = Column(String(40))
+    reviewed_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
+
+
+class AuditRouteReview(Base):
+    """User confirmation decisions for Cortex routes not found in DOP."""
+    __tablename__ = "audit_route_reviews"
+
+    id = Column(Integer, primary_key=True)
+    audit_date = Column(Date, nullable=False, index=True)
+    station = Column(String(50), index=True)
+    invoice_number = Column(String(100), index=True)
+    route_code = Column(String(50), nullable=False, index=True)
+    action_status = Column(String(40), nullable=False, default="pending", index=True)
+    manager_note = Column(Text)
+    reviewed_role = Column(String(40))
+    reviewed_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
+
+
+# ============================================================================
+# WEEKLY INVOICE AUDIT
+# ============================================================================
+
+class WeeklyInvoiceAudit(Base):
+    """Weekly invoice audit comparing WST weekly export to invoice export."""
+    __tablename__ = "weekly_invoice_audits"
+
+    id = Column(Integer, primary_key=True)
+    invoice_number = Column(String(100), nullable=False, index=True)
+    audit_date = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    period_start = Column(Date, nullable=False, index=True)
+    period_end = Column(Date, nullable=False, index=True)
+    station = Column(String(50), nullable=False, index=True)
+    dsp_short_code = Column(String(20), nullable=True, index=True)
+    
+    # WST snapshot
+    wst_completed_routes = Column(Integer, nullable=True)
+    wst_distance_planned = Column(DECIMAL(12, 2), nullable=True)
+    wst_distance_allowance = Column(DECIMAL(12, 2), nullable=True)
+    wst_amzl_late_cancel = Column(DECIMAL(10, 2), nullable=True)
+    wst_dsp_late_cancel = Column(DECIMAL(10, 2), nullable=True)
+    wst_quick_coverage_accepted = Column(DECIMAL(10, 2), nullable=True)
+    
+    # Invoice snapshot
+    invoice_total_quantity = Column(DECIMAL(12, 2), nullable=True)
+    invoice_subtotal = Column(DECIMAL(12, 2), nullable=True)
+    invoice_total_due = Column(DECIMAL(12, 2), nullable=True)
+    
+    # Comparison results
+    total_lines = Column(Integer, default=0)
+    matched_lines = Column(Integer, default=0)
+    variance_lines = Column(Integer, default=0)
+    unmatched_lines = Column(Integer, default=0)
+    aligned = Column(Boolean, default=False)
+    
+    # Issues
+    critical_issues = Column(JSON, default=[], nullable=True)
+    warnings = Column(JSON, default=[], nullable=True)
+    
+    # Detailed comparison results
+    comparison_details = Column(JSON, default={}, nullable=True)
+    
+    # Approval tracking
+    reviewed_by = Column(String(100), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    approval_status = Column(String(40), default="pending", index=True)  # pending, approved, disputed
+    approval_notes = Column(Text, nullable=True)
+    
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index('idx_weekly_audit_invoice_date', 'invoice_number', 'audit_date'),
+        Index('idx_weekly_audit_period', 'period_start', 'period_end', 'station'),
+    )
+
+    def __repr__(self):
+        return f"<WeeklyInvoiceAudit(invoice={self.invoice_number}, period={self.period_start}...{self.period_end})>"
+
+
+class WeeklyAuditLineItem(Base):
+    """Detailed comparison for each invoice line in weekly audit."""
+    __tablename__ = "weekly_audit_line_items"
+
+    id = Column(Integer, primary_key=True)
+    audit_id = Column(Integer, ForeignKey("weekly_invoice_audits.id", ondelete="CASCADE"), nullable=False, index=True)
+    
+    # Invoice line
+    invoice_description = Column(String(255), nullable=False)
+    invoice_quantity = Column(DECIMAL(12, 2), nullable=False)
+    invoice_rate = Column(DECIMAL(12, 2), nullable=True)
+    invoice_amount = Column(DECIMAL(12, 2), nullable=True)
+    
+    # Classification
+    category = Column(String(50), nullable=False)  # route, service_type, cancellation, distance, other
+    subcategory = Column(String(100), nullable=True)
+    
+    # Matching
+    matched_metric = Column(String(100), nullable=True)
+    wst_expected_value = Column(DECIMAL(12, 2), nullable=True)
+    variance = Column(DECIMAL(12, 2), nullable=True)
+    
+    # Status
+    status = Column(String(40), default="pending", nullable=False)  # matched, variance, unmatched
+    issues = Column(JSON, default=[], nullable=True)
+    
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index('idx_weekly_audit_line_audit', 'audit_id'),
+        Index('idx_weekly_audit_line_status', 'audit_id', 'status'),
+    )
+
+    def __repr__(self):
+        return f"<WeeklyAuditLineItem(audit={self.audit_id}, desc={self.invoice_description}, status={self.status})>"
+
+
+class ApprovedAudit(Base):
+    """Stores approved audit submissions for daily screenshot audits."""
+    __tablename__ = "approved_audits"
+
+    id = Column(Integer, primary_key=True)
+    submitted_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    station = Column(String(50), index=True)
+    audit_date = Column(Date, nullable=False, index=True)
+    cortex_raw = Column(Text, nullable=False)
+    wst_raw = Column(Text, nullable=False)
+    submitted_by = Column(String(100), default="", nullable=True)
+    notes = Column(Text, default="", nullable=True)
+    variance_responses = Column(JSON, default={}, nullable=True)
+    
+    # New fields for enhanced audit tracking
+    cortex_route_count = Column(Integer, nullable=True)
+    wst_route_count = Column(Integer, nullable=True)
+    cortex_package_count = Column(Integer, nullable=True)
+    wst_package_count = Column(Integer, nullable=True)
+    training_routes_count = Column(Integer, default=0, nullable=True)
+    excluded_services = Column(JSON, default=[], nullable=True)
+    disputes_json = Column(JSON, default=[], nullable=True)
+    dispute_summary = Column(Text, nullable=True, default="")
+    da_route_stats = Column(JSON, default={}, nullable=True)
+
+    def __repr__(self):
+        return f"<ApprovedAudit(id={self.id}, audit_date={self.audit_date}, station={self.station})>"
+
+
+class AuditDispute(Base):
+    """Tracks disputes raised during daily screenshot audits."""
+    __tablename__ = "audit_disputes"
+
+    id = Column(Integer, primary_key=True)
+    audit_id = Column(Integer, ForeignKey("approved_audits.id"), index=True)
+    approved_audit_date = Column(Date, nullable=False, index=True)
+    
+    # Dispute details
+    dispute_type = Column(String(50), nullable=False)  # route_count, package_count, excluded_service, training, etc.
+    variance_metric = Column(String(100), nullable=True)  # e.g., "route_count", "delivered_packages"
+    cortex_value = Column(Integer, nullable=True)
+    wst_value = Column(Integer, nullable=True)
+    variance_amount = Column(Integer, nullable=True)
+    
+    # User-provided response
+    user_input_reason = Column(Text, nullable=False)
+    dispute_status = Column(String(40), nullable=False)  # acknowledged, dispute_submitted
+    
+    # System-generated
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    submitted_by = Column(String(100), default="", nullable=True)
+    
+    def __repr__(self):
+        return f"<AuditDispute(id={self.id}, type={self.dispute_type}, date={self.approved_audit_date})>"
+
+
+class AuditDARouteStats(Base):
+    """Tracks DA name, route code, and average stops per hour."""
+    __tablename__ = "audit_da_route_stats"
+
+    id = Column(Integer, primary_key=True)
+    audit_id = Column(Integer, ForeignKey("approved_audits.id"), index=True)
+    approved_audit_date = Column(Date, nullable=False, index=True)
+    
+    # DA and Route Information
+    driver_name = Column(String(255), nullable=False, index=True)
+    route_code = Column(String(100), nullable=False, index=True)
+    service_type = Column(String(255), nullable=True)
+    
+    # Performance metrics
+    completed_stops = Column(Integer, nullable=True)
+    total_stops = Column(Integer, nullable=True)
+    completed_deliveries = Column(Integer, nullable=True)
+    total_deliveries = Column(Integer, nullable=True)
+    
+    # Calculated
+    avg_stops_per_hour = Column(Float, nullable=True)
+    route_efficiency = Column(Float, nullable=True)  # percentage
+    
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    def __repr__(self):
+        return f"<AuditDARouteStats(driver={self.driver_name}, route={self.route_code}, stops/hr={self.avg_stops_per_hour})>"
+
+
+class ServiceTypeLibrary(Base):
+    """Stores canonical service type definitions for matching."""
+    __tablename__ = "service_type_library"
+
+    id = Column(Integer, primary_key=True)
+    service_key = Column(String(100), unique=True, nullable=False, index=True)
+    display_name = Column(String(255), nullable=False)
+    category = Column(String(50), nullable=True)
+    
+    # Pattern matching
+    regex_patterns = Column(JSON, default=[], nullable=True)  # List of regex patterns for matching
+    code_pattern = Column(String(255), nullable=True)
+    
+    # Metadata
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    def __repr__(self):
+        return f"<ServiceTypeLibrary(key={self.service_key}, name={self.display_name})>"
+
+
+# ============================================================================
+# WEEKLY AUDIT UPLOAD & VALIDATION
+# ============================================================================
+
+class UploadedFile(Base):
+    """Tracks uploaded WST and Invoice files."""
+    __tablename__ = "uploaded_files"
+    
+    id = Column(Integer, primary_key=True)
+    file_type = Column(String(50), nullable=False)  # 'wst' or 'invoice'
+    filename = Column(String(255), nullable=False)
+    file_path = Column(String(500), nullable=False)
+    file_size = Column(Integer)  # bytes
+    period_start = Column(Date, nullable=False, index=True)
+    period_end = Column(Date, nullable=False, index=True)
+    station = Column(String(50), nullable=True, index=True)
+    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    uploaded_by = Column(String(100), nullable=True)
+    parse_status = Column(String(50), default='pending')  # pending, completed, failed
+    parse_error = Column(Text, nullable=True)
+    record_count = Column(Integer, nullable=True)
+    
+    __table_args__ = (
+        Index('idx_uploaded_file_period', 'period_start', 'period_end'),
+        Index('idx_uploaded_file_type_date', 'file_type', 'uploaded_at'),
+    )
+    
+    def __repr__(self):
+        return f"<UploadedFile(type={self.file_type}, file={self.filename}, period={self.period_start}..{self.period_end})>"
+
+
+class ParsedInvoiceData(Base):
+    """Temporary storage of parsed invoice data before validation."""
+    __tablename__ = "parsed_invoice_data"
+    
+    id = Column(Integer, primary_key=True)
+    file_id = Column(Integer, ForeignKey("uploaded_files.id"), nullable=True)
+    invoice_number = Column(String(100), nullable=False, index=True)
+    period_start = Column(Date, nullable=False, index=True)
+    period_end = Column(Date, nullable=False, index=True)
+    station = Column(String(50), nullable=True, index=True)
+    
+    # Invoice totals
+    subtotal = Column(DECIMAL(12, 2), nullable=True)
+    tax_amount = Column(DECIMAL(12, 2), nullable=True)
+    total_amount = Column(DECIMAL(12, 2), nullable=True)
+    
+    # Line items (stored as JSON for flexibility)
+    line_items_json = Column(JSON, default=[], nullable=True)
+    
+    # Status tracking
+    is_validated = Column(Boolean, default=False)
+    validation_notes = Column(Text, nullable=True)
+    validated_at = Column(DateTime, nullable=True)
+    validated_by = Column(String(100), nullable=True)
+    
+    # Audit reference
+    audit_id = Column(Integer, ForeignKey("weekly_invoice_audits.id"), nullable=True)
+    
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    __table_args__ = (
+        Index('idx_parsed_invoice_number', 'invoice_number'),
+        Index('idx_parsed_invoice_period', 'period_start', 'period_end'),
+    )
+    
+    def __repr__(self):
+        return f"<ParsedInvoiceData(invoice={self.invoice_number}, period={self.period_start}..{self.period_end}, validated={self.is_validated})>"
+
+
+class AuditCorrection(Base):
+    """Records corrections made by users during audit validation."""
+    __tablename__ = "audit_corrections"
+    
+    id = Column(Integer, primary_key=True)
+    audit_id = Column(Integer, ForeignKey("weekly_invoice_audits.id"), nullable=False, index=True)
+    line_item_id = Column(Integer, ForeignKey("weekly_audit_line_items.id"), nullable=True)
+    
+    # What was corrected
+    field_name = Column(String(100), nullable=False)  # e.g., 'quantity', 'description', 'amount'
+    original_value = Column(String(500), nullable=True)
+    corrected_value = Column(String(500), nullable=False)
+    correction_reason = Column(Text, nullable=False)
+    
+    # Tracking
+    correction_status = Column(String(50), default='pending')  # pending, applied, disputed
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_by = Column(String(100), nullable=True)
+    
+    __table_args__ = (
+        Index('idx_audit_correction_audit', 'audit_id'),
+        Index('idx_audit_correction_status', 'correction_status'),
+    )
+    
+    def __repr__(self):
+        return f"<AuditCorrection(audit={self.audit_id}, field={self.field_name}, status={self.correction_status})>"
+
+
+class WeeklyAuditDispute(Base):
+    """Records disputes raised during weekly invoice audit."""
+    __tablename__ = "weekly_audit_disputes"
+    
+    id = Column(Integer, primary_key=True)
+    audit_id = Column(Integer, ForeignKey("weekly_invoice_audits.id"), nullable=False, index=True)
+    line_item_id = Column(Integer, ForeignKey("weekly_audit_line_items.id"), nullable=True)
+    
+    # Dispute details
+    dispute_category = Column(String(100), nullable=False)  # e.g., 'missing_payment', 'quantity_mismatch', 'rate_error'
+    dispute_description = Column(Text, nullable=False)
+    amount_disputed = Column(DECIMAL(12, 2), nullable=True)
+    
+    # Evidence
+    wst_expected = Column(String(500), nullable=True)
+    invoice_billed = Column(String(500), nullable=True)
+    evidence_notes = Column(Text, nullable=True)
+    
+    # Status
+    dispute_status = Column(String(50), default='pending')  # pending, submitted, resolved
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_by = Column(String(100), nullable=True)
+    resolved_at = Column(DateTime, nullable=True)
+    resolution_notes = Column(Text, nullable=True)
+    
+    __table_args__ = (
+        Index('idx_weekly_dispute_audit', 'audit_id'),
+        Index('idx_weekly_dispute_status', 'dispute_status'),
+        Index('idx_weekly_dispute_category', 'dispute_category'),
+    )
+    
+    def __repr__(self):
+        return f"<WeeklyAuditDispute(audit={self.audit_id}, category={self.dispute_category}, status={self.dispute_status})>"
+
+
+# ============================================================================
 # DATABASE FUNCTIONS
 # ============================================================================
 
 def init_db():
     """Create all tables"""
     Base.metadata.create_all(bind=engine)
+    ensure_cortex_driver_name_column()
     print("✓ Database initialized")
+
+
+def ensure_cortex_driver_name_column():
+    """Ensure cortex_routes.driver_name exists for historical environments."""
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE cortex_routes ADD COLUMN IF NOT EXISTS driver_name VARCHAR(255)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_cortex_routes_driver_name ON cortex_routes(driver_name)"))
 
 
 def get_db():

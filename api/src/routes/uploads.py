@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import os
 import re
 import tempfile
+from sqlalchemy import inspect
 from api.src.orchestrator import orchestrator
 from api.src.authorization import get_current_user_role, require_financial_access
 from api.src.permissions import Permission
@@ -120,6 +121,16 @@ def _json_safe(value):
 
 
 def _archive_upload(db, upload_type: str, source_file: str, payload, record_count: int = 0):
+    # Archive retention is best-effort. Do not break ingest endpoints if the
+    # retention table is unavailable in an environment.
+    try:
+        has_table = inspect(db.bind).has_table("upload_retention_records")
+    except Exception:
+        has_table = False
+
+    if not has_table:
+        return
+
     db.add(UploadRetentionRecord(
         upload_type=upload_type,
         source_file=source_file,

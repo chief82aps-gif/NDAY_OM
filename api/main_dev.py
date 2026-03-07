@@ -13,7 +13,7 @@ sys.path.insert(0, str(parent_dir))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.src.routes import uploads, auth
+from api.src.routes import uploads, auth, audit
 from api.src.database import Base, engine
 
 app = FastAPI(
@@ -56,6 +56,7 @@ else:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -64,6 +65,7 @@ app.add_middleware(
 # Include existing routes (unchanged)
 app.include_router(uploads.router, prefix="/upload")
 app.include_router(auth.router, prefix="/auth")
+app.include_router(audit.router, prefix="/audit")
 
 @app.get("/")
 def root():

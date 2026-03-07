@@ -1,5 +1,20 @@
 import React, { useState, useEffect } from 'react';
 
+const resolveApiUrl = (): string => {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    if (host !== 'localhost' && host !== '127.0.0.1') {
+      return 'https://nday-om.onrender.com';
+    }
+  }
+
+  return 'http://127.0.0.1:8000';
+};
+
 interface Violation {
   route_code: string;
   van_name: string;
@@ -35,7 +50,8 @@ const ElectricVanViolationsAlert: React.FC<ElectricVanViolationsAlertProps> = ({
   const fetchViolations = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/upload/electric-van-violations');
+      const apiUrl = resolveApiUrl();
+      const response = await fetch(`${apiUrl}/upload/electric-van-violations`);
       if (response.ok) {
         const data = await response.json();
         setViolations(data);
@@ -50,7 +66,8 @@ const ElectricVanViolationsAlert: React.FC<ElectricVanViolationsAlertProps> = ({
   const handleApproveViolation = async (violation: Violation) => {
     try {
       setApprovingRoute(violation.route_code);
-      const response = await fetch(`/upload/authorize-electric-van`, {
+      const apiUrl = resolveApiUrl();
+      const response = await fetch(`${apiUrl}/upload/authorize-electric-van`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

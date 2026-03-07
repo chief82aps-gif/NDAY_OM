@@ -70,6 +70,14 @@ const FEATURES: FeatureCard[] = [
     href: '/upload?view=performance',
     color: 'from-teal-500 to-teal-600',
   },
+  {
+    id: 'daily-screenshot-audit',
+    title: 'Daily Screenshot Audit',
+    description: 'Compare Cortex and WST metrics (routes & packages). Auto-detect variance, flag disputes, and maintain audit trail.',
+    icon: '🧾',
+    href: '/daily-screenshot-audit-simple',
+    color: 'from-cyan-500 to-cyan-600',
+  },
 ];
 
 export default function Dashboard() {

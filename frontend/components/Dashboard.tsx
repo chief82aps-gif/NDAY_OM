@@ -83,6 +83,7 @@ const FEATURES: FeatureCard[] = [
 export default function Dashboard() {
   const router = useRouter();
   const [userRole, setUserRole] = useState<string | null>(null);
+  const buildMarker = 'a2c88c1';
 
   // Extract user role from JWT token
   useEffect(() => {
@@ -120,6 +121,21 @@ export default function Dashboard() {
           <p className="text-gray-600 text-lg">
             Streamline your delivery operations with intelligent route planning and driver assignment.
           </p>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <button
+              onClick={() => router.push('/driver-schedule')}
+              className="px-4 py-2 rounded bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700"
+            >
+              Open Driver Schedule
+            </button>
+            <button
+              onClick={() => router.push('/daily-screenshot-audit-simple')}
+              className="px-4 py-2 rounded bg-cyan-600 text-white text-sm font-semibold hover:bg-cyan-700"
+            >
+              Open Daily Screenshot Audit
+            </button>
+          </div>
+          <p className="mt-3 text-xs text-gray-500">Build: {buildMarker}</p>
         </div>
 
         {/* Feature Grid */}

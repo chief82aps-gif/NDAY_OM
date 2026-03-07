@@ -220,7 +220,7 @@ export default function Upload() {
     setIsLoading(true);
     try {
       const token = localStorage.getItem('access_token');
-      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+      const headers: Record<string, string> = token ? { 'Authorization': `Bearer ${token}` } : {};
       const response = await fetch(`${API_URL}/upload/assign-vehicles`, {
         method: 'POST',
         headers,
@@ -275,7 +275,7 @@ export default function Upload() {
     // After manual assignment is complete, try to generate handouts
     setShowManualAssignment(false);
     const token = localStorage.getItem('access_token');
-    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+    const headers: Record<string, string> = token ? { 'Authorization': `Bearer ${token}` } : {};
     const prompted = await fetchAssignmentsAndPromptPrimary(headers, true);
     if (!prompted) {
       await handleGenerateHandouts();
@@ -295,7 +295,7 @@ export default function Upload() {
     setIsLoading(true);
     try {
       const token = localStorage.getItem('access_token');
-      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+      const headers: Record<string, string> = token ? { 'Authorization': `Bearer ${token}` } : {};
       const response = await fetch(`${API_URL}/upload/generate-handouts`, {
         method: 'POST',
         headers,

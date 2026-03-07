@@ -32,7 +32,7 @@ interface DisputeRecord {
 }
 
 export default function DailyScreenshotAudit() {
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
   const [step, setStep] = useState<'entry' | 'validation' | 'disputes'>('entry');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10));
 

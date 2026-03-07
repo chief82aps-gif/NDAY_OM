@@ -18,6 +18,21 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const resolveApiUrl = (): string => {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    if (host !== 'localhost' && host !== '127.0.0.1') {
+      return 'https://nday-om.onrender.com';
+    }
+  }
+
+  return 'http://127.0.0.1:8000';
+};
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -42,7 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     // Call backend to authenticate
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+    const API_URL = resolveApiUrl();
     
     try {
       const response = await fetch(`${API_URL}/auth/login`, {
@@ -54,7 +69,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       if (!response.ok) {
-        throw new Error('Invalid username or password');
+        let detail = 'Invalid username or password';
+        try {
+          const errorPayload = await response.json();
+          if (errorPayload?.detail) {
+            detail = String(errorPayload.detail);
+          }
+        } catch {
+          // Keep default message when response is not JSON.
+        }
+        throw new Error(detail);
       }
 
       const data = await response.json();

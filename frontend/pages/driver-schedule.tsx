@@ -19,7 +19,27 @@ interface UploadResponse {
   errors: string[];
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+const resolveApiUrl = (): string => {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    if (host !== 'localhost' && host !== '127.0.0.1') {
+      return 'https://nday-om.onrender.com';
+    }
+  }
+
+  return 'http://127.0.0.1:8000';
+};
+
+const getAuthToken = (): string | null => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  return localStorage.getItem('access_token') || localStorage.getItem('token');
+};
 
 export default function DriverSchedulePage() {
   const [isLoading, setIsLoading] = useState(false);
@@ -36,6 +56,8 @@ export default function DriverSchedulePage() {
     setUploadError(null);
     setUploadStatus('Uploading driver schedule...');
     setReportAvailable(false);
+    const API_URL = resolveApiUrl();
+    const token = getAuthToken();
 
     try {
       const formData = new FormData();
@@ -45,9 +67,7 @@ export default function DriverSchedulePage() {
       const response = await fetch(`${API_URL}/upload/driver-schedule-report-only`, {
         method: 'POST',
         body: formData,
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
       });
 
       if (!response.ok) {
@@ -73,11 +93,11 @@ export default function DriverSchedulePage() {
 
   const handleDownloadReport = async () => {
     setReportDownloading(true);
+    const API_URL = resolveApiUrl();
+    const token = getAuthToken();
     try {
       const response = await fetch(`${API_URL}/upload/download-schedule-report`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
       });
 
       if (!response.ok) {

@@ -439,12 +439,26 @@ def upload_driver_schedule(file: UploadFile = File(...), compact: bool = Form(Tr
 
 @router.get("/driver-schedule-summary")
 def get_driver_schedule_summary():
-    """Report-only mode: summary is not retained in memory after upload."""
+    """Return a compatibility summary payload for report-only mode."""
     try:
-        raise HTTPException(
-            status_code=404,
-            detail="Driver schedule summary is not retained. Upload a schedule file and download the generated report.",
+        # Keep this endpoint backward-compatible for older frontend bundles that
+        # still fetch summary after upload. In report-only mode we return an
+        # empty schedule payload plus report availability metadata.
+        has_report = bool(
+            orchestrator.status.driver_schedule_report_path
+            and os.path.exists(orchestrator.status.driver_schedule_report_path)
         )
+
+        return {
+            "timestamp": "",
+            "date": "",
+            "assignments": [],
+            "sweepers": [],
+            "report_available": has_report,
+            "report_path": orchestrator.status.driver_schedule_report_path,
+            "report_only": True,
+            "message": "Driver schedule summary is not retained. Use the generated PDF report.",
+        }
     except HTTPException:
         raise
     except Exception as e:

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import PageHeader from '../../components/PageHeader';
 import { ProtectedRoute } from '../../components/ProtectedRoute';
 
@@ -348,9 +349,9 @@ export default function DailyNotifyPage() {
               </p>
               <p>
                 Their Slack ID is not linked or not verified. Go to{' '}
-                <a href="/rescue/roster" className="underline font-medium">
+                <Link href="/rescue/roster" className="underline font-medium">
                   Driver Roster
-                </a>{' '}
+                </Link>{' '}
                 to set it up.
               </p>
             </div>

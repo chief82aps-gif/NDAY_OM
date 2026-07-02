@@ -117,7 +117,7 @@ export default function ContributePage() {
             <p className="text-amber-700">Route: <strong>{event.rescued_route_id as string}</strong> — {event.rescued_driver_name as string}</p>
             <p className="text-amber-700">Type: {event.event_type as string}</p>
             <p className="text-amber-700">Reason: {event.reason_code as string}</p>
-            {event.expected_packages && (
+            {!!event.expected_packages && (
               <p className="text-amber-800 font-semibold mt-1">
                 Expected packages: {event.expected_packages as number}
               </p>

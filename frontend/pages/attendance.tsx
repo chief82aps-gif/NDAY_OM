@@ -193,7 +193,7 @@ function AttendanceContent() {
 
   return (
     <div className="min-h-screen bg-slate-900 text-white">
-      <PageHeader title="Attendance Tracker" subtitle="Log call-ins, no-shows, and compliance" />
+      <PageHeader title="Attendance Tracker" />
 
       <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
 

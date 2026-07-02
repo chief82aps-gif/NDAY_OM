@@ -90,7 +90,7 @@ function ConfirmationsContent() {
 
   return (
     <div className="min-h-screen bg-slate-900 text-white">
-      <PageHeader title="Confirmation Dashboard" subtitle="Driver attendance confirmations" />
+      <PageHeader title="Confirmation Dashboard" />
 
       <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
 

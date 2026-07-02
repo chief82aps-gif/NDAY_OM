@@ -30,6 +30,12 @@ const THRESHOLDS = [
 
 type Status = 'good' | 'written_warning' | 'final_warning' | 'termination';
 
+interface AttendancePattern {
+  type: string;
+  severity: 'flag' | 'concern';
+  message: string;
+}
+
 interface DriverStatus {
   driver_name: string;
   current_points: number;
@@ -41,6 +47,7 @@ interface DriverStatus {
   projected_next_threshold: { points: number; label: string; points_away: number };
   event_count: number;
   is_default_pin: boolean;
+  patterns: AttendancePattern[];
 }
 
 interface SubmitResult {
@@ -121,6 +128,9 @@ export default function CalloutPage() {
   const [pinErr, setPinErr]         = useState('');
   const [savingPin, setSavingPin]   = useState(false);
 
+  // Family member pattern check (Step 3)
+  const [familyPatternMsg, setFamilyPatternMsg] = useState('');
+
   // Step 4 — signature
   const [signatureName, setSignatureName] = useState('');
   const [signErr, setSignErr]             = useState('');
@@ -135,6 +145,17 @@ export default function CalloutPage() {
       .then(d => setNames(d.names ?? []))
       .catch(() => {});
   }, []);
+
+  // When a family member is selected in Step 3, check for prior patterns
+  useEffect(() => {
+    if (!familyWho || !driverName || !pin) { setFamilyPatternMsg(''); return; }
+    fetch(
+      `${resolveApi()}/attendance/callout/family-pattern?driver_name=${encodeURIComponent(driverName)}&ssn_last4=${pin}&family_who=${encodeURIComponent(familyWho)}`
+    )
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setFamilyPatternMsg(d?.has_pattern && d.message ? d.message : ''))
+      .catch(() => setFamilyPatternMsg(''));
+  }, [familyWho, driverName, pin]);
 
   // Step 1 → Step 2: verify PIN and load status
   async function handleIdentify(e: React.FormEvent) {
@@ -480,6 +501,33 @@ export default function CalloutPage() {
                 Hi <span className="font-semibold text-white">{driverStatus.driver_name.split(',')[1]?.trim() ?? driverStatus.driver_name}</span> — here's your current standing.
               </p>
 
+              {/* ── Pattern warnings ──────────────────────────────────────── */}
+              {driverStatus.patterns?.length > 0 && (
+                <div className="space-y-3">
+                  {driverStatus.patterns.map((p, i) => (
+                    <div
+                      key={i}
+                      className={`rounded-2xl p-4 space-y-1 border ${
+                        p.severity === 'flag'
+                          ? 'bg-amber-950/60 border-amber-600/50'
+                          : 'bg-slate-700/60 border-slate-500/50'
+                      }`}
+                    >
+                      <p className={`text-xs font-semibold uppercase tracking-wide ${
+                        p.severity === 'flag' ? 'text-amber-400' : 'text-slate-400'
+                      }`}>
+                        {p.severity === 'flag' ? '⚑ Pattern Noticed' : '○ Just Checking In'}
+                      </p>
+                      <p className={`text-sm leading-relaxed ${
+                        p.severity === 'flag' ? 'text-amber-100' : 'text-slate-300'
+                      }`}>
+                        {p.message}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* Current points card */}
               <div className="bg-slate-800 rounded-2xl p-5 space-y-3">
                 <p className="text-slate-400 text-xs uppercase tracking-wider">Current Standing (last 90 days)</p>
@@ -640,6 +688,14 @@ export default function CalloutPage() {
                     <p className="text-slate-500 text-xs mt-2">
                       Family emergency is only accepted for spouse, child, mother, or father.
                     </p>
+
+                    {/* Family member pattern push-back */}
+                    {familyPatternMsg && (
+                      <div className="mt-3 bg-amber-950/60 border border-amber-600/50 rounded-xl p-3">
+                        <p className="text-xs font-semibold text-amber-400 uppercase tracking-wide mb-1">⚑ Pattern Noticed</p>
+                        <p className="text-sm text-amber-100 leading-relaxed">{familyPatternMsg}</p>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

@@ -39,6 +39,219 @@ router = APIRouter(prefix="/attendance", tags=["attendance"])
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pattern Detection Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
+    """nth occurrence of a weekday (0=Mon) in the given month."""
+    first = date(year, month, 1)
+    first_match = first + timedelta(days=(weekday - first.weekday()) % 7)
+    return first_match + timedelta(weeks=n - 1)
+
+
+def _last_weekday(year: int, month: int, weekday: int) -> date:
+    """Last occurrence of a weekday (0=Mon) in the given month."""
+    if month == 12:
+        next_m = date(year + 1, 1, 1)
+    else:
+        next_m = date(year, month + 1, 1)
+    last = next_m - timedelta(days=1)
+    return last - timedelta(days=(last.weekday() - weekday) % 7)
+
+
+def _federal_holidays(year: int) -> dict[date, str]:
+    """Return {date: name} for US federal holidays in a given year."""
+    h: dict[date, str] = {}
+    h[date(year, 1, 1)]   = "New Year's Day"
+    h[date(year, 7, 4)]   = "Independence Day"
+    h[date(year, 11, 11)] = "Veterans Day"
+    h[date(year, 12, 25)] = "Christmas Day"
+    h[_nth_weekday(year, 1, 0, 3)]  = "Martin Luther King Jr. Day"
+    h[_nth_weekday(year, 2, 0, 3)]  = "Presidents' Day"
+    h[_last_weekday(year, 5, 0)]    = "Memorial Day"
+    h[_nth_weekday(year, 9, 0, 1)]  = "Labor Day"
+    h[_nth_weekday(year, 11, 3, 4)] = "Thanksgiving"
+    return h
+
+
+def _pre_holiday_label(d: date) -> Optional[str]:
+    """
+    Returns a holiday label if today is:
+      - The day before a federal holiday, OR
+      - A Friday before a Monday federal holiday (creates a 3-day weekend).
+    Returns None if no such pattern.
+    """
+    holidays = {}
+    for yr in (d.year, d.year + 1):
+        holidays.update(_federal_holidays(yr))
+
+    tomorrow = d + timedelta(days=1)
+    if tomorrow in holidays:
+        return holidays[tomorrow]
+
+    if d.weekday() == 4:  # Friday
+        monday = d + timedelta(days=3)
+        if monday in holidays:
+            return holidays[monday]
+
+    return None
+
+
+def _ordinal(n: int) -> str:
+    if 11 <= (n % 100) <= 13:
+        return f"{n}th"
+    return f"{n}{['th','st','nd','rd','th','th','th','th','th','th'][n % 10]}"
+
+
+def _first_name(payroll_name: str) -> str:
+    """Extract first name from 'Last, First' ADP format."""
+    if "," in payroll_name:
+        rest = payroll_name.split(",", 1)[1].strip()
+        return rest.split()[0].title() if rest else payroll_name
+    return payroll_name.split()[0].title()
+
+
+_DOW_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+_DOW_FOLLOW_UP = {
+    "Monday":    "Is there something about Monday mornings that's been making it hard to get in?",
+    "Tuesday":   "Is there something on Tuesdays that's been a challenge lately?",
+    "Wednesday": "Is there something midweek that's been a recurring issue?",
+    "Thursday":  "Is there something on Thursdays we should know about?",
+    "Friday":    "Is there something about Fridays that's been making it tough to finish the week?",
+    "Saturday":  "Is there something making Saturday shifts particularly difficult?",
+    "Sunday":    "Is there something happening on Saturday evenings that may be making Sunday mornings harder?",
+}
+
+
+def _detect_callout_patterns(driver_name: str, today: date, db: Session) -> list[dict]:
+    """
+    Detect suspicious absence patterns and return empathetic push-back messages.
+    Called before the driver selects a reason so general patterns surface early.
+    """
+    first = _first_name(driver_name)
+    since_90 = today - timedelta(days=90)
+    since_30 = today - timedelta(days=30)
+
+    prior = (
+        db.query(AttendanceEvent)
+        .filter(
+            func.lower(AttendanceEvent.driver_name) == driver_name.lower(),
+            AttendanceEvent.event_date >= since_90,
+            AttendanceEvent.event_date < today,
+            AttendanceEvent.event_type.in_(["call_in", "no_show"]),
+        )
+        .order_by(AttendanceEvent.event_date.desc())
+        .all()
+    )
+
+    patterns: list[dict] = []
+
+    # ── 1. Same day-of-week repeat ────────────────────────────────────────────
+    today_dow = today.weekday()
+    day_name  = _DOW_NAMES[today_dow]
+    same_dow  = [e for e in prior if e.event_date.weekday() == today_dow]
+    if len(same_dow) >= 2:
+        days_since = (today - same_dow[0].event_date).days
+        follow_up  = _DOW_FOLLOW_UP.get(day_name, "Is everything okay?")
+        patterns.append({
+            "type": "day_of_week",
+            "severity": "flag",
+            "message": (
+                f"Hey {first} — this would be your {_ordinal(len(same_dow) + 1)} {day_name} "
+                f"call-out in the last 90 days (most recently {days_since} days ago). "
+                f"We hope everything is alright. {follow_up}"
+            ),
+        })
+
+    # ── 2. Pre-holiday / 3-day-weekend eve ───────────────────────────────────
+    holiday_label = _pre_holiday_label(today)
+    if holiday_label:
+        prior_holiday_eves = [e for e in prior if _pre_holiday_label(e.event_date)]
+        if prior_holiday_eves:
+            cnt = len(prior_holiday_eves)
+            patterns.append({
+                "type": "pre_holiday",
+                "severity": "flag",
+                "message": (
+                    f"Hey {first} — today is the day before {holiday_label}. "
+                    f"We've noticed this pattern {cnt} time{'s' if cnt > 1 else ''} before — "
+                    f"call-outs right before holidays or long weekends. "
+                    f"We'd love for you to request PTO in advance when possible so we can plan the roster. "
+                    f"Is there something we can do to make that easier?"
+                ),
+            })
+
+    # ── 3. High call-out frequency in 30 days ────────────────────────────────
+    recent_30 = [e for e in prior if e.event_date >= since_30]
+    if len(recent_30) >= 2:
+        patterns.append({
+            "type": "high_frequency",
+            "severity": "concern",
+            "message": (
+                f"Hey {first} — this would be your {_ordinal(len(recent_30) + 1)} call-out "
+                f"in the last 30 days. We're genuinely concerned and want to make sure you're okay. "
+                f"If something is going on that's making it hard to come in consistently, "
+                f"please reach out to your manager — we want to help."
+            ),
+        })
+
+    # ── 4. Family emergency frequency + repeat member ─────────────────────────
+    family_prior = [e for e in prior if e.reason_code == "family"]
+    if family_prior:
+        member_counts: dict[str, int] = {}
+        for e in family_prior:
+            if e.notes:
+                m = re.search(r"Pertains to:\s*(\w+)", e.notes, re.IGNORECASE)
+                if m:
+                    member_counts[m.group(1).capitalize()] = (
+                        member_counts.get(m.group(1).capitalize(), 0) + 1
+                    )
+
+        flagged_member = False
+        for member, cnt in member_counts.items():
+            if cnt >= 1:
+                flagged_member = True
+                if member in ("Father", "Mother"):
+                    patterns.append({
+                        "type": "repeat_parent",
+                        "severity": "flag",
+                        "message": (
+                            f"Hey {first} — we show {cnt} prior family emergency call-out{'s' if cnt > 1 else ''} "
+                            f"involving your {member} in the last 90 days. "
+                            f"We sincerely hope they're doing better. "
+                            f"If this is an ongoing situation, please speak with your manager — "
+                            f"we may be able to work out a support plan."
+                        ),
+                    })
+                else:
+                    patterns.append({
+                        "type": "repeat_family_member",
+                        "severity": "concern",
+                        "message": (
+                            f"Hey {first} — this is your {_ordinal(cnt + 1)} family emergency "
+                            f"involving your {member} in the last 90 days. "
+                            f"We hope the situation is improving."
+                        ),
+                    })
+
+        if not flagged_member and len(family_prior) >= 2:
+            patterns.append({
+                "type": "family_frequency",
+                "severity": "concern",
+                "message": (
+                    f"Hey {first} — this would be your {_ordinal(len(family_prior) + 1)} family emergency "
+                    f"call-out in 90 days. We're sorry your family is going through a difficult time. "
+                    f"If there is an ongoing situation, please talk to your manager — "
+                    f"we may be able to accommodate."
+                ),
+            })
+
+    return patterns[:3]  # cap at 3 to avoid overwhelming the driver
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Constants
 # ─────────────────────────────────────────────────────────────────────────────
@@ -485,6 +698,9 @@ def driver_status(driver_name: str, ssn_last4: str, db: Session = Depends(get_db
     callout_pts = POINT_VALUES["call_in"]
     projected = summary["current_points"] + callout_pts
 
+    today = datetime.now(PACIFIC).date()
+    patterns = _detect_callout_patterns(roster_entry.payroll_name, today, db)
+
     return {
         "driver_name": roster_entry.payroll_name,
         **summary,
@@ -493,6 +709,7 @@ def driver_status(driver_name: str, ssn_last4: str, db: Session = Depends(get_db
         "projected_status": _attendance_status(projected),
         "projected_next_threshold": _next_threshold(projected),
         "is_default_pin": roster_entry.ssn_last4 == "1234",
+        "patterns": patterns,
     }
 
 
@@ -588,6 +805,67 @@ def change_driver_pin(req: ChangePinRequest, db: Session = Depends(get_db)):
     roster_entry.ssn_last4 = req.new_pin
     db.commit()
     return {"ok": True, "driver_name": roster_entry.payroll_name}
+
+
+@router.get("/callout/family-pattern")
+def family_pattern_check(
+    driver_name: str,
+    ssn_last4: str,
+    family_who: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Public / PIN-gated — check if a specific family member has appeared in prior
+    family emergency call-outs for this driver in the last 90 days.
+    Called from the callout page when the driver selects who the emergency involves.
+    """
+    roster_entry = db.query(DriverRosterEntry).filter(
+        func.lower(DriverRosterEntry.payroll_name) == driver_name.lower(),
+        DriverRosterEntry.is_active == True,
+    ).first()
+    if not roster_entry or not roster_entry.ssn_last4 or roster_entry.ssn_last4 != ssn_last4.strip():
+        raise HTTPException(401, "Name or PIN is incorrect.")
+
+    since_90 = datetime.now(PACIFIC).date() - timedelta(days=90)
+    prior = db.query(AttendanceEvent).filter(
+        func.lower(AttendanceEvent.driver_name) == roster_entry.payroll_name.lower(),
+        AttendanceEvent.reason_code == "family",
+        AttendanceEvent.event_date >= since_90,
+    ).all()
+
+    count = 0
+    for e in prior:
+        if e.notes:
+            m = re.search(r"Pertains to:\s*(\w+)", e.notes, re.IGNORECASE)
+            if m and m.group(1).lower() == family_who.lower():
+                count += 1
+
+    if count == 0:
+        return {"has_pattern": False, "count": 0, "message": None}
+
+    first  = _first_name(roster_entry.payroll_name)
+    member = family_who.capitalize()
+    pronoun = "they" if member in ("Father", "Mother", "Spouse") else "they"
+
+    # Tactful message based on how many times this specific member has appeared
+    if count >= 2 and member in ("Father", "Mother"):
+        msg = (
+            f"Hey {first} — we show {count} prior family emergencies involving your {member} "
+            f"in the last 90 days. We genuinely hope {pronoun} are doing better. "
+            f"If this is an ongoing situation, your manager may be able to help with scheduling accommodations."
+        )
+    elif count >= 2:
+        msg = (
+            f"Hey {first} — your {member} has been involved in {count} family emergency "
+            f"call-outs in the last 90 days. We hope everything is improving."
+        )
+    else:
+        msg = (
+            f"Hey {first} — we have a prior family emergency call-out involving your {member} "
+            f"in the last 90 days. We hope {pronoun} are doing okay."
+        )
+
+    return {"has_pattern": True, "count": count, "message": msg}
 
 
 @router.patch("/roster/{driver_id}/pin")

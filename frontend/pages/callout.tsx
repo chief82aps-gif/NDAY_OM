@@ -169,7 +169,7 @@ export default function CalloutPage() {
         `${resolveApi()}/attendance/driver-status?driver_name=${encodeURIComponent(driverName)}&ssn_last4=${pin}`
       );
       if (res.status === 401) { setIdentifyErr('Name or PIN is incorrect.'); return; }
-      if (!res.ok) throw new Error('Could not load status. Try again.');
+      if (!res.ok) throw new Error(`Server error (${res.status}). Try again or call dispatch directly.`);
       const data = await res.json();
       setDriverStatus(data);
       setStep(data.is_default_pin ? 'set-pin' : 'status');

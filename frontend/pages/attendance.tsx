@@ -82,6 +82,7 @@ function AttendanceContent() {
   const [todayData, setTodayData] = useState<TodayResponse | null>(null);
   const [missedData, setMissedData] = useState<MissedResponse | null>(null);
   const [rosterDrivers, setRosterDrivers] = useState<RosterDriver[]>([]);
+  const [rosterNames, setRosterNames] = useState<string[]>([]);
   const [pinInputs, setPinInputs] = useState<Record<number, string>>({});
   const [pinStatus, setPinStatus] = useState<Record<number, 'saving' | 'saved' | 'error'>>({});
   const [loading, setLoading] = useState(false);
@@ -127,6 +128,14 @@ function AttendanceContent() {
         setRosterDrivers(data.drivers ?? []);
       }
     } catch { /* ignore */ }
+  }, []);
+
+  // Load driver names once on mount for the Log Event dropdown
+  useEffect(() => {
+    fetch(`${resolveApi()}/attendance/roster-names`)
+      .then(r => r.json())
+      .then(d => setRosterNames(d.names ?? []))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -235,13 +244,17 @@ function AttendanceContent() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="text-xs text-slate-400 block mb-1">Driver Name *</label>
-                <input
+                <select
                   value={form.driver_name}
                   onChange={e => setForm(f => ({ ...f, driver_name: e.target.value }))}
-                  placeholder="Last, First"
                   className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm"
                   required
-                />
+                >
+                  <option value="">— Select driver —</option>
+                  {rosterNames.map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
               </div>
 
               <div>

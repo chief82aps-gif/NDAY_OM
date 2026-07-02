@@ -699,7 +699,11 @@ def driver_status(driver_name: str, ssn_last4: str, db: Session = Depends(get_db
     projected = summary["current_points"] + callout_pts
 
     today = datetime.now(PACIFIC).date()
-    patterns = _detect_callout_patterns(roster_entry.payroll_name, today, db)
+    try:
+        patterns = _detect_callout_patterns(roster_entry.payroll_name, today, db)
+    except Exception as exc:
+        logger.warning("Pattern detection failed for %s: %s", roster_entry.payroll_name, exc)
+        patterns = []
 
     return {
         "driver_name": roster_entry.payroll_name,

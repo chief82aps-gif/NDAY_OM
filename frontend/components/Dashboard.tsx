@@ -1,216 +1,65 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useMemo } from 'react';
 import { useRouter } from 'next/router';
 import PageHeader from './PageHeader';
-
-interface FeatureCard {
-  id: string;
-  title: string;
-  description: string;
-  icon: string;
-  href: string;
-  color: string;
-}
-
-const FEATURES: FeatureCard[] = [
-  {
-    id: 'driver-assignment',
-    title: 'Daily Driver Assignment',
-    description: 'Upload DOP, Fleet, Cortex, and Route Sheets to generate driver handouts with route assignments and vehicle allocations.',
-    icon: '📋',
-    href: '/upload?view=daily',
-    color: 'from-blue-500 to-blue-600',
-  },
-  {
-    id: 'driver-schedule',
-    title: 'Driver Schedule',
-    description: 'Upload driver work schedules and rosters to calculate show times and identify sweepers for daily operations.',
-    icon: '📅',
-    href: '/driver-schedule',
-    color: 'from-indigo-500 to-indigo-600',
-  },
-  {
-    id: 'database',
-    title: 'Assignment Database',
-    description: 'View, search, and analyze all historical assignment records. Filter by driver, route, or vehicle and export data to CSV.',
-    icon: '📊',
-    href: '/database',
-    color: 'from-purple-500 to-purple-600',
-  },
-  {
-    id: 'admin',
-    title: 'Admin Panel',
-    description: 'Manage system users, create new accounts, and delete unused user accounts. Requires admin credentials.',
-    icon: '⚙️',
-    href: '/admin',
-    color: 'from-red-500 to-red-600',
-  },
-  {
-    id: 'reporting',
-    title: 'Reports & Analytics',
-    description: 'View detailed reports on vehicle utilization, driver assignments, route performance, and delivery metrics.',
-    icon: '📈',
-    href: '#',
-    color: 'from-green-500 to-green-600',
-  },
-  {
-    id: 'financial-data',
-    title: 'Financial Data',
-    description: 'Upload variable, fleet, and incentive invoices. Admin and Manager roles only.',
-    icon: '💰',
-    href: '/upload?view=financial',
-    color: 'from-amber-500 to-amber-600',
-  },
-  {
-    id: 'performance-data',
-    title: 'Performance & Delivery Data',
-    description: 'Upload WST performance reports, DSP scorecards, and proof of delivery records. Available to all users.',
-    icon: '📊',
-    href: '/upload?view=performance',
-    color: 'from-teal-500 to-teal-600',
-  },
-  {
-    id: 'daily-screenshot-audit',
-    title: 'Daily Screenshot Audit',
-    description: 'Compare Cortex and WST metrics (routes & packages). Auto-detect variance, flag disputes, and maintain audit trail.',
-    icon: '🧾',
-    href: '/daily-screenshot-audit-simple',
-    color: 'from-cyan-500 to-cyan-600',
-  },
-];
+import { useAuth } from '../contexts/AuthContext';
+import { dashboardModules } from '../modules';
 
 export default function Dashboard() {
   const router = useRouter();
-  const [userRole, setUserRole] = useState<string | null>(null);
-  const buildMarker = 'a2c88c1';
+  const { user } = useAuth();
 
-  // Extract user role from JWT token
-  useEffect(() => {
-    try {
-      const token = localStorage.getItem('access_token');
-      if (token) {
-        // Decode JWT manually (split by '.' and decode payload)
-        const parts = token.split('.');
-        if (parts.length === 3) {
-          const payload = JSON.parse(atob(parts[1]));
-          setUserRole(payload.role);
-        }
+  const visibleModules = useMemo(() => {
+    const role = user?.role;
+    return dashboardModules.filter((moduleItem) => {
+      if (!moduleItem.allowedRoles || moduleItem.allowedRoles.length === 0) {
+        return true;
       }
-    } catch (error) {
-      console.error('Failed to extract role from token:', error);
-    }
-  }, []);
-
-  const handleFeatureClick = (href: string) => {
-    if (href !== '#') {
-      router.push(href);
-    }
-  };
+      if (!role) {
+        return false;
+      }
+      return moduleItem.allowedRoles.includes(role);
+    });
+  }, [user?.role]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
-      {/* Header */}
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
       <PageHeader title="NDAY Route Manager" showBack={false} />
 
-      {/* Main Content */}
-      <main className="max-w-6xl mx-auto px-4 py-12">
-        {/* Welcome Section */}
-        <div className="mb-12">
-          <h2 className="text-3xl font-bold text-gray-800 mb-2">Welcome to NDAY Route Manager</h2>
-          <p className="text-gray-600 text-lg">
-            Streamline your delivery operations with intelligent route planning and driver assignment.
+      <main className="max-w-6xl mx-auto px-4 py-10">
+        <div className="mb-8 rounded-xl border border-blue-100 bg-white p-6 shadow-sm">
+          <h2 className="text-3xl font-bold text-slate-900 mb-2">Operations Module Launcher</h2>
+          <p className="text-slate-600">
+            Each function is isolated as a separate module route so it can be updated independently.
           </p>
-          <div className="mt-4 flex flex-wrap gap-3">
-            <button
-              onClick={() => router.push('/driver-schedule')}
-              className="px-4 py-2 rounded bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700"
-            >
-              Open Driver Schedule
-            </button>
-            <button
-              onClick={() => router.push('/daily-screenshot-audit-simple')}
-              className="px-4 py-2 rounded bg-cyan-600 text-white text-sm font-semibold hover:bg-cyan-700"
-            >
-              Open Daily Screenshot Audit
-            </button>
-          </div>
-          <p className="mt-3 text-xs text-gray-500">Build: {buildMarker}</p>
         </div>
 
-        {/* Feature Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
-          {FEATURES.filter((feature) => {
-            if (feature.id === 'financial-data') {
-              return userRole === 'admin' || userRole === 'manager';
-            }
-            return true;
-          }).map((feature) => (
-            <div
-              key={feature.id}
-              onClick={() => handleFeatureClick(feature.href)}
-              className={`bg-white rounded-lg shadow-md hover:shadow-lg transition-all duration-300 overflow-hidden cursor-pointer transform hover:scale-105 ${
-                feature.href === '#' ? 'opacity-75 cursor-not-allowed' : ''
-              }`}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-10">
+          {visibleModules.map((moduleItem) => (
+            <button
+              key={moduleItem.id}
+              type="button"
+              onClick={() => router.push(moduleItem.href)}
+              className="w-full rounded-lg border border-slate-200 bg-white px-5 py-4 text-left shadow-sm transition hover:border-blue-300 hover:shadow-md"
             >
-              {/* Color Header */}
-              <div className={`bg-gradient-to-r ${feature.color} h-2`} />
-
-              {/* Content */}
-              <div className="p-6">
-                <div className="text-5xl mb-4">{feature.icon}</div>
-                <h3 className="text-xl font-bold text-gray-800 mb-2">{feature.title}</h3>
-                <p className="text-gray-600 text-sm leading-relaxed mb-4">{feature.description}</p>
-
-                {/* Coming Soon Badge */}
-                {feature.href === '#' && (
-                  <div className="inline-block bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full text-xs font-semibold">
-                    Coming Soon
-                  </div>
-                )}
-
-                {/* Arrow for Active Features */}
-                {feature.href !== '#' && (
-                  <div className="text-ndl-blue font-semibold text-sm flex items-center">
-                    Access Feature →
-                  </div>
-                )}
-              </div>
-            </div>
+              <h3 className="text-lg font-semibold text-slate-900 mb-1">{moduleItem.title}</h3>
+              <p className="text-sm text-slate-600">{moduleItem.description}</p>
+            </button>
           ))}
         </div>
 
-        {/* Info Section */}
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-8 mb-8">
-          <h3 className="text-xl font-bold text-ndl-blue mb-4">Getting Started</h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div>
-              <div className="text-3xl font-bold text-ndl-blue mb-2">1</div>
-              <h4 className="font-semibold text-gray-800 mb-2">Daily Driver Assignment</h4>
-              <p className="text-gray-600 text-sm">
-                Upload your operational data files and generate professional PDF handouts with driver assignments.
-              </p>
-            </div>
-            <div>
-              <div className="text-3xl font-bold text-ndl-blue mb-2">2</div>
-              <h4 className="font-semibold text-gray-800 mb-2">View Your Data</h4>
-              <p className="text-gray-600 text-sm">
-                Search, filter, and analyze all historical assignments in the database. Export to CSV anytime.
-              </p>
-            </div>
-            <div>
-              <div className="text-3xl font-bold text-ndl-blue mb-2">3</div>
-              <h4 className="font-semibold text-gray-800 mb-2">Generate Reports</h4>
-              <p className="text-gray-600 text-sm">
-                Create detailed analytics on vehicle utilization, performance metrics, and delivery insights.
-              </p>
-            </div>
+        <div className="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-700">
+          <h3 className="text-base font-semibold text-slate-900 mb-2">Module Notes</h3>
+          <div className="space-y-1">
+            <p>Invoice audit and daily scheduler are now first-class modules in the launcher.</p>
+            <p>Role restricted modules stay hidden for users without access.</p>
+            <p>To add a new module, add one file under frontend/modules and export it from frontend/modules/index.ts.</p>
           </div>
         </div>
       </main>
 
-      {/* Footer */}
-      <footer className="bg-gray-800 text-gray-400 py-6 mt-12">
+      <footer className="bg-slate-800 text-slate-300 py-6 mt-12">
         <div className="max-w-6xl mx-auto px-4 text-center">
           <p>&copy; 2026 NDAY Logistics. All rights reserved.</p>
         </div>

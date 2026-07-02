@@ -25,6 +25,46 @@ interface StatusMessage {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
 
+const formatApiError = async (response: Response, fallback: string): Promise<string> => {
+  const statusText = response.statusText || 'Request failed';
+  const prefix = `${response.status} ${statusText}`;
+
+  try {
+    const payload = await response.json();
+    const detail = payload?.detail;
+    const message = payload?.message;
+
+    if (typeof detail === 'string' && detail.trim()) {
+      return `${prefix}: ${detail}`;
+    }
+
+    if (Array.isArray(detail) && detail.length > 0) {
+      const issues = detail
+        .map((item: any) => item?.msg || item?.message || JSON.stringify(item))
+        .filter(Boolean)
+        .join('; ');
+      if (issues) {
+        return `${prefix}: ${issues}`;
+      }
+    }
+
+    if (typeof message === 'string' && message.trim()) {
+      return `${prefix}: ${message}`;
+    }
+  } catch {
+    try {
+      const text = await response.text();
+      if (text.trim()) {
+        return `${prefix}: ${text.trim()}`;
+      }
+    } catch {
+      return `${prefix}: ${fallback}`;
+    }
+  }
+
+  return `${prefix}: ${fallback}`;
+};
+
 function AuditPageContent() {
   const router = useRouter();
   const [invoices, setInvoices] = useState<VariableInvoice[]>([]);
@@ -61,7 +101,7 @@ function AuditPageContent() {
         });
 
         if (!response.ok) {
-          throw new Error('Failed to load invoices');
+          throw new Error(await formatApiError(response, 'Failed to load invoices'));
         }
 
         const data = await response.json();

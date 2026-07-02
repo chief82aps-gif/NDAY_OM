@@ -39,8 +39,28 @@ interface AuditReport {
     package_total: number;
   };
   line_item_comparisons: MetricComparison[];
+  dispute_report?: {
+    ready_for_dispute: boolean;
+    discrepancy_count: number;
+  };
   needs_prompt: PromptItem[];
   metric_options: Record<string, string>;
+}
+
+interface MismatchActionItem {
+  mismatch_key: string;
+  line_description: string;
+  week_number?: number;
+  issues: string[];
+  request_for_action: string;
+  manager_action: {
+    action_status: 'pending' | 'ignore' | 'dispute_entered';
+    manager_note?: string | null;
+    dispute_verified?: boolean;
+    dispute_portal_reference?: string | null;
+    reviewed_role?: string | null;
+    reviewed_at?: string | null;
+  };
 }
 
 interface StatusMessage {
@@ -49,6 +69,46 @@ interface StatusMessage {
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+
+const formatApiError = async (response: Response, fallback: string): Promise<string> => {
+  const statusText = response.statusText || 'Request failed';
+  const prefix = `${response.status} ${statusText}`;
+
+  try {
+    const payload = await response.json();
+    const detail = payload?.detail;
+    const message = payload?.message;
+
+    if (typeof detail === 'string' && detail.trim()) {
+      return `${prefix}: ${detail}`;
+    }
+
+    if (Array.isArray(detail) && detail.length > 0) {
+      const issues = detail
+        .map((item: any) => item?.msg || item?.message || JSON.stringify(item))
+        .filter(Boolean)
+        .join('; ');
+      if (issues) {
+        return `${prefix}: ${issues}`;
+      }
+    }
+
+    if (typeof message === 'string' && message.trim()) {
+      return `${prefix}: ${message}`;
+    }
+  } catch {
+    try {
+      const text = await response.text();
+      if (text.trim()) {
+        return `${prefix}: ${text.trim()}`;
+      }
+    } catch {
+      return `${prefix}: ${fallback}`;
+    }
+  }
+
+  return `${prefix}: ${fallback}`;
+};
 
 interface Props {
   invoiceNumber: string;
@@ -62,16 +122,51 @@ export default function VariableInvoiceAudit({
   onMessageChanged,
 }: Props) {
   const [report, setReport] = useState<AuditReport | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingMappings, setSavingMappings] = useState(false);
   const [mappingResponses, setMappingResponses] = useState<Record<string, string>>({});
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [mismatchItems, setMismatchItems] = useState<MismatchActionItem[]>([]);
+  const [loadingMismatchActions, setLoadingMismatchActions] = useState(false);
+  const [savingMismatchKey, setSavingMismatchKey] = useState<string | null>(null);
+
+  const fetchMismatchActions = async () => {
+    setLoadingMismatchActions(true);
+    try {
+      const response = await fetch(
+        `${API_URL}/audit/variable-invoice/${invoiceNumber}/mismatch-actions`,
+        {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(await formatApiError(response, 'Failed to load mismatch actions'));
+      }
+
+      const data = await response.json();
+      setMismatchItems(data.items || []);
+    } catch (error) {
+      onMessageChanged(
+        'error',
+        error instanceof Error ? error.message : 'Error loading mismatch actions'
+      );
+    } finally {
+      setLoadingMismatchActions(false);
+    }
+  };
 
   // Fetch audit report
   useEffect(() => {
     const fetchAudit = async () => {
       try {
         setLoading(true);
+        setLoadError(null);
         const response = await fetch(
           `${API_URL}/audit/variable-invoice/${invoiceNumber}`,
           {
@@ -84,11 +179,12 @@ export default function VariableInvoiceAudit({
         );
 
         if (!response.ok) {
-          throw new Error('Failed to load audit report');
+          throw new Error(await formatApiError(response, 'Failed to load audit report'));
         }
 
         const data = await response.json();
         setReport(data);
+        await fetchMismatchActions();
 
         // Initialize mapping responses from suggested keys
         const initial: Record<string, string> = {};
@@ -101,6 +197,7 @@ export default function VariableInvoiceAudit({
         }
         setMappingResponses(initial);
       } catch (error) {
+        setLoadError(error instanceof Error ? error.message : 'Error loading audit');
         onMessageChanged(
           'error',
           error instanceof Error ? error.message : 'Error loading audit'
@@ -114,6 +211,85 @@ export default function VariableInvoiceAudit({
       fetchAudit();
     }
   }, [invoiceNumber, token]);
+
+  const updateMismatchActionField = (
+    mismatchKey: string,
+    field: 'action_status' | 'manager_note' | 'dispute_verified' | 'dispute_portal_reference',
+    value: string | boolean
+  ) => {
+    setMismatchItems((prev) =>
+      prev.map((item) => {
+        if (item.mismatch_key !== mismatchKey) return item;
+
+        const nextAction = {
+          ...item.manager_action,
+          [field]: value,
+        };
+
+        if (field === 'action_status' && value !== 'dispute_entered') {
+          nextAction.dispute_verified = false;
+          nextAction.dispute_portal_reference = '';
+        }
+
+        return {
+          ...item,
+          manager_action: nextAction,
+        };
+      })
+    );
+  };
+
+  const saveMismatchAction = async (item: MismatchActionItem) => {
+    if (item.manager_action.action_status === 'dispute_entered') {
+      if (!item.manager_action.dispute_verified) {
+        onMessageChanged('error', 'Please confirm dispute was entered in Amazon portal.');
+        return;
+      }
+      if (!item.manager_action.dispute_portal_reference?.trim()) {
+        onMessageChanged('error', 'Please enter Amazon dispute reference for dispute-entered items.');
+        return;
+      }
+    }
+
+    try {
+      setSavingMismatchKey(item.mismatch_key);
+      const response = await fetch(
+        `${API_URL}/audit/variable-invoice/${invoiceNumber}/mismatch-actions`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            items: [
+              {
+                mismatch_key: item.mismatch_key,
+                action_status: item.manager_action.action_status,
+                manager_note: item.manager_action.manager_note || '',
+                dispute_verified: Boolean(item.manager_action.dispute_verified),
+                dispute_portal_reference: item.manager_action.dispute_portal_reference || '',
+              },
+            ],
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(await formatApiError(response, 'Failed to save mismatch action'));
+      }
+
+      onMessageChanged('success', 'Manager action saved');
+      await fetchMismatchActions();
+    } catch (error) {
+      onMessageChanged(
+        'error',
+        error instanceof Error ? error.message : 'Error saving mismatch action'
+      );
+    } finally {
+      setSavingMismatchKey(null);
+    }
+  };
 
   const handleMappingChange = (normalized: string, metricKey: string) => {
     setMappingResponses((prev) => ({
@@ -153,7 +329,7 @@ export default function VariableInvoiceAudit({
       });
 
       if (!response.ok) {
-        throw new Error('Failed to save mappings');
+        throw new Error(await formatApiError(response, 'Failed to save mappings'));
       }
 
       const data = await response.json();
@@ -208,7 +384,7 @@ export default function VariableInvoiceAudit({
   if (!report) {
     return (
       <div className="bg-red-100 text-red-800 p-4 rounded-lg">
-        Failed to load audit report
+        {loadError || 'Failed to load audit report'}
       </div>
     );
   }
@@ -396,6 +572,107 @@ export default function VariableInvoiceAudit({
           );
         })}
       </div>
+
+      {/* Manager Action Queue */}
+      {(report.dispute_report?.discrepancy_count || 0) > 0 && (
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <h2 className="text-xl font-bold text-ndl-blue mb-2">Manager Action Queue</h2>
+          <p className="text-sm text-gray-600 mb-4">
+            Review each mismatch and choose whether to ignore it or confirm dispute entry in Amazon portal.
+          </p>
+
+          {loadingMismatchActions ? (
+            <p className="text-gray-600">Loading mismatch actions...</p>
+          ) : (
+            <div className="space-y-4">
+              {mismatchItems.map((item) => (
+                <div key={item.mismatch_key} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                  <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-gray-900">{item.line_description}</p>
+                      <p className="text-xs text-gray-600">Week #{item.week_number ?? 'N/A'}</p>
+                      <p className="text-sm text-amber-700 mt-1">{item.request_for_action}</p>
+                      <ul className="list-disc list-inside text-sm text-red-700 mt-2 space-y-1">
+                        {item.issues.map((issue, idx) => (
+                          <li key={idx}>{issue}</li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    <div className="w-full md:w-96 space-y-2">
+                      <select
+                        value={item.manager_action.action_status}
+                        onChange={(e) =>
+                          updateMismatchActionField(
+                            item.mismatch_key,
+                            'action_status',
+                            e.target.value as 'pending' | 'ignore' | 'dispute_entered'
+                          )
+                        }
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-ndl-blue"
+                      >
+                        <option value="pending">Pending review</option>
+                        <option value="ignore">Mismatch is correct (ignore)</option>
+                        <option value="dispute_entered">Real mismatch (dispute entered)</option>
+                      </select>
+
+                      {item.manager_action.action_status === 'dispute_entered' && (
+                        <>
+                          <input
+                            type="text"
+                            value={item.manager_action.dispute_portal_reference || ''}
+                            onChange={(e) =>
+                              updateMismatchActionField(
+                                item.mismatch_key,
+                                'dispute_portal_reference',
+                                e.target.value
+                              )
+                            }
+                            placeholder="Amazon dispute reference"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-ndl-blue"
+                          />
+                          <label className="flex items-center gap-2 text-sm text-gray-700">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(item.manager_action.dispute_verified)}
+                              onChange={(e) =>
+                                updateMismatchActionField(
+                                  item.mismatch_key,
+                                  'dispute_verified',
+                                  e.target.checked
+                                )
+                              }
+                            />
+                            I confirm dispute has been entered in Amazon portal
+                          </label>
+                        </>
+                      )}
+
+                      <textarea
+                        rows={2}
+                        value={item.manager_action.manager_note || ''}
+                        onChange={(e) =>
+                          updateMismatchActionField(item.mismatch_key, 'manager_note', e.target.value)
+                        }
+                        placeholder="Manager note (optional)"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-ndl-blue"
+                      />
+
+                      <button
+                        onClick={() => saveMismatchAction(item)}
+                        disabled={savingMismatchKey === item.mismatch_key}
+                        className="w-full px-4 py-2 bg-ndl-blue text-white rounded-lg hover:bg-blue-800 disabled:bg-gray-400"
+                      >
+                        {savingMismatchKey === item.mismatch_key ? 'Saving...' : 'Save Manager Action'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Mapping Prompts */}
       {report.needs_prompt && report.needs_prompt.length > 0 && (

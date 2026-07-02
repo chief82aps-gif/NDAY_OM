@@ -101,6 +101,47 @@ class VehicleAssignmentEngine:
         "Standard Parcel - Extra Large Van - US",
         "Standard Parcel - Custom Delivery Van 16ft",
     ]
+
+    @staticmethod
+    def _is_full_driver_name(driver_name: Optional[str]) -> bool:
+        """Return True when a driver name looks like a full person name."""
+        if not driver_name:
+            return False
+
+        text = " ".join(str(driver_name).strip().split())
+        if not text:
+            return False
+
+        lowered = text.lower()
+        if lowered in {"missing", "none", "null", "n/a", "na", "nan"}:
+            return False
+
+        parts = [p for p in text.split(" ") if p]
+        alpha_parts = ["".join(ch for ch in p if ch.isalpha() or ch in "'-") for p in parts]
+        valid_parts = [p for p in alpha_parts if len(p) >= 2]
+        return len(valid_parts) >= 2
+
+    def _build_driver_lookup(self, cortex_records: List[CortexRoute]) -> Dict[str, CortexRoute]:
+        """Build route->driver lookup using the first full driver name that appears."""
+        driver_lookup: Dict[str, CortexRoute] = {}
+
+        for record in cortex_records:
+            route_code = record.route_code
+            if route_code not in driver_lookup:
+                driver_lookup[route_code] = record
+                continue
+
+            existing = driver_lookup[route_code]
+            existing_is_full = self._is_full_driver_name(existing.driver_name)
+            current_is_full = self._is_full_driver_name(record.driver_name)
+
+            if existing_is_full:
+                continue
+
+            if current_is_full:
+                driver_lookup[route_code] = record
+
+        return driver_lookup
     
     def __init__(self, fleet: List[Vehicle]):
         """Initialize with available fleet vehicles."""
@@ -246,9 +287,7 @@ class VehicleAssignmentEngine:
         # Build driver lookup if Cortex records provided
         driver_lookup = {}
         if cortex_records:
-            driver_lookup = {
-                record.route_code: record for record in cortex_records
-            }
+            driver_lookup = self._build_driver_lookup(cortex_records)
         
         for route in routes:
             assignment = self._assign_route(route, driver_lookup)

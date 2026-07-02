@@ -26,7 +26,10 @@ from api.src.permissions import Role
 # 2) Local fallback to sqlite for environments without a provisioned DB yet
 DATABASE_URL = os.getenv('DATABASE_URL')
 if not DATABASE_URL:
-    DATABASE_URL = 'sqlite:///./nday_om.db'
+    # Anchor to the repo root (two levels up from this file) so the DB path
+    # is the same regardless of which directory the process starts from.
+    _repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    DATABASE_URL = f'sqlite:///{os.path.join(_repo_root, "nday_om.db")}'
 
 # Create base class for all models
 Base = declarative_base()
@@ -83,7 +86,7 @@ class User(Base):
 
     # Relationships
     driver = relationship("Driver", back_populates="user", uselist=False)
-    rescues_approved = relationship("Rescue", foreign_keys="Rescue.approved_by", back_populates="approver")
+    # Rescue relationships managed via RescueEvent / RescueContribution (string fields, not FK)
     inspections = relationship("VanInspection", back_populates="inspector")
 
     def __repr__(self):
@@ -119,7 +122,7 @@ class Driver(Base):
     assignments = relationship("Assignment", back_populates="driver")
     metrics = relationship("PerformanceMetric", back_populates="driver")
     incidents = relationship("Incident", back_populates="driver")
-    rescues = relationship("Rescue", back_populates="driver")
+    # Rescue relationships managed via RescueEvent / RescueContribution (string fields, not FK)
 
     def __repr__(self):
         return f"<Driver(employee_id={self.employee_id})>"
@@ -301,34 +304,147 @@ class IncidentPhoto(Base):
         return f"<IncidentPhoto(incident_id={self.incident_id})>"
 
 
-class Rescue(Base):
-    """Rescue tracking for bonuses"""
-    __tablename__ = "rescues"
+class RescueEvent(Base):
+    """Stage 1 + Stage 3: Dispatch opens and closes a rescue event."""
+    __tablename__ = "rescue_events"
 
     id = Column(Integer, primary_key=True)
-    rescue_id = Column(String(50), unique=True, nullable=False)
-    driver_id = Column(Integer, ForeignKey("drivers.id"))
-    rescue_date = Column(Date, nullable=False)
-    rescue_type = Column(String(50))  # 'traffic_control', 'assistance', etc.
-    location = Column(String(255))
-    description = Column(Text)
-    bonus_amount = Column(DECIMAL(10, 2))
-    bonus_status = Column(String(20))  # 'pending', 'approved', 'paid'
-    approval_date = Column(Date)
-    approved_by = Column(Integer, ForeignKey("users.id"))
+    event_id = Column(String(30), unique=True, nullable=False, index=True)  # YYYYMMDD-HHMMSS
+    event_date = Column(Date, nullable=False, index=True)
+    event_type = Column(String(20), nullable=False)  # Pad Sweep | Full Pull | Rescue
+
+    # Rescued driver — looked up from morning assignment via route code
+    rescued_route_id = Column(String(20), nullable=False)
+    rescued_driver_name = Column(String(100))
+    rescued_van = Column(String(50))
+    rescued_driver_tier = Column(String(20))  # NL1 | NL2 | NL3 | Tenured (for coaching records)
+
+    # Rescuing driver — identified by dispatch at Stage 1
+    rescuing_route_id = Column(String(20))   # null for Pad Sweeps
+    rescuing_driver_name = Column(String(100))
+    rescuing_van = Column(String(50))
+
+    # Reason
+    reason_code = Column(String(50))         # dropdown value
+    reason_notes = Column(Text)              # populated when reason_code = 'Other'
+
+    # Pad Sweep package count (entered at Stage 1 by dispatch — no Stage 2 for sweeps)
+    pad_sweep_package_count = Column(Integer)
+
+    # Expected packages for Full Pull and Full Pull Assist (entered by dispatch at Stage 1)
+    expected_packages = Column(Integer)
+
+    # Meeting address entered by dispatch at Stage 1 (used in Slack DMs as GPS link)
+    meeting_address = Column(String(255))
+
+    # Driver phones captured from roster at Stage 1 (snapshot so DMs work even if roster changes)
+    rescued_driver_phone  = Column(String(30))
+    rescuing_driver_phone = Column(String(30))
+
+    # Stage 1 metadata
+    opened_by = Column(String(100))          # dispatcher username from JWT
+    status = Column(String(20), default='Open', index=True)  # Open | Closed
+
+    # Stage 3 close fields
+    closed_by = Column(String(100))
+    close_notes = Column(Text)
+    closed_at = Column(DateTime)
+
+    # Slack notification flag
+    slack_notified = Column(Boolean, default=False)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # Relationships
-    driver = relationship("Driver", back_populates="rescues")
-    approver = relationship("User", foreign_keys=[approved_by], back_populates="rescues_approved")
+    contributions = relationship(
+        "RescueContribution", back_populates="event", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
-        Index('idx_rescue_lookup', 'driver_id', 'rescue_date'),
+        Index('idx_rescue_event_date_status', 'event_date', 'status'),
     )
 
     def __repr__(self):
-        return f"<Rescue(rescue_id={self.rescue_id}, status={self.bonus_status})>"
+        return f"<RescueEvent(event_id={self.event_id}, type={self.event_type}, status={self.status})>"
+
+
+class RescueContribution(Base):
+    """Stage 2: Rescuing driver confirms package count for Full Pull / Rescue events."""
+    __tablename__ = "rescue_contributions"
+
+    id = Column(Integer, primary_key=True)
+    contribution_id = Column(String(40), unique=True, nullable=False, index=True)
+    event_id = Column(String(30), ForeignKey("rescue_events.event_id"), nullable=False, index=True)
+
+    rescuing_driver_name = Column(String(100), nullable=False)
+    packages_taken = Column(Integer, nullable=False)
+
+    # Stage 2 confirmation gate
+    confirmed_all_taken = Column(Boolean, nullable=False)  # driver's Yes/No answer
+    bonus_eligible = Column(Boolean, default=False)        # True only if confirmed_all_taken = True
+
+    observations = Column(Text)
+
+    # Admin bonus reinstatement
+    bonus_reinstated = Column(Boolean, default=False)
+    reinstated_by = Column(String(100))
+    reinstated_at = Column(DateTime)
+    reinstatement_reason = Column(Text)
+
+    # Payroll confirmation — set when admin marks bonus as paid on payroll report
+    bonus_paid = Column(Boolean, default=False)
+    bonus_paid_by = Column(String(100))
+    bonus_paid_at = Column(DateTime)
+
+    # Stage 3 verification
+    verified = Column(String(20), default='Pending')  # Pending | Verified
+    verified_at = Column(DateTime)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    event = relationship("RescueEvent", back_populates="contributions")
+
+    __table_args__ = (
+        Index('idx_rescue_contribution_event', 'event_id'),
+        Index('idx_rescue_contribution_driver', 'rescuing_driver_name'),
+        Index('idx_rescue_contribution_bonus', 'bonus_eligible', 'bonus_reinstated'),
+    )
+
+    def __repr__(self):
+        return f"<RescueContribution(event_id={self.event_id}, driver={self.rescuing_driver_name}, pkgs={self.packages_taken}, eligible={self.bonus_eligible})>"
+
+
+class DriverRosterEntry(Base):
+    """Driver roster imported from ADP export — source of truth for driver dropdowns."""
+    __tablename__ = "driver_roster"
+
+    id = Column(Integer, primary_key=True)
+    payroll_name = Column(String(100), nullable=False, index=True)  # Last, First
+    position_id = Column(String(20), unique=True, nullable=False)   # UDXxxxxxx
+    hire_date = Column(Date)
+    home_department = Column(String(100))
+    rate_type = Column(String(50))
+    position_code = Column(String(20))  # 000004-Driver, 000005-Helper, etc.
+    is_active = Column(Boolean, default=True, index=True)
+    imported_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Contact info
+    phone = Column(String(30))               # entered by dispatcher on the roster page
+    ssn_last4 = Column(String(4))            # last 4 SSN digits — used as callout page PIN
+
+    # Slack integration
+    slack_member_id   = Column(String(20))   # Slack User ID, e.g. U012AB3CD
+    slack_display_name = Column(String(100)) # fetched from Slack on verify, not user-entered
+    slack_verified    = Column(Boolean, default=False)
+    slack_verified_at = Column(DateTime)
+
+    __table_args__ = (
+        Index('idx_roster_active_position', 'is_active', 'position_code'),
+    )
+
+    def __repr__(self):
+        return f"<DriverRosterEntry(name={self.payroll_name}, position={self.position_code}, active={self.is_active})>"
 
 
 class VanInspection(Base):
@@ -789,9 +905,11 @@ class DOP(Base):
     route_code = Column(String(50), index=True)
     wave = Column(String(20))
     planned_packages = Column(Integer)
+    route_duration = Column(Integer)    # minutes from DOP; drives expected-return calculation
     commercial_pct = Column(DECIMAL(10, 2))
     zone = Column(String(50))
     service_type = Column(String(255))
+    driver_name = Column(String(255))   # populated when DOP file includes driver assignments
     source_file = Column(String(255))
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -1023,6 +1141,67 @@ class AuditDARouteStats(Base):
         return f"<AuditDARouteStats(driver={self.driver_name}, route={self.route_code}, stops/hr={self.avg_stops_per_hour})>"
 
 
+class DailyRouteAssignment(Base):
+    """Per-driver route detail built each morning from DOP + Route Sheet + Cortex.
+    One row per driver per day. Tracks DM delivery and attendance acknowledgment."""
+    __tablename__ = "daily_route_assignments"
+
+    id = Column(Integer, primary_key=True)
+    assignment_date = Column(Date, nullable=False, index=True)
+    route_code = Column(String(50), index=True)
+    driver_name = Column(String(255), index=True)
+    van_number = Column(String(50))
+    stage_location = Column(String(100))
+    wave = Column(String(50))
+    packages = Column(Integer)
+    route_duration = Column(Integer)    # minutes; copied from dop_routes for show/return time calc
+    service_type = Column(String(255))
+
+    dm_sent = Column(Boolean, default=False)
+    dm_sent_at = Column(DateTime)
+    dm_message_ts = Column(String(50))
+    dm_channel = Column(String(30))
+
+    acknowledged = Column(Boolean, default=False)
+    acknowledged_at = Column(DateTime)
+    ack_token = Column(String(40), unique=True, index=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_daily_assign_date_driver', 'assignment_date', 'driver_name'),
+    )
+
+
+class SlackIngestLog(Base):
+    """Tracks files detected and processed from the Slack channel.
+    slack_file_id unique constraint prevents re-processing the same file."""
+    __tablename__ = "slack_ingest_log"
+
+    id = Column(Integer, primary_key=True)
+    ingest_date = Column(Date, nullable=False, index=True)
+    file_type = Column(String(20))           # "dop" | "route_sheet"
+    slack_file_id = Column(String(50), unique=True, nullable=False, index=True)
+    filename = Column(String(255))
+    detected_at = Column(DateTime, default=datetime.utcnow)
+    processed_at = Column(DateTime)
+    status = Column(String(20), default="pending")  # pending|success|failed
+    error = Column(String(500))
+    records_processed = Column(Integer)
+
+
+class EcpRosterPrompt(Base):
+    """Tracks nightly ECP detection and roster prompts sent to #nday-operations-management."""
+    __tablename__ = "ecp_roster_prompts"
+
+    id = Column(Integer, primary_key=True)
+    prompt_date = Column(Date, nullable=False, index=True)
+    ecp_message_ts = Column(String(50))
+    ecp_message_text = Column(String(500))
+    prompted_at = Column(DateTime, default=datetime.utcnow)
+    prompt_message_ts = Column(String(50))
+
+
 class ServiceTypeLibrary(Base):
     """Stores canonical service type definitions for matching."""
     __tablename__ = "service_type_library"
@@ -1180,6 +1359,159 @@ class WeeklyAuditDispute(Base):
 
 
 # ============================================================================
+# QUALITY METRICS (TRAILING 6-WEEK DSP OVERVIEW DASHBOARD)
+# ============================================================================
+
+class QualityMetricSnapshot(Base):
+    """One upload of the DSP Overview Dashboard Trailing Six Week CSV."""
+    __tablename__ = "quality_metric_snapshots"
+
+    id = Column(Integer, primary_key=True)
+    week = Column(String(10), nullable=False, index=True)   # "2026-W26"
+    source_file = Column(String(255))
+    slack_file_id = Column(String(50), unique=True, index=True)
+    imported_at = Column(DateTime, default=datetime.utcnow)
+    driver_count = Column(Integer, default=0)
+
+    drivers = relationship(
+        "QualityMetricDriver",
+        back_populates="snapshot",
+        cascade="all, delete-orphan",
+    )
+
+
+class QualityMetricDriver(Base):
+    """Per-driver row from the DSP Overview Dashboard trailing report."""
+    __tablename__ = "quality_metric_drivers"
+
+    id = Column(Integer, primary_key=True)
+    snapshot_id = Column(Integer, ForeignKey("quality_metric_snapshots.id", ondelete="CASCADE"), nullable=False)
+    week = Column(String(10), nullable=False, index=True)
+    driver_name = Column(String(200), nullable=False, index=True)
+    transporter_id = Column(String(50), index=True)
+
+    # Amazon computed overall
+    overall_standing = Column(String(20))   # Platinum / Gold / Silver / Bronze
+    overall_score = Column(DECIMAL(6, 2))   # 0.00 – 100.00
+
+    # Safety metrics (rate per trip + component score)
+    speeding_rate = Column(DECIMAL(10, 4))
+    speeding_score = Column(DECIMAL(6, 2))
+    seatbelt_rate = Column(DECIMAL(10, 4))
+    seatbelt_score = Column(DECIMAL(6, 2))
+    distraction_rate = Column(DECIMAL(10, 4))
+    distraction_score = Column(DECIMAL(6, 2))
+    sign_violation_rate = Column(DECIMAL(10, 4))
+    sign_violation_score = Column(DECIMAL(6, 2))
+    following_distance_rate = Column(DECIMAL(10, 4))
+    following_distance_score = Column(DECIMAL(6, 2))
+
+    # Quality metrics (raw value + component score)
+    cdf_dpmo = Column(DECIMAL(12, 2))
+    cdf_dpmo_score = Column(DECIMAL(6, 2))
+    dc_dpmo = Column(DECIMAL(12, 2))
+    dc_dpmo_score = Column(DECIMAL(6, 2))
+    dsb_count = Column(Integer)
+    dsb_score = Column(DECIMAL(6, 2))
+    pod_pct = Column(DECIMAL(6, 3))         # e.g. 0.991 from "99.1%"
+    pod_score = Column(DECIMAL(6, 2))
+    psb_rate = Column(DECIMAL(10, 4))
+    psb_score = Column(DECIMAL(6, 2))
+
+    packages_delivered = Column(Integer)
+
+    snapshot = relationship("QualityMetricSnapshot", back_populates="drivers")
+
+    __table_args__ = (
+        Index("idx_qmd_week_driver", "week", "driver_name"),
+        Index("idx_qmd_standing_score", "overall_standing", "overall_score"),
+    )
+
+
+# ============================================================================
+# ATTENDANCE TRACKING
+# ============================================================================
+
+class AttendanceEvent(Base):
+    """Logs every attendance event — call-ins, no-shows, late arrivals, early departures.
+    Per SRD HR-02/HR-03: 4-hour call-in rule compliance + missed-shift escalation."""
+    __tablename__ = "attendance_events"
+
+    id = Column(Integer, primary_key=True)
+    driver_name = Column(String(200), nullable=False, index=True)
+    roster_id = Column(Integer, ForeignKey("driver_roster.id"), nullable=True)
+    event_date = Column(Date, nullable=False, index=True)
+
+    # Event classification
+    event_type = Column(String(50), nullable=False)
+    # call_in | no_show | late_arrival | early_departure | present | excused
+
+    reason_code = Column(String(50))
+    # sick | personal | family | weather | transportation | no_call | other
+
+    # Call-in timing (for 4-hour rule compliance)
+    call_time = Column(DateTime)           # when driver actually called
+    scheduled_wave = Column(String(20))    # e.g. "1020" or "1025"
+    shift_start = Column(DateTime)         # absolute datetime of wave
+    hours_before_shift = Column(DECIMAL(5, 2))  # calculated at log time
+    compliant = Column(Boolean)            # True = called 4+ hrs before shift
+
+    # Missed shift tracking (HR-03)
+    is_missed = Column(Boolean, default=False)  # no_show or call_in same day
+    missed_shift_count = Column(Integer, default=0)  # running count at time of event
+    voluntary_resign_flag = Column(Boolean, default=False)  # auto-set at count=2
+
+    # Narrative / notes
+    notes = Column(Text)
+    logged_by = Column(String(100))        # OM/dispatch who logged it
+
+    # Driver electronic signature (callout page — driver types full name to sign)
+    signature_name = Column(String(150))
+    signature_at = Column(DateTime)
+
+    # RingCentral link (populated when event auto-detected from call)
+    ringcentral_call_id = Column(String(100), index=True)
+    caller_number = Column(String(20))
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_att_driver_date", "driver_name", "event_date"),
+        Index("idx_att_date_type", "event_date", "event_type"),
+    )
+
+
+class RingCentralCallLog(Base):
+    """Raw call records received from RingCentral webhook.
+    Each inbound call to the dispatch line is logged here; matched to driver by phone."""
+    __tablename__ = "ringcentral_call_logs"
+
+    id = Column(Integer, primary_key=True)
+    call_id = Column(String(100), unique=True, index=True)
+    caller_number = Column(String(20), index=True)
+    called_number = Column(String(20))         # dispatch number called
+    received_at = Column(DateTime, index=True)
+    duration_seconds = Column(Integer)
+    call_direction = Column(String(10))        # "Inbound" | "Outbound"
+    call_result = Column(String(30))           # "Call connected" | "Missed" etc.
+
+    # Driver match
+    matched_driver = Column(String(200))
+    matched_roster_id = Column(Integer, ForeignKey("driver_roster.id"), nullable=True)
+    attendance_event_id = Column(Integer, ForeignKey("attendance_events.id"), nullable=True)
+
+    processed = Column(Boolean, default=False)
+    raw_payload = Column(Text)                 # full JSON from webhook for audit
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_rc_caller_date", "caller_number", "received_at"),
+    )
+
+
+# ============================================================================
 # DATABASE FUNCTIONS
 # ============================================================================
 
@@ -1187,14 +1519,83 @@ def init_db():
     """Create all tables"""
     Base.metadata.create_all(bind=engine)
     ensure_cortex_driver_name_column()
+    ensure_dop_driver_name_column()
+    ensure_route_duration_columns()
     print("✓ Database initialized")
 
 
 def ensure_cortex_driver_name_column():
     """Ensure cortex_routes.driver_name exists for historical environments."""
-    with engine.begin() as conn:
-        conn.execute(text("ALTER TABLE cortex_routes ADD COLUMN IF NOT EXISTS driver_name VARCHAR(255)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_cortex_routes_driver_name ON cortex_routes(driver_name)"))
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE cortex_routes ADD COLUMN driver_name VARCHAR(255)"))
+            else:
+                conn.execute(text("ALTER TABLE cortex_routes ADD COLUMN IF NOT EXISTS driver_name VARCHAR(255)"))
+    except Exception:
+        pass  # Column already exists
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_cortex_routes_driver_name ON cortex_routes(driver_name)"))
+    except Exception:
+        pass
+
+
+def ensure_dop_driver_name_column():
+    """Ensure dop_routes.driver_name exists — added 2026-06-30."""
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE dop_routes ADD COLUMN driver_name VARCHAR(255)"))
+            else:
+                conn.execute(text("ALTER TABLE dop_routes ADD COLUMN IF NOT EXISTS driver_name VARCHAR(255)"))
+    except Exception:
+        pass  # Column already exists
+
+
+def ensure_route_duration_columns():
+    """Add route_duration to dop_routes and daily_route_assignments — added 2026-07-01."""
+    for table in ("dop_routes", "daily_route_assignments"):
+        try:
+            with engine.begin() as conn:
+                if DATABASE_URL.startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN route_duration INTEGER"))
+                else:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS route_duration INTEGER"))
+        except Exception:
+            pass  # Column already exists
+
+
+def ensure_ssn_last4_column():
+    """Add ssn_last4 to driver_roster for callout page PIN auth — added 2026-07-02.
+    Seeds default PIN 1234 for any driver without one so all drivers can log in immediately."""
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE driver_roster ADD COLUMN ssn_last4 VARCHAR(4)"))
+            else:
+                conn.execute(text("ALTER TABLE driver_roster ADD COLUMN IF NOT EXISTS ssn_last4 VARCHAR(4)"))
+    except Exception:
+        pass  # Column already exists
+    # Seed default PIN for any driver that doesn't have one yet
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE driver_roster SET ssn_last4 = '1234' WHERE ssn_last4 IS NULL"))
+    except Exception:
+        pass
+
+
+def ensure_callout_signature_column():
+    """Add signature_name + signature_at to attendance_events for callout signed acknowledgment — added 2026-07-02."""
+    for col, typedef in [("signature_name", "VARCHAR(150)"), ("signature_at", "DATETIME")]:
+        try:
+            with engine.begin() as conn:
+                if DATABASE_URL.startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE attendance_events ADD COLUMN {col} {typedef}"))
+                else:
+                    conn.execute(text(f"ALTER TABLE attendance_events ADD COLUMN IF NOT EXISTS {col} {typedef}"))
+        except Exception:
+            pass  # Column already exists
 
 
 def get_db():

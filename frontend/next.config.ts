@@ -26,6 +26,10 @@ const nextConfig: NextConfig = {
         source: '/weekly-audit-upload/:path*',
         destination: `${backendUrl}/weekly-audit-upload/:path*`,
       },
+      {
+        source: '/rescue/:path*',
+        destination: `${backendUrl}/rescue/:path*`,
+      },
     ];
   },
 };

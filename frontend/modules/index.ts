@@ -5,6 +5,7 @@ import { opsIngestModule } from './opsIngest';
 import { dvicModule } from './dvic';
 import { dspScorecardModule } from './dspScorecard';
 import { eodSurveyModule } from './eodSurvey';
+import { driverQualityModule } from './driverQuality';
 import { dailyDriverAssignmentModule } from './dailyDriverAssignment';
 import { dailyScreenshotAuditModule } from './dailyScreenshotAudit';
 import { driverScheduleModule } from './driverSchedule';
@@ -28,5 +29,6 @@ export const dashboardModules: DashboardModule[] = [
   opsIngestModule,
   dvicModule,
   dspScorecardModule,
+  driverQualityModule,
   eodSurveyModule,
 ];

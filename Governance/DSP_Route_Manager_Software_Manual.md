@@ -1,5 +1,57 @@
 # DSP Route Manager: Software Manual & System Blueprint
 
+> Discovery: Browse all governance docs in [Governance Index](README.md).
+
+---
+
+## Current Implementation Status (Updated 2026-07-03)
+
+> The sections below (1–13) are the original design spec. This section describes what is actually built and deployed as of 2026-07-03.
+
+**Deployments:** Backend → `nday-om.onrender.com` (Render) · Frontend → `nday-om.vercel.app` (Vercel)  
+**Stack:** FastAPI (Python) + Next.js (TypeScript) + SQLAlchemy (SQLite dev / PostgreSQL prod target)
+
+### Built Modules (Hub-and-Spoke Architecture)
+New modules are self-contained files — one backend route file + one frontend page + two-line registry entry. No existing files are modified except `api/main.py` and `frontend/modules/index.ts`.
+
+| Module | Backend File | Frontend Page | Status |
+|---|---|---|---|
+| File Uploads | `routes/uploads.py` | `/upload` | ✅ Live |
+| Auth (JWT + PIN) | `routes/auth.py` | `/login` | ✅ Live |
+| Driver Handouts | `routes/uploads.py` | `/handouts` | ✅ Live |
+| Driver Schedule | `routes/daily_notify.py` | `/schedule` | ✅ Live |
+| Assignment Database | `routes/uploads.py` | `/assignments` | ✅ Live |
+| Daily Screenshot Audit | `routes/audit.py` / `routes/enhanced_audit.py` | `/audit` | ✅ Live |
+| Weekly Invoice Audit | `routes/weekly_audit.py` | `/weekly-audit` | ✅ Live |
+| Rescue Tracker | `routes/rescue.py` | `/rescue` | ✅ Live |
+| Admin Panel | `routes/auth.py` | `/admin` | ✅ Live |
+| Attendance Reports | `routes/attendance_reports.py` | `/attendance-reports` | ✅ Live |
+| Ops Ingest Monitor | `routes/ops_ingest.py` | `/ops-ingest` | ✅ Live |
+| DVIC Validation | `routes/dvic.py` | `/dvic` | ✅ Live |
+| DSP Scorecard | `routes/dsp_scorecard_weekly.py` | `/dsp-scorecard` | ✅ Live |
+| EOD Survey | `routes/eod_survey.py` | `/eod-survey` | ✅ Live |
+| Driver Quality Rankings | `routes/quality.py` | `/driver-quality` | ✅ Live |
+| **Route Assignment Board** | `routes/route_assignment.py` | `/route-assignment` | ✅ Live (2026-07-03) |
+
+### Background Automation Loops
+All loops start on FastAPI startup in `api/main.py`:
+- **Ops ingest scan** — every 60s, scans #nday-operations-management for new file uploads; classifies and ingests Cortex, DOP, Fleet, Route Sheet, Quality CSV, Scorecard, WST files
+- **Daily notify** — every 10 min, 8–10 AM PT — detects DOP + Route Sheet in #dlv3-nday-info; DMs ops managers
+- **ECP watch** — every 15 min, 6 PM–midnight PT — detects ECP message; prompts Cortex upload for next day
+- **DVIC reminder** — every 60s with internal 3–6 PM throttle
+- **Scorecard reminder** — every 60s with internal Wednesday 12:30–5 PM throttle
+- **EOD survey** — every 60s with internal 3 PM channel post + 7:30 PM DM throttle
+
+### Key Architectural Notes
+- **Database:** SQLite for local dev (`api/nday_om.db`); PostgreSQL for production (env var `DATABASE_URL`). All migrations use safe `ensure_*` helpers that use try/except for both engines.
+- **Name matching:** Token-intersection algorithm handles "Last, First" vs "First Last" cross-system matching.
+- **Van assignment:** Electric routes → electric-only (no fallback); GROUNDED always skipped; CDV14→CDV16→XL fallback chain; 7-day driver affinity.
+- **Callout rule:** Called-out drivers drop below all non-callout drivers in the assignment priority queue; only routed when pool is exhausted (`is_callout_coverage=True`).
+
+See [Progress Snapshot](Archive/PROGRESS_SNAPSHOT_2026-07-03.md) for the complete module list, database tables, and outstanding items.
+
+---
+
 ## 1. System Overview
 The DSP Route Manager is a full-stack web application for ingesting, validating, and generating driver handout PDFs for Amazon Delivery Service Providers (DSPs). It automates the process of merging operational data from multiple sources, applies business rules, and produces ready-to-print handouts for drivers.
 

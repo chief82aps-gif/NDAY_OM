@@ -1,9 +1,57 @@
 # NDAY Route Manager - Database Schema
 
-**Status:** Implementation Plan  
-**Database:** PostgreSQL  
-**ORM:** SQLAlchemy 2.0  
-**Date Created:** February 23, 2026
+> Discovery: Browse all governance docs in [Governance Index](README.md).
+
+**Original Status:** Implementation Plan (Feb 23, 2026)  
+**Current Status:** Partially implemented — see "Actual Schema" section below  
+**Database:** SQLite (dev) / PostgreSQL (prod target)  
+**ORM:** SQLAlchemy 2.x (models defined in `api/src/database.py`)  
+**Last Updated:** 2026-07-03
+
+---
+
+## Actual Schema (SQLAlchemy Models — as of 2026-07-03)
+
+These are the tables that actually exist, defined in `api/src/database.py`. Safe `ensure_*` migration helpers add columns to existing databases without data loss.
+
+| Table | Key Purpose |
+|---|---|
+| `users` | System users, JWT auth, roles (admin/manager/dispatcher/driver) |
+| `driver_roster` | Driver master list — payroll_name, transporter_id, slack_user_id, ssn_last4, pin |
+| `cortex_routes` | Daily Cortex ingest — route_code, driver_name, transporter_id, service_type, wave_time, stops, packages, staging_location |
+| `dop_routes` | DOP ingest — route_code, wave_time, route_duration_min, planned_packages, staging_location |
+| `fleet_vehicles` | Fleet roster — van_number, vin, service_type, operational_status, is_electric, is_grounded |
+| `daily_route_assignments` | Final assignments — route_code, transporter_id, van_number, vin, quality_rank, quality_standing, is_callout_coverage, departure_time, assignment_status |
+| `driver_quality_snapshots` | Raw quality CSV uploads — week_label, upload_date, raw_json |
+| `driver_quality_rankings` | Per-driver weekly quality — transporter_id, week_label, overall_score, standing (Platinum/Gold/Silver/Bronze), rank, metric_* |
+| `rescue_events` | Rescue tracker events — event_date, route_code, driver_name, stage (1/2/3), bonus_eligible, bonus_amount |
+| `rescue_escalations` | Rescue escalation log — rescue_event_id, escalated_to, notes |
+| `screenshot_audits` | OCR audit rows — audit_date, cortex_route_code, wst_route_code, status, confidence_score |
+| `weekly_audit_rows` | Invoice audit — invoice_number, amount, status, dispute_notes |
+| `ecp_roster_prompts` | ECP daily prompt dedup — prompt_date, sent_at, channel_id |
+| `slack_ingest_log` | Slack file tracking — file_id, file_name, file_type, ingested_at, status |
+| `ops_ingest_jobs` | Ops ingest job queue — file_id, file_name, classified_as, status, result_summary |
+| `dvic_uploads` | DVIC validation — driver_name, video_duration_seconds, is_compliant (≤90s rule) |
+| `dsp_scorecard_snapshots` | Scorecard data — week_label, upload_date, parsed_data_json |
+| `eod_survey_submissions` | EOD survey responses — driver_name, transporter_id, submission_date, answers_json |
+| `driver_callouts` | Callout tracking — callout_date, transporter_id, driver_name, callout_type, notes |
+
+### Columns Added via ensure_* Migrations (not in original model definition)
+The following were added as safe `ALTER TABLE` migrations to avoid breaking existing databases:
+
+| Table | Added Column | Migration Function |
+|---|---|---|
+| `cortex_routes` | `transporter_id VARCHAR(50)` | `ensure_assignment_board_columns()` |
+| `daily_route_assignments` | `transporter_id`, `quality_rank`, `quality_standing`, `is_callout_coverage`, `departure_time`, `stops`, `assignment_status` | `ensure_assignment_board_columns()` |
+| `driver_roster` | `driver_name VARCHAR(255)` | `ensure_dop_driver_name_column()` |
+| `driver_roster` | `ssn_last4 VARCHAR(4)` | `ensure_ssn_last4_column()` |
+| `driver_roster` | `callout_signature TEXT` | `ensure_callout_signature_column()` |
+
+---
+
+## Planned Schema (Original Design — February 23, 2026)
+
+The following was the original planned schema. Some tables have been superseded by the actual implementation above. Kept here as a reference for future phases (incident reporting, van inspections, mobile app).
 
 ---
 

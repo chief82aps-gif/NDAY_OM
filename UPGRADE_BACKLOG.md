@@ -1,440 +1,402 @@
-# NDAY Route Manager - Upgrade & Feature Backlog
+# NDAY Route Manager — Development Roadmap & Todo List
 
-## Overview
-This document tracks potential improvements, features, and integrations for the NDAY Route Manager system. Items are organized by category and priority.
-
-**Canonical source:** This file is the single source of truth for feature ideas and upgrades. Legacy notes from `IDEAS.md` were merged here on Feb 22, 2026.
-
-### 📨 Idea Intake Queue
-- Asana integration for new driver scheduling (merged into High Priority item #1)
-- Performance metrics by driver and route code (covered in Medium Priority item #8)
-- Motivational phrase generator using driver metrics (tracked in Medium Priority item #8.1)
+**Last Updated:** 2026-07-03  
+**Format:** Chronological todo list — items ordered by when they should be done, not by category.  
+**Status Key:** ✅ Done · 🔄 In Progress · 🔲 Not Started · 🚧 Blocked (dependency noted)
 
 ---
 
-## ✅ Completed Features
-- Route Sheet PDF parsing (multi-page support, A/B/E/G zone support)
-- Driver assignment and vehicle allocation
-- Driver handout PDF generation
-- Driver schedule ingest (Excel with 2 tabs)
-- Show time calculation with wave consolidation
-- Sweeper identification
-- Driver schedule PDF report generation
-- Daily driver assignment dashboard
-- Assignment database with search/filter
-- Admin panel for user management
+## Next Steps — Suggested Immediate Priorities
+
+> This section was added 2026-07-03 at session close. Items are ordered by urgency and dependency chain.
+
+### 🔴 Security — Do First
+
+| # | Task | Why Now |
+|---|---|---|
+| S1 | **Rotate SLACK_BOT_TOKEN** (xoxb-) on Render → OAuth & Permissions → Revoke → Reinstall | Exposed in chat history |
+| S2 | **Rotate SLACK_USER_TOKEN** (xoxp-) on Render | Exposed in chat history |
+| S3 | **Populate driver PINs** — enter actual SSN last-4 for all active drivers via Admin Panel | All 114 drivers default to `1234` — PIN auth is currently meaningless |
+
+### 🟡 Route Assignment — Finish the Loop
+
+| # | Task | Why Now |
+|---|---|---|
+| R1 | **Wire post-Cortex DMs** — after Cortex is ingested by ops_ingest, send each driver their route/van/show time via Slack DM | Route Assignment module is built; DM delivery is the last mile |
+| R2 | **Ops manager morning DMs** — after DOP + Route Sheet both detected, DM Spencer (`U0AJGCYKXPB`), Fabian (`U0AJPQALDLL`), Luis (`U0B36C9R8N4`) | Currently only logs ingest; no outbound prompt to ops team |
+| R3 | **Route Sheets staging data** — pull staging_location and bag info from ingested Route Sheets into route_assignment `/board` response | Board shows staging from Cortex only; Route Sheet detail (bag counts, overflow) not yet surfaced |
+| R4 | **Test Route Assignment end-to-end** — upload a real Cortex file, click Auto-Assign, verify board populates, mark a callout, confirm coverage logic | Board is built but untested in a live session |
+
+### 🟢 Automation — High Ops Value
+
+| # | Task | Why Now |
+|---|---|---|
+| A1 | **Driver invite wave** — once Slack tokens are rotated, invite the 24 missing active drivers to #nday-team-room | Required for DM delivery to those drivers |
+| A2 | **Loadout van timing dashboard** — UI to record van-in / van-out per route; enables post-loadout scrum prompt | Missing link in the daily drumbeat (no departure tracking) |
+| A3 | **Drumbeat cron jobs** — wire 3:00 PM rescue reminder, 3:30 PM OKAMI prompt, 5:00 PM ECP reminder as FastAPI background tasks | Currently manual; all other prompts are automated |
+| A4 | **Playwright/RPA module** — Cortex auto-download at 7:30 AM PT; baseline session via `playwright codegen` | Eliminates manual Cortex upload; highest single time-save for ops |
+
+### 🔵 Infrastructure — Before Production Load
+
+| # | Task | Why Now |
+|---|---|---|
+| I1 | **SQLite → PostgreSQL migration on Render** | SQLite file may not persist across Render deploys on free tier |
+| I2 | **Telnyx account + 10DLC registration** | 1–2 week carrier approval; start now to unblock SMS fallback |
+| I3 | **Daily reports checklist widget** — dashboard tile showing which daily reports are submitted vs. outstanding | Ops currently has no visibility into missing reports |
+
+### 📋 In the Next Session — Suggested Order
+
+1. S1 + S2: Rotate tokens (5 min, Slack dashboard)
+2. R4: Load a real Cortex file, run the board end-to-end — catch any data mapping issues
+3. R1: Wire post-Cortex driver DMs (extend `ops_ingest.py` Cortex handler → call route_assignment board → DM each driver)
+4. R2: Wire ops manager morning DMs (extend `daily_notify.py` post-detection handler)
+5. A3: Add 3 PM + 3:30 PM + 5 PM cron reminders as FastAPI tasks in `main.py`
+6. I1: Migrate to PostgreSQL on Render
 
 ---
 
-## 🚀 High Priority Features
+---
 
-### 1. Asana Integration (Hiring/Onboarding)
-**Idea:** Integrate with Asana to pull new hire candidates and auto-schedule them
-- Pull onboarding status from Asana
-- Create scheduling suggestions based on team load balancing
-- Auto-assign to waves/days to level-load the team
-- Push scheduling back to Asana as task assignments
+## Operational Drumbeat (Source of Truth for All Automation)
+
+This section defines the timed operational rhythm that all system automations, notifications, and checklists are built against.
+
+### Daily Schedule
+
+| Time (PT) | Event | Trigger Type | System Action |
+|---|---|---|---|
+| 08:00–09:15 | DOP + Route Sheets drop in `#dlv3-nday-info` | Auto (Slack poll, every 10 min) | Ingest files → Slack + SMS prompt to Spencer, Fabian, Luis to roster and upload Cortex |
+| ~09:15 | Cortex file uploaded to `#nday-operations-management` | Auto (Slack poll detects file) | Ingest Cortex → send each rostered driver their Van / Route / Stage / Show Time via Slack DM + SMS |
+| ~09:15 | Post-Cortex: Driver report / roll call | Prompt (after Cortex ingest) | Dispatcher prompted via Slack to begin roll call and confirm attendance |
+| Loadout window | Van arrivals and departures | Manual entry | Dashboard: record van-in and van-out timestamps per route |
+| Post-loadout | Staging area scrum | Prompt (after last van departs) | Dispatcher prompted: confirm all carts/packages accounted for and taken |
+| By 15:00 | Rescue plans formulated | Checklist | Dashboard reminder: rescue plans must be logged in system by 3:00 PM |
+| 15:30–16:00 | OKAMI scheduling tool | Manual + Prompt | System reminds ops at 15:30 to work on OKAMI; final submission due by 16:00 |
+| ~17:00 | ECP process (Amazon side) | Prompt | System reminds ops: ECP must complete before 19:00 |
+| Post-ECP | Roster team for next day | Prompt (ECP watch detects message) | Existing ECP watch loop prompts `#nday-operations-management` to upload next-day Cortex |
+| End of day | Driver sign-out / end-of-day sheets | Prompt | Drivers prompted (Slack DM + SMS) to complete and submit sign-out form |
+
+### Daily Reports (Office Hours — between Rescue Plans and OKAMI)
+
+| Report | Responsible | System Role |
+|---|---|---|
+| 7-day DA break utilization report | Ops | Prompt, receive upload, store |
+| Daily report | Ops | Prompt, receive upload, store |
+| Pre-trip DVIC under 90-second report | Dispatcher | Prompt, receive upload, validate |
+| Performance summary dashboard | Ops | Screenshot capture (Playwright), auto-upload |
+| Quality dashboard | Ops | Screenshot capture (Playwright), auto-upload |
+| Safety dashboard | Ops | Screenshot capture (Playwright), auto-upload |
+
+### Weekly Schedule
+
+| Day | Event | System Action |
+|---|---|---|
+| Monday | Process route payments received | Prompt ops; receive and ingest payment data |
+| Wednesday | **Scorecard Day** — big data drops | Ingest all of the following: Fleet Execute / Engine Off compliance · No Lap Belt report · Netradyne 3P vehicles report · Tenured Workforce dashboard · Scorecard · Report · POD report — then flag errors and generate action item list |
+| Friday | Process incentive payments | Prompt ops; ingest and reconcile incentive data |
+
+### Monthly Schedule
+
+| Timing | Event | System Action |
+|---|---|---|
+| ~5th of month | Upload Fleet Invoice | Ingest fleet invoice → auto-scrub against vans used that month → flag discrepancies for review |
+
+---
+
+## Phase 0 — Completed (Foundation)
+
+- ✅ Route Sheet PDF parsing (multi-page, A/B/E/G zone support)
+- ✅ DOP Excel ingest with column auto-detection
+- ✅ Cortex Excel ingest (route assignments, driver names)
+- ✅ Fleet Excel ingest with GROUNDED filtering
+- ✅ Driver schedule ingest (Rostered Work Blocks + Shifts & Availability tabs)
+- ✅ Show time calculation with wave consolidation (25 min before wave)
+- ✅ Sweeper identification from schedule vs. assignment comparison
+- ✅ Vehicle assignment engine (VIN → route mapping)
+- ✅ Driver handout PDF generation
+- ✅ Driver schedule PDF report generation
+- ✅ Daily driver assignment dashboard (frontend)
+- ✅ Assignment database with search and filter
+- ✅ Admin panel and user management
+- ✅ Authentication (JWT, role-based access)
+- ✅ Slack bot setup (`nday_route_manager`, bot token, user token)
+- ✅ Slack channel monitoring via `files_list` API (avoids `groups:history` scope)
+- ✅ Daily Cortex ingest from `#nday-operations-management`
+- ✅ Daily DOP + Route Sheet ingest from `#dlv3-nday-info`
+- ✅ ECP watch loop (6 PM–midnight PT) — detects ECP message, prompts Cortex upload
+- ✅ `ecp_roster_prompts` table and deduplication
+- ✅ Slack ingest log (`slack_ingest_log` table) with per-file status tracking
+- ✅ Modular ingest package (`api/src/ingest/` with `wst/` subpackage)
+- ✅ Rescue tracker (business rules, 3-stage workflow, bonus formula, reinstatement)
+- ✅ Invoice audit tool (variable invoice CSV parsing, line-item reconciliation)
+- ✅ Weekly audit disputes and WST comparison
+- ✅ Daily screenshot audit (OCR-based Cortex vs WST comparison)
+- ✅ Ops Ingest hub (60s scan loop, classifies all file types, #nday-operations-management)
+- ✅ DVIC sub-90s validation module
+- ✅ DSP Scorecard weekly data module
+- ✅ End-of-Day Survey (3 PM channel post + 7:30 PM driver DMs)
+- ✅ Driver Quality Rankings (Platinum/Gold/Silver/Bronze, week selector, expandable metric rows)
+- ✅ Route Assignment Board (Cortex + DOP + Fleet + Quality + Callout rule) — *2026-07-03*
+
+---
+
+## Phase 1 — Now (Week of 2026-07-01)
+
+### 1.1 — Driver Slack ID Population
+- 🔲 Match 70 drivers in `#nday-team-room` to `DriverRosterEntry` by email
+- 🔲 Bulk-insert Slack user IDs into driver roster table
+- 🔲 Fix Cantrell/Cantrall email typo in Slack (Slack admin action)
+- 🔲 Invite 24 missing active drivers to `#nday-team-room`
+  - List: a.tepehua, b.dietmeier, c.litada, c.dyson, d.hutchinson, f.saldarriaga,
+    j.figueroa, k.dyson, k.holdman, l.rojas, m.gronostalski, r.tapado, r.reinberg,
+    s.estep, j.ybarra, s.malic, s.embree, s.navarrosegura, s.webb7, s.davis2,
+    t.mix, t.freisner1, v.geroe, w.wardrobe1
+
+### 1.2 — Daily Morning Notification Flow (Ops Managers)
+- 🔲 After DOP + Route Sheet both detected, send Slack DM to:
+  - Spencer Colby (`U0AJGCYKXPB`)
+  - Fabian Marcillo (`U0AJPQALDLL`)
+  - Luis Rojas (`U0B36C9R8N4`)
+- 🔲 Message: route/package counts + instruction to roster and drop Cortex into `#nday-operations-management`
+- 🔲 Deduplication: only send once per day per ops manager
+
+### 1.3 — Driver Assignment Notifications (Post-Cortex)
+- 🔲 After Cortex ingested, look up each rostered driver's Slack ID
+- 🔲 Send each rostered driver a DM with:
+  - Route code
+  - Van number (from fleet assignment engine)
+  - Stage location (from DOP)
+  - Show time (wave time − 25 min)
+  - Package count
+- 🔲 Send sweeper DM to drivers who are active but not assigned a route:
+  - "You are a sweeper today. Please report by [earliest show time]."
+- 🔲 Log all DMs sent to `slack_ingest_log` or a new `driver_notifications` table
+
+### 1.4 — SMS Module (Telnyx)
+- 🔲 Create Telnyx account and purchase a US phone number
+- 🔲 Register 10DLC brand and campaign (takes 1–2 weeks for carrier approval)
+- 🔲 Add env vars: `TELNYX_API_KEY`, `TELNYX_FROM_NUMBER`
+- 🔲 Install Telnyx SDK: `pip install telnyx`
+- 🔲 Create `api/src/sms/` module:
+  - `client.py` — Telnyx client singleton, reads env vars
+  - `sender.py` — `send_sms(to_number, message)` with retry and logging
+  - `__init__.py` — exports `send_sms`
+- 🔲 Store driver phone numbers from Cortex CSV in `driver_roster` table
+- 🔲 SMS fallback for drivers without a Slack ID (the 24 missing from Slack)
+- 🔲 SMS ops manager alerts (Spencer, Fabian, Luis) in parallel with Slack DMs
+- 🔲 SMS delivery log table (`sms_log`: recipient, message, status, timestamp)
+- **Est. cost:** ~$32/month (Telnyx at 200 SMS/day + 10DLC + number rental)
+
+### 1.5 — Drumbeat Automation (Timed Prompts & Checklists)
+- 🔲 **Post-Cortex roll call prompt** — after Cortex ingested, Slack message to dispatcher: begin roll call, confirm attendance
+- 🔲 **Post-loadout staging scrum prompt** — after last van departure recorded, Slack prompt: confirm all carts/packages staged and taken
+- 🔲 **3:00 PM rescue plan reminder** — cron at 15:00 PT: Slack reminder to log rescue plans before cutoff
+- 🔲 **3:30 PM OKAMI reminder** — cron at 15:30 PT: Slack prompt to begin OKAMI scheduling; deadline 16:00
+- 🔲 **5:00 PM ECP reminder** — cron at 17:00 PT: Slack reminder ECP must complete by 19:00
+- 🔲 **End-of-day sign-out prompt** — after ECP confirmed, Slack DM + SMS to all rostered drivers: submit sign-out sheet
+- 🔲 **Monday payment prompt** — cron Monday morning: Slack reminder to process route payments
+- 🔲 **Wednesday scorecard prompt** — cron Wednesday morning: Slack checklist of all data drops due (7 items)
+- 🔲 **Friday incentive prompt** — cron Friday morning: Slack reminder to process incentive payments
+- 🔲 **5th-of-month fleet invoice prompt** — cron 1st of month (5-day warning): Slack reminder fleet invoice due by 5th
+- 🔲 **Loadout van timing dashboard** — UI for dispatcher to record van-in / van-out times per route per day
+- 🔲 **Daily reports checklist** — dashboard widget showing which daily reports are submitted vs. outstanding:
+  - 7-day DA break utilization
+  - Daily report
+  - Pre-trip DVIC under 90-second
+  - Performance summary (screenshot)
+  - Quality dashboard (screenshot)
+  - Safety dashboard (screenshot)
+
+### 1.6 — Playwright / RPA Module
+- 🔲 Install Playwright: `pip install playwright && python -m playwright install chromium`
+- 🔲 Create `api/src/automation/` module:
+  - `__init__.py`
+  - `browser.py` — browser lifecycle, session persistence (`amazon_session.json`)
+  - `cortex.py` — Cortex portal login + route file download
+  - `tasks/` — one file per distinct workflow (future: each Amazon portal task)
+- 🔲 Record baseline session using `playwright codegen` against Cortex URL
+- 🔲 Schedule Cortex auto-download at 7:30 AM PT (before DOP drops) via `main.py` loop
+- 🔲 Drop downloaded file directly into ingest pipeline (bypass Slack upload)
+- 🔲 Log automation runs to `automation_log` table (task, status, duration, error)
+- 🔲 Map remaining "operational click" workflows — list all Amazon portal tasks
+  that need automation (schedule for Phase 2 once list is confirmed)
+
+### 1.6 — Production Deploy (Render)
+- 🔲 Push all current changes to GitHub
+- 🔲 Set Render env vars:
+  - `SLACK_BOT_TOKEN`, `SLACK_USER_TOKEN`
+  - `SLACK_NOTIFY_CHANNEL` (C0AF48TPAMV)
+  - `CORTEX_NOTIFY_CHANNEL` (C0BE4ALL1EX)
+  - `TELNYX_API_KEY`, `TELNYX_FROM_NUMBER`
+  - `FRONTEND_URL`
+- 🔲 Rotate both Slack tokens (bot + user tokens were shared in chat)
+- 🚧 **Blocked:** Telnyx 10DLC approval needed before bulk SMS can go live
+
+---
+
+## Phase 2 — Near Term (2–4 Weeks)
+
+### 2.1 — Browser Extension for Screenshot Capture
+- 🔲 Build Chrome/Edge extension (Manifest v3) for daily Cortex vs WST audit
+- 🔲 One-click full-page capture including off-screen content
+- 🔲 Guided capture sequence (Cortex first, then WST)
+- 🔲 Auto-attach metadata: timestamp, URL, detected page type
+- 🔲 Direct handoff to NDAY Daily Screenshot Audit upload pipeline
+- 🔲 Validation banner if date headers differ between captures
+
+### 2.2 — Sweeper Management Workflow
+- 🔲 Sweeper queue view on dashboard (who's available, who's been dispatched)
+- 🔲 Sweeper assignment history and response time metrics
+- 🔲 Notification flow when a sweeper is dispatched to a rescue
+
+### 2.3 — Admin Role Management (UI)
+- 🔲 Admin endpoint to update user role (admin, manager, dispatcher, driver)
+- 🔲 Role selector in admin panel user list
+- 🔲 Audit log entry for role changes (who, when, old → new role)
+- 🔲 Guard: prevent removal of last admin account
+
+### 2.4 — Driver Performance Analytics (Phase 1)
+- 🔲 KPI cards on dashboard: on-time %, packages delivered, rescue count
+- 🔲 Per-driver scorecard page
+- 🔲 Weekly trend graphs
+
+### 2.5 — Automation: Additional RPA Workflows
+- 🔲 Confirm full list of "operational clicks" with ops team
+- 🔲 Build one task file per workflow under `api/src/automation/tasks/`
+- 🔲 Dashboard trigger buttons for on-demand automation runs
+- 🔲 Scheduling for recurring automations
+
+---
+
+## Phase 3 — Medium Term (1–3 Months)
+
+### 3.1 — Driver Mobile App (MVP)
+- **Framework:** React Native (shares code with Next.js frontend)
+- 🔲 Authentication (existing JWT)
+- 🔲 View daily assignment (route, van, stage, show time)
+- 🔲 Push notifications via Firebase Cloud Messaging (FCM)
+- 🔲 Handout PDF download and viewing
+- 🔲 Basic driver profile
+- **Cost:** FCM free · EAS Build $7–25/mo · Apple Dev $99/yr · Google Play $25 one-time
+
+### 3.2 — Incident & Accident Reporting (Mobile)
+- 🔲 Incident form with photo capture (timestamp + GPS)
+- 🔲 Incident type selection (accident, damage, safety, customer complaint)
+- 🔲 Offline queue (submit when reconnected)
+- 🔲 Auto-attach vehicle/driver/route context
+- 🔲 Cloud photo storage (AWS S3 or Google Cloud)
+- 🔲 Manager instant notification on submission
+
+### 3.3 — Van Inspection Tool (Mobile)
+- 🔲 Pre-shift walk-around checklist
+- 🔲 Photo tagging by damage location and severity
+- 🔲 Inspection history per VIN
+- 🔲 Maintenance alert system (recurring issues)
+- 🔲 Comparison photos over time
+
+### 3.4 — Vehicle Rotation & Maintenance Tracking
+- 🔲 Log mileage per route per VIN
+- 🔲 Maintenance due alerts
+- 🔲 Vehicle defect tracking
+- 🔲 Rotation schedule to prevent overuse
+
+### 3.5 — Driver Scorecard & Coaching System
+- 🔲 Automated KPI calculation (on-time %, safety incidents, attendance)
+- 🔲 Performance tiers and trend analysis
+- 🔲 Coaching recommendation engine by weakness area
+- 🔲 Manager 1:1 discussion guide export
+- 🔲 Top performer celebration alerts
+
+### 3.6 — Motivational Phrase Generator
+- 🔲 Track phrase impact on key metrics per driver cohort
+- 🔲 A/B test motivational vs safety messaging
+- 🔲 Recommend best-performing phrase per driver profile
+- 🔲 Admin manual override
+
+---
+
+## Phase 4 — Longer Term (3+ Months)
+
+### 4.1 — Property Sign-Out / Checkout App
+- 🔲 Digital sign-out form (tablets, scanners, badges, vehicle keys)
+- 🔲 Vehicle condition checklist (fuel, damage, cleanliness)
+- 🔲 Digital signature capture
+- 🔲 Real-time alert if property not returned
+
+### 4.2 — Attendance App & HR Forms
+- 🔲 Call-out / absence reporting
+- 🔲 Time-off request workflow with manager approval
+- 🔲 HR form submission (suggestions, feedback)
+- 🔲 Audit trail of all requests
+
+### 4.3 — Multi-Week Schedule Planning
+- 🔲 Upload template schedules
+- 🔲 Generate recurring schedules weeks in advance
+- 🔲 Identify coverage gaps and conflicts
+- 🔲 Alert on low-coverage days
+
+### 4.4 — Advanced Load Balancing
+- 🔲 Equal package/stop distribution per driver
+- 🔲 Experience level balancing (mix senior + new)
+- 🔲 Route difficulty rating
+- 🔲 Driver skill affinity (preferred routes/vehicles)
+
+### 4.5 — Real-Time Driver Status Tracking
+- 🔲 Status updates throughout shift (arriving, on route, returning, complete)
+- 🔲 Integration with delivery tracking system
+- 🔲 Performance reports from actual completion vs. planned
+- 🔲 Delay alert system
+
+### 4.6 — Driver Self-Service Portal
+- 🔲 View own assignments and show times
+- 🔲 Shift swap requests (with manager approval)
+- 🔲 Time-off requests
+- 🔲 Availability calendar management
+
+### 4.7 — Asana Integration (Hiring/Onboarding)
+- 🔲 Pull new hire candidates and onboarding status from Asana
+- 🔲 Auto-schedule new hires based on team load
+- 🔲 Push scheduling back to Asana as task assignments
 - **Dependencies:** Asana API key, project/section mapping
 
-### 2. Multi-Week Schedule Planning
-**Idea:** Extend schedule to support recurring schedules across multiple weeks
-- Upload template schedules
-- Generated schedules for multiple weeks ahead
-- Identify scheduling conflicts/gaps
-- Show year-long driver availability
-- Alert on low coverage days
+### 4.8 — Google Maps / Route Optimization
+- 🔲 Drive time calculations per route
+- 🔲 Traffic-aware scheduling
+- 🔲 Zone mapping visualization
+- 🔲 Sweeper geographic routing
 
-### 3. Real-Time Driver Status Updates
-**Idea:** Track driver status throughout the day (arriving, on route, returning, completed)
-- Integration with delivery tracking system
-- Update assignment database with actual completion times
-- Generate performance reports (on-time, efficiency, etc.)
-- Alert system for delays or issues
-
-### 4. Driver Preferences & Constraints
-**Idea:** Allow drivers to input availability/preferences directly
-- Self-service portal for drivers to set availability
-- Preferred shift/wave times
-- Geographic preferences (zones they like)
-- Days off and recurring time off
-- Integration with schedule generation algorithm
+### 4.9 — Forecasting & Capacity Planning
+- 🔲 Demand forecasting for upcoming weeks
+- 🔲 Staffing requirement predictions
+- 🔲 Hiring recommendations
+- 🔲 Seasonal pattern analysis
 
 ---
 
-## 🎯 Medium Priority Features
+## External Dependencies Tracker
 
-### 5. Advanced Load Balancing Algorithm
-**Idea:** Improve scheduling to automatically optimize across multiple metrics
-- Equal distribution of packages/weight per driver
-- Equal distribution of stops/deliveries
-- Balanced experience levels (mix of experienced + new drivers)
-- Route difficulty rating
-- Driver skill affinity (preferred routes/vehicles)
-- **Current:** Basic wave consolidation; upgrade to multi-factor optimization
-
-### 6. Sweeper Management Workflow
-**Idea:** Streamline sweeper dispatch and tracking
-- Sweeper queue display (who's available for dispatch)
-- Sweeper assignment history
-- Performance metrics (avg response time, completion rate)
-- Notification system when sweepers are needed
-- Geographic routing for sweepers
-
-### 7. Vehicle Rotation & Maintenance Alerts
-**Idea:** Track vehicle usage and maintenance schedules
-- Log vehicle mileage per route
-- Alert when vehicle maintenance due
-- Track vehicle issues/defects
-- Rotation schedule to prevent overuse of specific vans
-- Integration with fleet management system
-
-### 8. Performance Analytics Dashboard
-**Idea:** Deep insights into team performance
-- Driver KPIs (on-time %, average delivery time, customer ratings)
-- Route efficiency metrics
-- Vehicle utilization rates
-- Peak hours/demand analysis
-- Trend analysis over time
-- Predictive analytics for scheduling
-
-### 8.1 Motivational Phrase Generator
-**Idea:** Use driver performance and safety metrics to select the most effective footer message per driver
-- Track phrase impact on key metrics (safety incidents, on-time return, delivery accuracy)
-- A/B test motivational and safety comments by route/driver cohort
-- Recommend best-performing phrase for each driver profile
-- Keep manual override for dispatcher/admins
-
-### 9. Dynamic Sort Order by Service Type
-**Idea:** Allow users to sort/group assignments by service type as primary sort key
-- Dynamically re-order schedule and handouts by service type (standard, oversized, etc.)
-- Optional secondary sort by wave time, zone, or driver name
-- Filter/group view showing only specific service types
-- Remember user's preferred sort preference across sessions
+| Dependency | Status | Owner | Notes |
+|---|---|---|---|
+| Telnyx account + number | 🔲 Not started | Jayson | Purchase number, start 10DLC registration |
+| 10DLC brand registration | 🔲 Not started | Jayson | ~1–2 week carrier approval wait |
+| Playwright codegen session | 🔲 Not started | Jayson | Run against Cortex URL, save session |
+| RPA workflow list | 🔲 Not started | Ops team | Full list of "operational clicks" needed |
+| Slack token rotation | 🔲 Not started | Jayson | Both bot + user tokens exposed in chat |
+| 24 missing driver Slack invites | 🔲 Not started | Ops | Invite list captured in session 2026-07-01 |
+| Apple Developer Account | 🔲 Not started | Jayson | Needed for Phase 3 mobile app ($99/yr) |
+| Firebase project (FCM) | 🔲 Not started | Jayson | Needed for push notifications (free tier) |
+| AWS S3 or GCS bucket | 🔲 Not started | Jayson | Needed for incident/inspection photos |
 
 ---
 
-## � NEW: Driver-Facing Mobile Apps & Operations (Tier 1 Priority)
+## Monthly Cost Estimate (At Full Build-Out)
 
-### 10. Driver Mobile App
-**Idea:** Comprehensive mobile application for drivers to manage assignments and communicate
-- View van assignments for the day
-- Receive SMS/push notifications with handouts
-- Real-time route tracking and status updates
-- Quick access to current route details, customer info
-- In-app performance metrics dashboard
-- **Technology:** React Native or Flutter (code sharing with Next.js frontend)
-- **Integrations:** Push notifications (Firebase), SMS (Twilio)
-
-### 11. Incident & Accident Reporting App
-**Idea:** Quick mobile tool for drivers to report incidents and accidents
-- Photo capture with timestamp/location (GPS)
-- Incident type selection (accident, damage, safety issue, customer complaint)
-- Driver statement/notes
-- Immediate notification to management
-- Photo storage in cloud (AWS S3 or similar)
-- Integration with incident tracking database
-- **Features:**
-  - Offline capability (queue reports when reconnected)
-  - Auto-attach vehicle/driver/route info
-  - Evidence photo library per incident
-
-### 12. Property Checkout/Sign-Out Sheet (Mobile)
-**Idea:** Track return of company property and vehicle condition at end of shift
-- Digital sign-out form replacing paper sheets
-- Vehicle condition checklist (damage, fuel level, cleanliness)
-- Company property inventory check-off (tablets, scanners, badges, etc.)
-- Photo documentation of vehicle condition
-- Digital signature capture
-- Real-time alerts if property is missing
-- **Integrations:** Van inspection data, property database
-
-### 13. Van Inspection Tool
-**Idea:** Structured vehicle inspection with photo library for damage tracking
-- Pre-shift vehicle walk-around inspection
-- Photo tagging of damage (location, severity)
-- Inspection history timeline per vehicle
-- Damage severity scoring
-- Maintenance alert system (auto-trigger for repeated issues)
-- Comparison photos over time to track progression
-- **Cloud Storage:** Photo library indexed by VIN and date
-- **Reporting:** Generate inspection reports for fleet management
-
----
-
-## 💰 NEW: Financial & Operational Tools (Tier 1-2 Priority)
-
-### 14. Rescue Tracker & Bonus Calculator
-**Idea:** Track rescue incidents and auto-calculate driver bonuses
-- Log rescue incidents (time, location, type, driver(s) involved)
-- Bonus calculation engine (rules-based: rescue type → bonus amount)
-- Manual override capability for special cases
-- Bonus report generation for payroll
-- Bonus history per driver (transparent to drivers in app)
-- Suggestions for team awards (top rescuer, etc.)
-- **Payroll Integration:** Export bonus data for Stripe/payroll system
-- **Analytics:** Rescue frequency trends, driver rescue performance
-
-### 15. Invoice Audit Tool
-**Idea:** Reconcile invoiced work vs. actual work completed
-- Import invoice data (CSV or API)
-- Compare against actual routes/assignments completed
-- Identify discrepancies (unbilled work, over-billing errors)
-- Flagging system for investigation
-- Reconciliation workflow (approve, dispute, adjust)
-- Financial reporting Dashboard
-- **Data Source Integration:** Route sheets, daily assignments, driver productivity
-- **Export:** Audit reports for finance/legal
-
-### 16. Driver Scorecard & Coaching System
-**Idea:** Performance tracking with coaching recommendations
-- Automated KPI calculation per driver:
-  - On-time completion %
-  - Safety incidents rate
-  - Customer ratings/feedback
-  - Rescue participation
-  - Attendance/punctuality
-- Performance tiers and behavior patterns
-- Coaching suggestions based on weakness areas
-- Historical performance trends
-- 1-on-1 discussion guide for managers
-- Celebration alerts for top performers
-- **AI/ML:** Pattern recognition for coaching topics, predictive performance
-
----
-
-## �💡 Medium-Low Priority Features
-
-### 17. SMS/Email Notifications
-**Idea:** Automated communications to drivers and managers
-- Driver assignment notifications (day before, morning of)
-- Show time reminders
-- Route changes/updates
-- Sweeper dispatch alerts
-- Manager alerts for staffing issues
-- Customizable notification preferences
-
-### 18. Driver Schedule Self-Service Portal
-**Idea:** Allow drivers to view/manage their own schedule
-- View assigned routes and show times
-- Switch shifts with other drivers (with approval)
-- Request time off
-- View historical assignments
-- Availability calendar management
-
-### 19. Attendance App with HR Forms
-**Idea:** Streamlined call-out, time-off, and HR form management
-- Driver call-out/absence reporting
-- Time-off request workflow (vacation, sick, personal)
-- HR form submission (incident reports, suggestions, feedback)
-- Approval workflow for managers
-- Audit trail of all requests
-- Integration with attendance database
-- **Features:**
-  - Mobile-first design
-  - Push notifications for approvals
-  - Suggestion box with routing to management
-
-### 20. Route Batch Processing
-**Idea:** Process multiple route sheets at once
-- Bulk upload multiple PDFs
-- Parallel processing
-- Consolidated report generation
-- Duplicate detection and handling
-
-### 21. Template/Recurring Schedules
-**Idea:** Create reusable schedule templates
-- Save schedule templates
-- Apply templates for recurring weeks
-- Quick scheduling for "standard" weeks
-- Variation templates (holiday weeks, high-volume, etc.)
-
----
-
-## 🔧 Technical Improvements
-
-### 22. Backend Optimization
-**Ideas:**
-- Add request pagination for large datasets
-- Implement caching for frequently accessed data
-- Optimize PDF generation (current: ReportLab, consider: better streaming)
-- Add database layer (currently in-memory; consider: SQLite or PostgreSQL)
-- Rate limiting and API security enhancements
-
-### 23. Frontend Enhancements
-**Ideas:**
-- Real-time updates using WebSockets
-- Mobile-responsive design improvements
-- Dark mode support
-- Keyboard shortcuts for power users
-- Drag-and-drop for manual schedule adjustments
-- Export to iCal for driver calendar integration
-
-### 24. Data Export & Reporting
-**Ideas:**
-- Export schedules to CSV/Excel
-- Export to Google Calendar
-- Generate custom reports
-- Email report delivery (scheduled)
-- Historical data archival
-
-### 25. System Reliability
-**Ideas:**
-- Add comprehensive error logging
-- Implement retry logic for file uploads
-- Add data backup/recovery system
-- Health check monitoring
-- Graceful degradation on partial failures
-
----
-
-## 🔌 Integration Opportunities
-
-### 26. Asana (Discussed Above)
-- Hiring/onboarding pipeline integration
-- Task assignment and tracking
-- Status reporting
-
-### 27. Google Calendar / Outlook
-- Export driver schedules to personal calendars
-- Show driver availability in real-time
-- Sync with corporate calendar
-
-### 28. Slack Integration
-- Daily schedule summaries
-- Alerts and notifications
-- Quick commands (e.g., `/sweeper-status`)
-- Report delivery to channels
-
-### 29. Twilio SMS
-- Send schedule notifications via text
-- Driver confirmations
-- Route updates
-
-### 30. Custom Vehicle Telematics
-- Real-time GPS tracking
-- ETA calculations
-- Route deviation detection
-- Fuel/charging management
-
-### 31. Google Maps API
-- Route optimization
-- Drive time calculations
-- Traffic-aware scheduling
-- Zone mapping visualization
-
----
-
-## 📊 Reporting & Insights
-
-### 32. Dashboard Enhancements
-**Current:** Basic upload/assignment/database views
-**Proposed:**
-- Live daily dashboard (current assignments, in-progress, completed)
-- Team roster with utilization percentages
-- KPI cards (on-time %, packages delivered, efficiency)
-- Geographic heat map of current deliveries
-
-### 33. Historical Analytics
-- Driver performance over time
-- Route performance trends
-- Seasonal demand patterns
-- Staffing optimization recommendations
-
-### 34. Forecast & Planning
-- Demand forecasting for upcoming weeks
-- Staffing requirements prediction
-- Hiring recommendations
-- Capacity planning
-
----
-
-## 🎓 Training & Onboarding
-
-### 35. Interactive Tutorials
-- In-app guided tours for new users
-- Video demos for key features
-- Help documentation with screenshots
-
-### 36. Driver Onboarding Workflow
-- Automated welcome emails
-- Required training modules
-- System orientation
-- Quick-start guide
-
----
-
-## 🔐 Security & Compliance
-
-### 37. Enhanced Access Control
-- Role-based permissions (admin, manager, driver, sweeper)
-- Audit logging for data changes
-- Two-factor authentication
-- Session management
-
-### 38. Data Privacy
-- GDPR/CCPA compliance
-- Data retention policies
-- Personal data masking
-- Encryption for sensitive fields
-
----
-
-## � Implementation Priority Matrix
-
-### Quick Wins (Could do this week)
-- SMS notifications using Twilio (Item #17)
-- Export to CSV (Item #24)
-- Slack integration (Item #28)
-- Driver portal - view-only initially (Item #18)
-- Attendance app basics (Item #19)
-
-### High Impact / Medium Effort (2-4 weeks)
-- Driver Mobile App MVP (Item #10) - View assignments, push notifications
-- Incident Reporting (Item #11) - Photo capture, incident logging
-- Rescue Tracker & Bonus Calculator (Item #14)
-- Invoice Audit Tool (Item #15)
-- Driver Scorecard System (Item #16)
-- Asana integration basics (Item #1 - High Priority)
-- Advanced load balancing (Item #5)
-- Vehicle maintenance tracking (Item #7)
-
-### Larger Projects (4+ weeks)
-- Full Driver Mobile App (Item #10 - with offline, real-time tracking)
-- Van Inspection Tool (Item #13) - Full photo library, AI damage detection
-- Property Checkout System (Item #12) - Integration with all workflows
-- Real-time tracking system (Item #3 - High Priority)
-- Comprehensive analytics dashboard (Item #8, #32, #33)
-- Database migration from in-memory to persistent (Item #14 - Technical)
-
----
-
-## 🎯 NEW ITEMS SUMMARY (Feb 23, 2026)
-Added 9 new driver-facing and operational tools based on business needs:
-
-**Driver-Facing Mobile (Items #10-13):**
-- Driver Mobile App - assignments, notifications, tracking
-- Incident & Accident Reporting - photo evidence, GPS tagging
-- Sign-Out/Property Checkout - condition reports, inventory
-- Van Inspection Tool - damage tracking, photo library
-
-**Financial & Operational (Items #14-16):**
-- Rescue Tracker & Bonus Calculator - incident tracking, payroll integration
-- Invoice Audit Tool - reconciliation vs. actual work
-- Driver Scorecard & Coaching - performance metrics, manager coaching tools
-
-**Plus:**
-- Attendance App with HR Forms (Item #19) - call-outs, time-off, suggestions
-
----
-
-## 💬 Discussion Items
-1. **Priority:** What should we tackle first post-stable v1.2?
-2. **Mobile App:** React Native vs Flutter vs PWA (progressive web app)?
-3. **Database:** Ready to migrate to PostgreSQL for these new features?
-4. **Cloud Storage:** S3 for incident photos, inspection photos?
-5. **Integrations:** Which systems should we connect first (Asana, Twilio, Stripe)?
-6. **Timeline:** What's the realistic roadmap - which quarter for each?
-
----
-
-Last Updated: February 23, 2026
+| Service | Monthly |
+|---|---|
+| Telnyx SMS (200/day) | ~$32 |
+| Telnyx 10DLC campaign | ~$5 |
+| Firebase FCM (push notifications) | $0 (free tier) |
+| AWS S3 (photos ~2.5GB/yr) | ~$5 |
+| EAS Build (mobile CI) | ~$7–25 |
+| Render (backend hosting) | existing |
+| **Total additions** | **~$49–67/mo** |

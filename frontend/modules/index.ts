@@ -6,6 +6,7 @@ import { dvicModule } from './dvic';
 import { dspScorecardModule } from './dspScorecard';
 import { eodSurveyModule } from './eodSurvey';
 import { driverQualityModule } from './driverQuality';
+import { routeAssignmentModule } from './routeAssignment';
 import { dailyDriverAssignmentModule } from './dailyDriverAssignment';
 import { dailyScreenshotAuditModule } from './dailyScreenshotAudit';
 import { driverScheduleModule } from './driverSchedule';
@@ -16,6 +17,7 @@ import { rescueTrackerModule } from './rescueTracker';
 import { DashboardModule } from './types';
 
 export const dashboardModules: DashboardModule[] = [
+  routeAssignmentModule,
   dailyDriverAssignmentModule,
   driverScheduleModule,
   rescueTrackerModule,

@@ -1813,6 +1813,63 @@ class OpsIngestJob(Base):
     ingested_at = Column(DateTime)
 
 
+class DriverCallout(Base):
+    """Tracks drivers who called out for a specific date.
+
+    Callout rule: drivers on this list drop to the bottom of the assignment
+    priority queue for their callout date. They are only assigned a route when
+    no non-callout driver is available to cover it (is_callout_coverage flag).
+    """
+    __tablename__ = "driver_callouts"
+
+    id = Column(Integer, primary_key=True)
+    callout_date = Column(Date, nullable=False, index=True)
+    transporter_id = Column(String(50), nullable=False, index=True)
+    driver_name = Column(String(255), nullable=False)
+    callout_type = Column(String(30), nullable=False, default="sick")
+    # Values: 'sick' | 'no_show' | 'personal' | 'other'
+    notes = Column(Text)
+    recorded_by = Column(String(100))   # dispatcher username
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("idx_callout_date_tid", "callout_date", "transporter_id"),
+    )
+
+
+def ensure_assignment_board_columns():
+    """Add columns needed by the Route Assignment Board — added 2026-07-03.
+
+    cortex_routes:           transporter_id VARCHAR(50)
+    daily_route_assignments: transporter_id VARCHAR(50)
+                             quality_rank INTEGER
+                             quality_standing VARCHAR(30)
+                             is_callout_coverage BOOLEAN
+                             departure_time VARCHAR(20)
+                             stops INTEGER
+                             assignment_status VARCHAR(20)
+    """
+    migrations = [
+        ("cortex_routes",            "transporter_id",      "VARCHAR(50)"),
+        ("daily_route_assignments",  "transporter_id",      "VARCHAR(50)"),
+        ("daily_route_assignments",  "quality_rank",        "INTEGER"),
+        ("daily_route_assignments",  "quality_standing",    "VARCHAR(30)"),
+        ("daily_route_assignments",  "is_callout_coverage", "BOOLEAN DEFAULT 0"),
+        ("daily_route_assignments",  "departure_time",      "VARCHAR(20)"),
+        ("daily_route_assignments",  "stops",               "INTEGER"),
+        ("daily_route_assignments",  "assignment_status",   "VARCHAR(20) DEFAULT 'pending'"),
+    ]
+    for table, col, typedef in migrations:
+        try:
+            with engine.begin() as conn:
+                if DATABASE_URL.startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}"))
+                else:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {typedef}"))
+        except Exception:
+            pass  # Column already exists
+
+
 def get_db():
     """Get database session"""
     db = SessionLocal()

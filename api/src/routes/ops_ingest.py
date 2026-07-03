@@ -232,6 +232,8 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
                     service_type=rec.delivery_service_type,
                     driver_name=getattr(rec, "driver_name", None),
                     source_file=job.file_name,
+                    **({ "transporter_id": rec.transporter_id }
+                       if hasattr(rec, "transporter_id") else {}),
                 ))
             db.commit()
             return {"status": "ingested", "records": len(orchestrator.status.cortex_records)}

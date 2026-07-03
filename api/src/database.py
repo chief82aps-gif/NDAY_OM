@@ -808,6 +808,61 @@ class DspScorecardDriver(Base):
     summary = relationship("DspScorecardSummary", back_populates="drivers")
 
 
+class DspScorecardWeeklySnapshot(Base):
+    """One ingested DSP Scorecard PDF — overall + category standings."""
+    __tablename__ = "dsp_scorecard_weekly_snapshots"
+
+    id = Column(Integer, primary_key=True)
+    week = Column(String(20), nullable=False, unique=True, index=True)   # "2026-W26"
+    source_file = Column(String(255))
+    slack_file_id = Column(String(50), unique=True, index=True)
+    imported_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    overall_score = Column(DECIMAL(5, 1))
+    overall_standing = Column(String(30))
+
+    safety_standing = Column(String(30))
+    delivery_quality_standing = Column(String(30))
+    pickup_quality_standing = Column(String(30))
+    team_fleet_standing = Column(String(30))
+
+    focus_areas = Column(JSON)          # ["PSB", "DSB", ...]
+    dc_adjustment_note = Column(Text)   # RTS exemption note from page 1 if present
+    slack_posted = Column(Boolean, default=False)
+
+    metrics = relationship(
+        "DspScorecardWeeklyMetric",
+        back_populates="snapshot",
+        cascade="all, delete-orphan",
+    )
+
+
+class DspScorecardWeeklyMetric(Base):
+    """Individual metric row from a DSP Scorecard weekly snapshot."""
+    __tablename__ = "dsp_scorecard_weekly_metrics"
+
+    id = Column(Integer, primary_key=True)
+    snapshot_id = Column(
+        Integer, ForeignKey("dsp_scorecard_weekly_snapshots.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    week = Column(String(20), nullable=False, index=True)
+    slug = Column(String(60), nullable=False)        # e.g. "seatbelt_off_rate"
+    label = Column(String(100), nullable=False)      # human label
+    category = Column(String(40))                    # safety / delivery_quality / ...
+    value_numeric = Column(DECIMAL(12, 4))
+    standing = Column(String(30))                    # Fantastic / Great / Fair / Poor
+    weight_pct = Column(DECIMAL(5, 1))              # Amazon weighting %
+    is_disputable = Column(Boolean, default=False)
+    dispute_note = Column(Text)
+
+    snapshot = relationship("DspScorecardWeeklySnapshot", back_populates="metrics")
+
+    __table_args__ = (
+        Index("idx_dsp_weekly_metric_snap_slug", "snapshot_id", "slug"),
+    )
+
+
 # ============================================================================
 # POD REPORT
 # ============================================================================
@@ -1596,6 +1651,166 @@ def ensure_callout_signature_column():
                     conn.execute(text(f"ALTER TABLE attendance_events ADD COLUMN IF NOT EXISTS {col} {typedef}"))
         except Exception:
             pass  # Column already exists
+
+
+# ============================================================================
+# DVIC PRE-TRIP INSPECTION (Under-90-Second Violations)
+# ============================================================================
+
+class DvicSnapshot(Base):
+    """One row per weekly DVIC Under-90s Excel upload."""
+    __tablename__ = "dvic_snapshots"
+
+    id = Column(Integer, primary_key=True)
+    week = Column(String(20), nullable=False, index=True)
+    source_file = Column(String(255))
+    slack_file_id = Column(String(50), unique=True, index=True)
+    imported_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    total_violations = Column(Integer, default=0)
+    unique_drivers = Column(Integer, default=0)
+    date_range_start = Column(Date)
+    date_range_end = Column(Date)
+
+    violations = relationship("DvicViolation", back_populates="snapshot", cascade="all, delete-orphan")
+
+
+class DvicViolation(Base):
+    """Individual pre-trip inspection completed in under 90 seconds."""
+    __tablename__ = "dvic_violations"
+
+    id = Column(Integer, primary_key=True)
+    snapshot_id = Column(Integer, ForeignKey("dvic_snapshots.id"), nullable=False, index=True)
+    week = Column(String(20), index=True)
+    start_date = Column(Date)
+    dsp = Column(String(20))
+    station = Column(String(20))
+    transporter_id = Column(String(50), nullable=False, index=True)
+    transporter_name = Column(String(150))
+    vin = Column(String(50))
+    fleet_type = Column(String(20))
+    inspection_type = Column(String(50))
+    inspection_status = Column(String(20))
+    start_time = Column(DateTime)
+    end_time = Column(DateTime)
+    duration_seconds = Column(Integer)
+
+    snapshot = relationship("DvicSnapshot", back_populates="violations")
+
+
+class DvicAcknowledgment(Base):
+    """Driver digital acknowledgment of their DVIC violations for a given week."""
+    __tablename__ = "dvic_acknowledgments"
+
+    id = Column(Integer, primary_key=True)
+    transporter_id = Column(String(50), nullable=False, index=True)
+    transporter_name = Column(String(150))
+    week = Column(String(20), nullable=False, index=True)
+    violation_count = Column(Integer)
+    signature_name = Column(String(150), nullable=False)
+    acknowledged_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    dm_sent_at = Column(DateTime)
+
+    __table_args__ = (
+        Index("idx_dvic_ack_tid_week", "transporter_id", "week", unique=True),
+    )
+
+
+class EodSurveyResponse(Base):
+    """Driver end-of-day check-out survey. One row per driver per calendar day."""
+    __tablename__ = "eod_survey_responses"
+
+    id = Column(Integer, primary_key=True)
+    survey_date = Column(Date, nullable=False, index=True)
+    submitted_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Identity (resolved from PIN auth)
+    driver_name = Column(String(200), nullable=False, index=True)
+    transporter_id = Column(String(50), index=True)
+    roster_id = Column(Integer, ForeignKey("driver_roster.id"), nullable=True)
+
+    # Pre-populated from daily assignment
+    van_number = Column(String(50))
+    wave = Column(String(50))
+    role = Column(String(50))           # Driver / Helper / Shift Lead / Trainer
+
+    # Clock-in
+    clocked_in_on_time = Column(Boolean)
+    actual_clock_in_time = Column(String(20))
+    clock_in_reason = Column(Text)
+
+    # Van
+    van_issues = Column(Boolean, default=False)
+    van_issue_description = Column(Text)
+
+    # Incident / damage
+    incident_occurred = Column(Boolean, default=False)
+    incident_report_filed = Column(Boolean)
+
+    # Injury
+    injury_occurred = Column(Boolean, default=False)
+    injury_report_submitted = Column(Boolean)
+    medical_review_completed = Column(Boolean)
+
+    # Post-trip
+    post_trip_dvic_completed = Column(Boolean)
+    gas_level = Column(String(50))
+    packages_rts = Column(Integer, default=0)
+
+    # Route
+    route_issues = Column(Boolean, default=False)
+    route_issue_description = Column(Text)
+
+    # Sweep
+    performed_sweep = Column(Boolean, default=False)
+    sweep_details = Column(Text)
+
+    # Lunch
+    took_lunch = Column(Boolean, default=False)
+    lunch_clock_out = Column(String(20))
+    lunch_clock_in = Column(String(20))
+
+    # Clock-out
+    clock_out_time = Column(String(20))
+    pockets_checked = Column(Boolean)
+
+    # HR
+    needs_management_contact = Column(Boolean, default=False)
+
+    # Equipment
+    all_equipment_present = Column(Boolean)
+    missing_equipment = Column(Text)
+
+    # Reminder tracking
+    reminder_sent = Column(Boolean, default=False)
+    reminder_sent_at = Column(DateTime)
+
+    __table_args__ = (
+        Index("idx_eod_date_driver", "survey_date", "driver_name"),
+        Index("idx_eod_submitted", "survey_date", "submitted_at"),
+        Index("idx_eod_transporter", "transporter_id", "survey_date"),
+    )
+
+
+class OpsIngestJob(Base):
+    """Tracks every file dropped in #nday-operations-management.
+
+    One row per Slack file share. Status lifecycle:
+      pending → ingesting → complete | error | skipped
+    """
+    __tablename__ = "ops_ingest_jobs"
+
+    id = Column(Integer, primary_key=True)
+    slack_file_id = Column(String(50), unique=True, nullable=False, index=True)
+    slack_message_ts = Column(String(50))
+    slack_message_text = Column(Text)           # description the user typed with the file
+    file_name = Column(String(255), nullable=False)
+    file_url = Column(String(1000))             # Slack private download URL
+    detected_type = Column(String(50), nullable=False, default="unknown")
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    result_json = Column(JSON)
+    error_message = Column(Text)
+    detected_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    ingested_at = Column(DateTime)
 
 
 def get_db():

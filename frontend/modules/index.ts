@@ -1,5 +1,10 @@
 import { assignmentDatabaseModule } from './assignmentDatabase';
 import { adminPanelModule } from './adminPanel';
+import { attendanceReportsModule } from './attendanceReports';
+import { opsIngestModule } from './opsIngest';
+import { dvicModule } from './dvic';
+import { dspScorecardModule } from './dspScorecard';
+import { eodSurveyModule } from './eodSurvey';
 import { dailyDriverAssignmentModule } from './dailyDriverAssignment';
 import { dailyScreenshotAuditModule } from './dailyScreenshotAudit';
 import { driverScheduleModule } from './driverSchedule';
@@ -19,4 +24,9 @@ export const dashboardModules: DashboardModule[] = [
   dailyScreenshotAuditModule,
   assignmentDatabaseModule,
   adminPanelModule,
+  attendanceReportsModule,
+  opsIngestModule,
+  dvicModule,
+  dspScorecardModule,
+  eodSurveyModule,
 ];

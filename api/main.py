@@ -15,7 +15,7 @@ except ImportError:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.src.routes import uploads, auth, audit, enhanced_audit, weekly_audit, weekly_audit_upload, rescue
-from api.src.routes import daily_notify, quality, attendance
+from api.src.routes import daily_notify, quality, attendance, attendance_reports, ops_ingest, dvic, dsp_scorecard_weekly, eod_survey
 from api.src.routes.daily_notify import check_and_notify, check_ecp_and_prompt
 from api.src.database import Base, engine, SessionLocal, ensure_dop_driver_name_column, ensure_ssn_last4_column, ensure_callout_signature_column
 
@@ -42,6 +42,55 @@ async def _daily_notify_loop():
         except Exception as exc:
             logger.warning("Daily notify loop error: %s", exc)
         await asyncio.sleep(600)  # 10 minutes
+
+
+async def _dvic_reminder_loop():
+    """Every 60 s — delegates to dvic.run_dvic_upload_reminder() which handles its own 3-6 PM throttle."""
+    while True:
+        try:
+            await asyncio.to_thread(dvic.run_dvic_upload_reminder)
+        except Exception as exc:
+            logger.warning("DVIC reminder loop error: %s", exc)
+        await asyncio.sleep(60)
+
+
+async def _eod_survey_loop():
+    """Every 60 s — handles both the 3 PM daily channel post and the 7:30 PM DM reminders."""
+    while True:
+        try:
+            await asyncio.to_thread(eod_survey.post_daily_survey_message)
+            await asyncio.to_thread(eod_survey.send_eod_reminders)
+        except Exception as exc:
+            logger.warning("EOD survey loop error: %s", exc)
+        await asyncio.sleep(60)
+
+
+async def _dsp_scorecard_reminder_loop():
+    """Every 60 s — delegates to dsp_scorecard_weekly.run_dsp_scorecard_reminder() which handles Wednesday 12:30-5 PM throttle."""
+    while True:
+        try:
+            await asyncio.to_thread(dsp_scorecard_weekly.run_dsp_scorecard_reminder)
+        except Exception as exc:
+            logger.warning("DSP scorecard reminder loop error: %s", exc)
+        await asyncio.sleep(60)
+
+
+async def _ops_ingest_scan_loop():
+    """Scan #nday-operations-management every 60 s for new file uploads."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                new_files = await asyncio.to_thread(ops_ingest.scan_ops_channel, db)
+                if new_files:
+                    logger.info("Ops ingest scan: queued %d new file(s): %s", len(new_files), new_files)
+            except Exception as exc:
+                logger.warning("Ops ingest scan error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("Ops ingest scan loop error: %s", exc)
+        await asyncio.sleep(60)
 
 
 async def _ecp_watch_loop():
@@ -71,6 +120,10 @@ async def startup():
     ensure_callout_signature_column()
     asyncio.create_task(_daily_notify_loop())
     asyncio.create_task(_ecp_watch_loop())
+    asyncio.create_task(_ops_ingest_scan_loop())
+    asyncio.create_task(_dvic_reminder_loop())
+    asyncio.create_task(_dsp_scorecard_reminder_loop())
+    asyncio.create_task(_eod_survey_loop())
 
 cors_origins_env = os.getenv("CORS_ORIGINS", "").strip()
 if cors_origins_env:
@@ -107,6 +160,11 @@ app.include_router(rescue.router)
 app.include_router(daily_notify.router)
 app.include_router(quality.router)
 app.include_router(attendance.router)
+app.include_router(attendance_reports.router)
+app.include_router(ops_ingest.router)
+app.include_router(dvic.router)
+app.include_router(dsp_scorecard_weekly.router)
+app.include_router(eod_survey.router)
 
 @app.get("/")
 def root():

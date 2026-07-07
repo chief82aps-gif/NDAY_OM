@@ -913,7 +913,7 @@ export default function CalloutPage() {
                   disabled={step === 'submitting'}
                   className="w-full bg-green-700 hover:bg-green-600 disabled:opacity-50 disabled:cursor-wait text-white font-bold py-5 rounded-2xl text-xl"
                 >
-                  {step === 'submitting' ? 'Submitting…' : 'Sign & Submit →'}
+                  {step === 'submitting' ? 'Submitting…' : 'I Acknowledge & Submit →'}
                 </button>
                 <button
                   type="button"

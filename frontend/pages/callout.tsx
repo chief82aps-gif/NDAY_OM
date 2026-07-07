@@ -463,6 +463,7 @@ export default function CalloutPage() {
                     value={driverName}
                     onChange={e => setDriverName(e.target.value)}
                     placeholder="Last, First"
+                    autoComplete="off"
                     className="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-4 text-white text-base"
                     required
                   />
@@ -478,6 +479,7 @@ export default function CalloutPage() {
                   value={pin}
                   onChange={e => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
                   placeholder="••••"
+                  autoComplete="new-password"
                   className="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-4 text-white text-base tracking-[0.5em] text-center"
                   required
                 />

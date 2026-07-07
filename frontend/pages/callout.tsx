@@ -62,6 +62,12 @@ interface SubmitResult {
 
 type Step = 'identify' | 'set-pin' | 'status' | 'details' | 'review' | 'submitting' | 'done' | 'error';
 
+function fmtDate(iso: string): string {
+  const [y, m, d] = iso.split('-');
+  const dt = new Date(Number(y), Number(m) - 1, Number(d));
+  return dt.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+}
+
 function statusColor(s: Status): string {
   if (s === 'termination')   return 'text-red-400';
   if (s === 'final_warning') return 'text-orange-400';
@@ -105,12 +111,14 @@ function PointsBar({ points }: { points: number }) {
 export default function CalloutPage() {
   const [step, setStep] = useState<Step>('identify');
 
-  // Step 1
-  const [names, setNames]           = useState<string[]>([]);
-  const [driverName, setDriverName] = useState('');
-  const [pin, setPin]               = useState('');
-  const [identifyErr, setIdentifyErr] = useState('');
-  const [identifying, setIdentifying] = useState(false);
+  // Step 1 — date + name + PIN
+  const [scheduleDates, setScheduleDates] = useState<string[]>([]);
+  const [shiftDate, setShiftDate]         = useState<string>('');
+  const [names, setNames]                 = useState<string[]>([]);
+  const [driverName, setDriverName]       = useState('');
+  const [pin, setPin]                     = useState('');
+  const [identifyErr, setIdentifyErr]     = useState('');
+  const [identifying, setIdentifying]     = useState(false);
 
   // Step 2 — status data
   const [driverStatus, setDriverStatus] = useState<DriverStatus | null>(null);
@@ -139,12 +147,31 @@ export default function CalloutPage() {
   const [result, setResult] = useState<SubmitResult | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
 
+  // Load available shift dates; default to today if no schedule data yet
   useEffect(() => {
-    fetch(`${resolveApi()}/attendance/roster-names`)
+    const today = new Date().toISOString().slice(0, 10);
+    fetch(`${resolveApi()}/attendance/schedule-dates`)
+      .then(r => r.json())
+      .then(d => {
+        const dates: string[] = d.dates ?? [];
+        setScheduleDates(dates);
+        // Pre-select today if available, otherwise nearest future date
+        const todayOrLater = dates.find(dt => dt >= today) ?? dates[0] ?? today;
+        setShiftDate(todayOrLater);
+      })
+      .catch(() => {
+        setShiftDate(today);
+      });
+  }, []);
+
+  // Re-fetch driver names whenever the selected shift date changes
+  useEffect(() => {
+    if (!shiftDate) return;
+    fetch(`${resolveApi()}/attendance/roster-names?date=${shiftDate}`)
       .then(r => r.json())
       .then(d => setNames(d.names ?? []))
       .catch(() => {});
-  }, []);
+  }, [shiftDate]);
 
   // When a family member is selected in Step 3, check for prior patterns
   useEffect(() => {
@@ -247,6 +274,7 @@ export default function CalloutPage() {
           driver_name: driverName,
           ssn_last4: pin,
           reason_code: reason,
+          shift_date: shiftDate || undefined,
           notes: combinedNotes || undefined,
           signature_name: signatureName.trim(),
         }),
@@ -385,6 +413,37 @@ export default function CalloutPage() {
           {step === 'identify' && (
             <form onSubmit={handleIdentify} className="space-y-4">
               <p className="text-slate-400 text-sm text-center">Enter your name and ADP kiosk PIN</p>
+
+              {/* Shift date picker */}
+              <div>
+                <label className="block text-slate-300 text-sm font-medium mb-1.5">Date of Shift</label>
+                {scheduleDates.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {scheduleDates.map(d => (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => { setShiftDate(d); setDriverName(''); }}
+                        className={`px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+                          shiftDate === d
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-slate-800 border border-slate-600 text-slate-300'
+                        }`}
+                      >
+                        {fmtDate(d)}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <input
+                    type="date"
+                    value={shiftDate}
+                    onChange={e => { setShiftDate(e.target.value); setDriverName(''); }}
+                    className="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-4 text-white text-base"
+                    required
+                  />
+                )}
+              </div>
 
               <div>
                 <label className="block text-slate-300 text-sm font-medium mb-1.5">Your Name</label>
@@ -765,7 +824,7 @@ export default function CalloutPage() {
                     <div>
                       <p className="font-semibold text-xs text-slate-500 uppercase tracking-wide mb-1">1. Statement of Absence</p>
                       <p className="text-xs text-slate-700">
-                        I, <span className="font-semibold">{driverStatus.driver_name}</span>, am notifying New Day Logistics LLC that I am unable to report to work on <span className="font-semibold">{today}</span>.
+                        I, <span className="font-semibold">{driverStatus.driver_name}</span>, am notifying New Day Logistics LLC that I am unable to report to work on <span className="font-semibold">{shiftDate ? fmtDate(shiftDate) : today}</span>.
                       </p>
                       <p className="text-xs text-slate-700 mt-1">
                         <span className="font-semibold">Reason:</span> {reasonLabel}

@@ -68,6 +68,67 @@ def _post_confirmation(text: str) -> None:
         logger.warning("Ops ingest Slack confirm failed: %s", exc)
 
 
+def _parse_all_schedule_dates(file_path: str) -> dict:
+    """
+    Read the 'Shifts & Availability' tab and return {date_obj: [driver_name, ...]}
+    for every date column in the file. Excludes blank/Unavailable cells.
+    """
+    from datetime import date as _date, datetime as _dt
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+        if 'Shifts & Availability' not in wb.sheetnames:
+            return {}
+        ws = wb['Shifts & Availability']
+
+        year_hint = _date.today().year
+
+        # Row 4 has date headers starting at column C (index 3)
+        date_labels: list[str] = []
+        date_objects: list[_date | None] = []
+        for col_offset in range(14):
+            cell = ws.cell(row=4, column=3 + col_offset)
+            if not cell.value:
+                break
+            label = str(cell.value).strip()
+            if not any(d in label for d in ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']):
+                break
+            date_labels.append(label)
+            try:
+                val = label.split(',', 1)[1].strip() if ',' in label else label
+                parsed = _dt.strptime(f"{val}/{year_hint}", "%d/%b/%Y").date()
+                date_objects.append(parsed)
+            except Exception:
+                date_objects.append(None)
+
+        if not date_labels:
+            return {}
+
+        result: dict = {d: [] for d in date_objects if d is not None}
+
+        # Driver rows start at row 6, column A
+        for row_idx in range(6, (ws.max_row or 200) + 1):
+            driver_cell = ws.cell(row=row_idx, column=1)
+            if not driver_cell.value:
+                break
+            driver_name = str(driver_cell.value).strip()
+            if 'Total' in driver_name or not driver_name:
+                break
+            for col_offset, (label, d_obj) in enumerate(zip(date_labels, date_objects)):
+                if d_obj is None:
+                    continue
+                cell = ws.cell(row=row_idx, column=3 + col_offset)
+                if cell.value:
+                    av = str(cell.value).strip().lower()
+                    if av and av != 'unavailable':
+                        result[d_obj].append(driver_name)
+
+        return result
+    except Exception as exc:
+        logger.warning("_parse_all_schedule_dates failed: %s", exc)
+        return {}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Classification — filename + user description → detected_type string
 # ─────────────────────────────────────────────────────────────────────────────
@@ -283,13 +344,65 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
             tmp_path = tmp.name
         try:
             from api.src.orchestrator import orchestrator
+            from api.src.database import DriverScheduleEntry
             ok = orchestrator.ingest_driver_schedule(tmp_path)
             if not ok:
                 errs = orchestrator.status.validation_errors[-3:]
                 return {"status": "error", "message": "; ".join(errs) or "Parse failed"}
             orchestrator.generate_driver_schedule_report(compact=True)
+
+            summary = orchestrator.status.driver_schedule
+            saved_count = 0
+            dates_saved = []
+            try:
+                # Parse ALL dates from the Shifts & Availability tab so the
+                # callout page can filter by any shift date in the week.
+                by_date = _parse_all_schedule_dates(tmp_path)
+                if by_date:
+                    all_dates = list(by_date.keys())
+                    db.query(DriverScheduleEntry).filter(
+                        DriverScheduleEntry.schedule_date.in_(all_dates)
+                    ).delete(synchronize_session=False)
+                    for sched_date, drivers in by_date.items():
+                        for driver_name in drivers:
+                            db.add(DriverScheduleEntry(
+                                schedule_date=sched_date,
+                                driver_name=driver_name,
+                                source_file=job.file_name,
+                            ))
+                            saved_count += 1
+                    # Annotate wave/show times for the primary scheduled date
+                    if summary and summary.date:
+                        from datetime import datetime as _dt
+                        try:
+                            primary_date = _dt.strptime(summary.date, "%m/%d/%Y").date()
+                            sweeper_names = set(summary.sweepers or [])
+                            assign_map = {a.driver_name: a for a in (summary.assignments or [])}
+                            entries = (
+                                db.query(DriverScheduleEntry)
+                                .filter(DriverScheduleEntry.schedule_date == primary_date)
+                                .all()
+                            )
+                            for entry in entries:
+                                if entry.driver_name in sweeper_names:
+                                    entry.is_sweeper = True
+                                a = assign_map.get(entry.driver_name)
+                                if a:
+                                    entry.wave_time = getattr(a, 'wave_time', None)
+                                    entry.show_time = getattr(a, 'show_time', None)
+                                    entry.service_type = getattr(a, 'service_type', None)
+                        except Exception as e:
+                            logger.warning("Schedule annotation failed: %s", e)
+                    db.commit()
+                    dates_saved = [d.isoformat() for d in all_dates]
+            except Exception as e:
+                logger.warning("Schedule DB persist failed: %s", e)
+
             return {
                 "status": "ingested",
+                "schedule_date": summary.date if summary else None,
+                "drivers_saved": saved_count,
+                "dates_saved": dates_saved,
                 "report_path": orchestrator.status.driver_schedule_report_path,
             }
         finally:

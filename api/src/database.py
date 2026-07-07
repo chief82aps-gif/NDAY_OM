@@ -941,6 +941,7 @@ class Cortex(Base):
     zone = Column(String(50))
     service_type = Column(String(255))
     driver_name = Column(String(255), index=True)
+    transporter_id = Column(String(50), index=True)
     source_file = Column(String(255))
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -1212,6 +1213,16 @@ class DailyRouteAssignment(Base):
     route_duration = Column(Integer)    # minutes; copied from dop_routes for show/return time calc
     service_type = Column(String(255))
 
+    # Route assignment board columns (added via ensure_assignment_board_columns for existing DBs)
+    transporter_id = Column(String(50), index=True)
+    vin = Column(String(50))
+    quality_rank = Column(Integer)
+    quality_standing = Column(String(20))
+    is_callout_coverage = Column(Boolean, default=False)
+    departure_time = Column(String(20))
+    stops = Column(Integer)
+    assignment_status = Column(String(20), default='pending')  # pending|confirmed|finalized
+
     dm_sent = Column(Boolean, default=False)
     dm_sent_at = Column(DateTime)
     dm_message_ts = Column(String(50))
@@ -1225,6 +1236,28 @@ class DailyRouteAssignment(Base):
 
     __table_args__ = (
         Index('idx_daily_assign_date_driver', 'assignment_date', 'driver_name'),
+    )
+
+
+class DriverScheduleEntry(Base):
+    """One row per driver per scheduled date from the weekly Excel schedule file.
+    Populated on every ingest; old rows for the same date are replaced."""
+    __tablename__ = "driver_schedule_entries"
+
+    id = Column(Integer, primary_key=True)
+    schedule_date = Column(Date, nullable=False, index=True)
+    driver_name = Column(String(255), nullable=False, index=True)
+    wave_time = Column(String(20))
+    show_time = Column(String(20))
+    service_type = Column(String(255))
+    is_sweeper = Column(Boolean, default=False)
+    dm_sent = Column(Boolean, default=False)
+    dm_sent_at = Column(DateTime)
+    source_file = Column(String(255))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_schedule_date_driver', 'schedule_date', 'driver_name'),
     )
 
 
@@ -1852,6 +1885,7 @@ def ensure_assignment_board_columns():
     migrations = [
         ("cortex_routes",            "transporter_id",      "VARCHAR(50)"),
         ("daily_route_assignments",  "transporter_id",      "VARCHAR(50)"),
+        ("daily_route_assignments",  "vin",                 "VARCHAR(50)"),
         ("daily_route_assignments",  "quality_rank",        "INTEGER"),
         ("daily_route_assignments",  "quality_standing",    "VARCHAR(30)"),
         ("daily_route_assignments",  "is_callout_coverage", "BOOLEAN DEFAULT 0"),

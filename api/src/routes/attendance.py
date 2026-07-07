@@ -292,6 +292,7 @@ class CalloutRequest(BaseModel):
     ssn_last4: str                            # 4-digit PIN matching ADP kiosk
     reason_code: str
     scheduled_wave: Optional[str] = None
+    shift_date: Optional[str] = None         # ISO date of the shift being called out for
     notes: Optional[str] = None
     signature_name: Optional[str] = None     # driver types full name to sign
 
@@ -652,15 +653,45 @@ def _notify_dispatch_callout(
 
 
 @router.get("/roster-names")
-def roster_names(db: Session = Depends(get_db)):
-    """Public — active driver names for callout page dropdown (no PII returned)."""
+def roster_names(date: Optional[str] = None, db: Session = Depends(get_db)):
+    """Public — driver names for callout page dropdown.
+    If date (YYYY-MM-DD) is provided, returns only drivers scheduled for that date
+    from driver_schedule_entries. Falls back to full active roster if no schedule data."""
+    if date:
+        try:
+            from api.src.database import DriverScheduleEntry
+            from datetime import date as _date
+            sched_date = _date.fromisoformat(date)
+            rows = (
+                db.query(DriverScheduleEntry.driver_name)
+                .filter(DriverScheduleEntry.schedule_date == sched_date)
+                .order_by(DriverScheduleEntry.driver_name)
+                .all()
+            )
+            if rows:
+                return {"names": [r.driver_name for r in rows], "source": "schedule"}
+        except Exception:
+            pass  # Fall through to full roster
     rows = (
         db.query(DriverRosterEntry.payroll_name)
         .filter(DriverRosterEntry.is_active == True)
         .order_by(DriverRosterEntry.payroll_name)
         .all()
     )
-    return {"names": [r.payroll_name for r in rows]}
+    return {"names": [r.payroll_name for r in rows], "source": "roster"}
+
+
+@router.get("/schedule-dates")
+def schedule_dates(db: Session = Depends(get_db)):
+    """Public — dates that have schedule data, for the callout date picker."""
+    from api.src.database import DriverScheduleEntry
+    rows = (
+        db.query(DriverScheduleEntry.schedule_date)
+        .distinct()
+        .order_by(DriverScheduleEntry.schedule_date)
+        .all()
+    )
+    return {"dates": [r.schedule_date.isoformat() for r in rows]}
 
 
 @router.get("/roster-list")

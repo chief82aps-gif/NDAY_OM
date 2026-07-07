@@ -132,14 +132,14 @@ def _detect_callout_patterns(driver_name: str, today: date, db: Session) -> list
     Called before the driver selects a reason so general patterns surface early.
     """
     first = _first_name(driver_name)
-    since_90 = today - timedelta(days=90)
+    since_60 = today - timedelta(days=60)
     since_30 = today - timedelta(days=30)
 
     prior = (
         db.query(AttendanceEvent)
         .filter(
             func.lower(AttendanceEvent.driver_name) == driver_name.lower(),
-            AttendanceEvent.event_date >= since_90,
+            AttendanceEvent.event_date >= since_60,
             AttendanceEvent.event_date < today,
             AttendanceEvent.event_type.in_(["call_in", "no_show"]),
         )
@@ -161,7 +161,7 @@ def _detect_callout_patterns(driver_name: str, today: date, db: Session) -> list
             "severity": "flag",
             "message": (
                 f"Hey {first} — this would be your {_ordinal(len(same_dow) + 1)} {day_name} "
-                f"call-out in the last 90 days (most recently {days_since} days ago). "
+                f"call-out in the last 60 days (most recently {days_since} days ago). "
                 f"We hope everything is alright. {follow_up}"
             ),
         })
@@ -220,7 +220,7 @@ def _detect_callout_patterns(driver_name: str, today: date, db: Session) -> list
                         "severity": "flag",
                         "message": (
                             f"Hey {first} — we show {cnt} prior family emergency call-out{'s' if cnt > 1 else ''} "
-                            f"involving your {member} in the last 90 days. "
+                            f"involving your {member} in the last 60 days. "
                             f"We sincerely hope they're doing better. "
                             f"If this is an ongoing situation, please speak with your manager — "
                             f"we may be able to work out a support plan."
@@ -232,7 +232,7 @@ def _detect_callout_patterns(driver_name: str, today: date, db: Session) -> list
                         "severity": "concern",
                         "message": (
                             f"Hey {first} — this is your {_ordinal(cnt + 1)} family emergency "
-                            f"involving your {member} in the last 90 days. "
+                            f"involving your {member} in the last 60 days. "
                             f"We hope the situation is improving."
                         ),
                     })
@@ -243,7 +243,7 @@ def _detect_callout_patterns(driver_name: str, today: date, db: Session) -> list
                 "severity": "concern",
                 "message": (
                     f"Hey {first} — this would be your {_ordinal(len(family_prior) + 1)} family emergency "
-                    f"call-out in 90 days. We're sorry your family is going through a difficult time. "
+                    f"call-out in 60 days. We're sorry your family is going through a difficult time. "
                     f"If there is an ongoing situation, please talk to your manager — "
                     f"we may be able to accommodate."
                 ),
@@ -331,8 +331,8 @@ def _calc_compliance(call_time: datetime, scheduled_wave: str, event_date: date)
 
 
 def _missed_shift_count(driver_name: str, as_of_date: date, db: Session) -> int:
-    """Count missed shifts for driver in the trailing 90 days."""
-    since = as_of_date - timedelta(days=90)
+    """Count missed shifts for driver in the trailing 60 days."""
+    since = as_of_date - timedelta(days=60)
     return db.query(func.count(AttendanceEvent.id)).filter(
         func.lower(AttendanceEvent.driver_name) == driver_name.lower(),
         AttendanceEvent.is_missed == True,
@@ -434,7 +434,7 @@ def log_attendance(req: AttendanceLogRequest, db: Session = Depends(get_db)):
 
     result = _event_to_dict(event)
     if resign_flag:
-        result["alert"] = f"⚠️ {req.driver_name} has {count} missed shifts in the last 90 days — potential voluntary resignation per handbook."
+        result["alert"] = f"⚠️ {req.driver_name} has {count} missed shifts in the last 60 days — potential voluntary resignation per handbook."
     if compliant is False:
         result["compliance_alert"] = f"⚠️ Call-in was {abs(hours_before or 0):.1f} hrs before shift — less than the required 4 hours."
 
@@ -459,7 +459,7 @@ def attendance_today(for_date: Optional[str] = None, db: Session = Depends(get_d
 
 
 @router.get("/driver/{driver_name}")
-def attendance_driver(driver_name: str, days: int = 90, db: Session = Depends(get_db)):
+def attendance_driver(driver_name: str, days: int = 60, db: Session = Depends(get_db)):
     """Full attendance history for a specific driver (trailing N days)."""
     since = datetime.now(PACIFIC).date() - timedelta(days=days)
     events = (
@@ -485,7 +485,7 @@ def attendance_driver(driver_name: str, days: int = 90, db: Session = Depends(ge
 
 
 @router.get("/missed-shifts")
-def missed_shifts_report(days: int = 90, db: Session = Depends(get_db)):
+def missed_shifts_report(days: int = 60, db: Session = Depends(get_db)):
     """Drivers with 2+ missed shifts in the trailing N days — HR-03 flag."""
     since = datetime.now(PACIFIC).date() - timedelta(days=days)
     rows = (
@@ -586,7 +586,7 @@ def _next_threshold(points: float) -> dict:
 
 def _driver_points_summary(driver_name: str, db: Session) -> dict:
     today = datetime.now(PACIFIC).date()
-    since = today - timedelta(days=90)
+    since = today - timedelta(days=60)
     events = (
         db.query(AttendanceEvent)
         .filter(
@@ -714,7 +714,7 @@ def roster_list(db: Session = Depends(get_db)):
 @router.get("/driver-status")
 def driver_status(driver_name: str, ssn_last4: str, db: Session = Depends(get_db)):
     """
-    Public — driver's 90-day attendance point summary. PIN-gated.
+    Public — driver's 60-day attendance point summary. PIN-gated.
     Called by the callout page after PIN verification to show the driver their standing.
     """
     roster_entry = db.query(DriverRosterEntry).filter(
@@ -875,7 +875,7 @@ def family_pattern_check(
 ):
     """
     Public / PIN-gated — check if a specific family member has appeared in prior
-    family emergency call-outs for this driver in the last 90 days.
+    family emergency call-outs for this driver in the last 60 days.
     Called from the callout page when the driver selects who the emergency involves.
     """
     roster_entry = db.query(DriverRosterEntry).filter(
@@ -885,11 +885,11 @@ def family_pattern_check(
     if not roster_entry or not roster_entry.ssn_last4 or roster_entry.ssn_last4 != ssn_last4.strip():
         raise HTTPException(401, "Name or PIN is incorrect.")
 
-    since_90 = datetime.now(PACIFIC).date() - timedelta(days=90)
+    since_60 = datetime.now(PACIFIC).date() - timedelta(days=60)
     prior = db.query(AttendanceEvent).filter(
         func.lower(AttendanceEvent.driver_name) == roster_entry.payroll_name.lower(),
         AttendanceEvent.reason_code == "family",
-        AttendanceEvent.event_date >= since_90,
+        AttendanceEvent.event_date >= since_60,
     ).all()
 
     count = 0
@@ -910,18 +910,18 @@ def family_pattern_check(
     if count >= 2 and member in ("Father", "Mother"):
         msg = (
             f"Hey {first} — we show {count} prior family emergencies involving your {member} "
-            f"in the last 90 days. We genuinely hope {pronoun} are doing better. "
+            f"in the last 60 days. We genuinely hope {pronoun} are doing better. "
             f"If this is an ongoing situation, your manager may be able to help with scheduling accommodations."
         )
     elif count >= 2:
         msg = (
             f"Hey {first} — your {member} has been involved in {count} family emergency "
-            f"call-outs in the last 90 days. We hope everything is improving."
+            f"call-outs in the last 60 days. We hope everything is improving."
         )
     else:
         msg = (
             f"Hey {first} — we have a prior family emergency call-out involving your {member} "
-            f"in the last 90 days. We hope {pronoun} are doing okay."
+            f"in the last 60 days. We hope {pronoun} are doing okay."
         )
 
     return {"has_pattern": True, "count": count, "message": msg}

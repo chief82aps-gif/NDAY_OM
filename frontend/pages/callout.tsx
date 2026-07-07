@@ -348,7 +348,7 @@ export default function CalloutPage() {
                 )}
               </div>
               <div className="text-xs text-slate-500 border-t border-slate-700 pt-3">
-                This call-out added +{result.points_added} pts · Points reset after 90 days
+                This call-out added +{result.points_added} pts · Points reset after 60 days
               </div>
             </div>
 
@@ -612,7 +612,7 @@ export default function CalloutPage() {
 
               {/* Current points card */}
               <div className="bg-slate-800 rounded-2xl p-5 space-y-3">
-                <p className="text-slate-400 text-xs uppercase tracking-wider">Current Standing (last 90 days)</p>
+                <p className="text-slate-400 text-xs uppercase tracking-wider">Current Standing (last 60 days)</p>
                 <div className="flex items-end justify-between">
                   <span className="text-3xl font-bold text-white">{driverStatus.current_points.toFixed(1)}</span>
                   <span className="text-slate-400 text-sm">/ 10 pts</span>

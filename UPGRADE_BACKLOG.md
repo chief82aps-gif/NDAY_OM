@@ -10,6 +10,22 @@
 
 > This section was added 2026-07-03 at session close. Items are ordered by urgency and dependency chain.
 
+### ⚪ Attendance — Policy Updates
+
+| # | Task | Detail |
+|---|---|---|
+| AT1 | **Change rolling window from 90 → 60 days** | ✅ Done 2026-07-07 — backend + frontend both updated |
+| AT2 | **Point deduction system** — positive behaviors that reduce point total | See below |
+
+**AT2 — Point Deduction Events (to be designed and coded):**
+- **Short-notice fill-in** — driver responds to management request and covers a route on short notice → deduct points
+- **Sweep completion** — driver performs a sweep shift → deduct points
+- **Perfect attendance period** — driver goes X days with zero attendance events → deduct points (reward consistency)
+
+> Rule details (thresholds, deduction amounts, eligibility windows) TBD with Jayson before coding. These should appear on the callout page status screen and in the attendance reports.
+
+---
+
 ### 🔴 Security — Do First
 
 | # | Task | Why Now |

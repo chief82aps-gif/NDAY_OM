@@ -10,3 +10,5 @@ pyjwt
 python-jose[cryptography]
 passlib[bcrypt]
 psycopg2-binary
+slack_sdk
+requests

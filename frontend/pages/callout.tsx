@@ -53,6 +53,8 @@ interface DriverStatus {
 interface SubmitResult {
   driver_name: string;
   compliant: boolean | null;
+  not_scheduled: boolean;
+  shift_date: string;
   hours_before_shift: number | null;
   points_added: number;
   new_total_points: number;
@@ -350,6 +352,13 @@ export default function CalloutPage() {
               </div>
             </div>
 
+            {/* Not scheduled notice */}
+            {result.not_scheduled && (
+              <div className="bg-blue-900/30 border border-blue-500/40 rounded-xl p-4 text-blue-300 text-sm">
+                Note: You were not on the schedule for {fmtDate(result.shift_date)}. This callout has been recorded and flagged in your attendance record.
+              </div>
+            )}
+
             {/* Compliance */}
             {result.compliant === false && result.hours_before_shift !== null && (
               <div className="bg-amber-900/30 border border-amber-600/40 rounded-xl p-4 text-amber-300 text-sm">
@@ -561,6 +570,18 @@ export default function CalloutPage() {
               <p className="text-center text-slate-300 text-sm">
                 Hi <span className="font-semibold text-white">{driverStatus.driver_name.split(',')[1]?.trim() ?? driverStatus.driver_name}</span> — here's your current standing.
               </p>
+
+              {/* Not-scheduled warning */}
+              {scheduleDates.length > 0 && shiftDate && !names.includes(driverStatus.driver_name) && (
+                <div className="bg-blue-900/40 border border-blue-500/50 rounded-2xl p-4 space-y-1">
+                  <p className="text-blue-300 font-semibold text-sm">Not Scheduled This Day</p>
+                  <p className="text-blue-200/80 text-xs">
+                    You are not on the schedule for <span className="font-semibold">{fmtDate(shiftDate)}</span>.
+                    Your callout will still be recorded and included in attendance reports.
+                    If you selected the wrong date, go back and choose the correct shift.
+                  </p>
+                </div>
+              )}
 
               {/* ── Pattern warnings ──────────────────────────────────────── */}
               {driverStatus.patterns?.length > 0 && (

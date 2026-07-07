@@ -776,10 +776,32 @@ def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
     count = _missed_shift_count(req.driver_name, today, db) + 1
     resign_flag = count >= 2
 
+    # Check if driver is scheduled for the callout shift date
+    shift_date = today
+    not_scheduled = False
+    if req.shift_date:
+        try:
+            shift_date = date.fromisoformat(req.shift_date)
+        except ValueError:
+            pass
+    try:
+        from api.src.database import DriverScheduleEntry
+        scheduled = db.query(DriverScheduleEntry).filter(
+            DriverScheduleEntry.schedule_date == shift_date,
+            func.lower(DriverScheduleEntry.driver_name) == roster_entry.payroll_name.lower(),
+        ).first()
+        not_scheduled = scheduled is None
+    except Exception:
+        pass
+
+    notes_with_flag = req.notes or ""
+    if not_scheduled:
+        notes_with_flag = f"[NOT ON SCHEDULE FOR {shift_date}] {notes_with_flag}".strip()
+
     event = AttendanceEvent(
         driver_name=roster_entry.payroll_name,
         roster_id=roster_entry.id,
-        event_date=today,
+        event_date=shift_date,
         event_type="call_in",
         reason_code=req.reason_code,
         call_time=call_time,
@@ -789,7 +811,7 @@ def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
         is_missed=True,
         missed_shift_count=count,
         voluntary_resign_flag=resign_flag,
-        notes=req.notes,
+        notes=notes_with_flag,
         logged_by="Driver (self-reported via callout page)",
         signature_name=req.signature_name,
         signature_at=datetime.utcnow() if req.signature_name else None,
@@ -799,7 +821,7 @@ def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
 
     _notify_dispatch_callout(
         roster_entry.payroll_name, req.reason_code,
-        req.scheduled_wave, req.notes, compliant, hours_before,
+        req.scheduled_wave, notes_with_flag, compliant, hours_before,
     )
 
     # Return updated points summary so the confirmation screen can show the new total
@@ -809,6 +831,8 @@ def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
         "status": "received",
         "driver_name": roster_entry.payroll_name,
         "compliant": compliant,
+        "not_scheduled": not_scheduled,
+        "shift_date": shift_date.isoformat(),
         "hours_before_shift": float(hours_before) if hours_before is not None else None,
         "points_added": POINT_VALUES["call_in"],
         "new_total_points": updated_summary["current_points"],

@@ -186,6 +186,62 @@ def _handle_callout_button(payload: dict, db: Session) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Setup — post the Call Out button to the driver channel
+# ─────────────────────────────────────────────────────────────────────────────
+
+DRIVER_CHANNEL = "C0BAQAYKANS"  # #nday-team-room
+
+@router.post("/post-callout-button")
+def post_callout_button():
+    """One-time setup: posts the interactive Call Out button to #nday-team-room.
+    Call this once after deploy to replace any existing plain-link button."""
+    try:
+        from slack_sdk import WebClient
+        token = os.getenv("SLACK_BOT_TOKEN")
+        if not token:
+            raise HTTPException(500, "SLACK_BOT_TOKEN not set.")
+        client = WebClient(token=token)
+        client.chat_postMessage(
+            channel=DRIVER_CHANNEL,
+            text="Need to report an absence? Use the button below.",
+            blocks=[
+                {
+                    "type": "header",
+                    "text": {"type": "plain_text", "text": "🚨 Report an Absence", "emoji": True},
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "If you are unable to make your shift, tap the button below.\n"
+                                "A personal link will be sent *only to you* — it expires in 4 hours.",
+                    },
+                },
+                {
+                    "type": "actions",
+                    "elements": [
+                        {
+                            "type": "button",
+                            "action_id": "callout_button",
+                            "text": {"type": "plain_text", "text": "📋  Call Out", "emoji": True},
+                            "style": "danger",
+                        }
+                    ],
+                },
+                {
+                    "type": "context",
+                    "elements": [
+                        {"type": "mrkdwn", "text": "Only you will see your personal link. Do not share it."}
+                    ],
+                },
+            ],
+        )
+        return {"status": "posted", "channel": DRIVER_CHANNEL}
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Interactions endpoint
 # ─────────────────────────────────────────────────────────────────────────────
 

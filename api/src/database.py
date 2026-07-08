@@ -420,7 +420,7 @@ class DriverRosterEntry(Base):
 
     id = Column(Integer, primary_key=True)
     payroll_name = Column(String(100), nullable=False, index=True)  # Last, First
-    position_id = Column(String(20), unique=True, nullable=False)   # UDXxxxxxx
+    position_id = Column(String(20), unique=True, nullable=True)    # UDXxxxxxx — nullable for schedule-seeded entries
     hire_date = Column(Date)
     home_department = Column(String(100))
     rate_type = Column(String(50))
@@ -1706,6 +1706,20 @@ def _ensure_manager_signature_columns():
                     conn.execute(text(f"ALTER TABLE attendance_events ADD COLUMN IF NOT EXISTS {col} {typedef}"))
         except Exception:
             pass
+
+
+def _ensure_position_id_nullable():
+    """Drop NOT NULL constraint on driver_roster.position_id — added 2026-07-08.
+    Schedule-seeded drivers have no ADP position_id so the column must be nullable."""
+    if DATABASE_URL.startswith("sqlite"):
+        return  # SQLite ignores NOT NULL changes; no action needed
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "ALTER TABLE driver_roster ALTER COLUMN position_id DROP NOT NULL"
+            ))
+    except Exception:
+        pass  # already nullable or table doesn't exist yet
 
 
 # ============================================================================

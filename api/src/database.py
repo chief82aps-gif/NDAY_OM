@@ -1704,7 +1704,7 @@ def ensure_ssn_last4_column():
 
 def ensure_callout_signature_column():
     """Add signature_name + signature_at to attendance_events for callout signed acknowledgment — added 2026-07-02."""
-    for col, typedef in [("signature_name", "VARCHAR(150)"), ("signature_at", "DATETIME")]:
+    for col, typedef in [("signature_name", "VARCHAR(150)"), ("signature_at", "TIMESTAMP")]:
         try:
             with engine.begin() as conn:
                 if DATABASE_URL.startswith("sqlite"):
@@ -1719,7 +1719,7 @@ def _ensure_manager_signature_columns():
     """Add manager countersignature columns to attendance_events — added 2026-07-08."""
     for col, typedef in [
         ("manager_signature_name", "VARCHAR(150)"),
-        ("manager_signature_at", "DATETIME"),
+        ("manager_signature_at", "TIMESTAMP"),
         ("manager_id", "VARCHAR(100)"),
     ]:
         try:

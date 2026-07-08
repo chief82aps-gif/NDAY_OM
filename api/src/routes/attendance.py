@@ -716,6 +716,26 @@ def verify_callout_token(token: str):
         raise HTTPException(401, "Invalid callout link.")
 
 
+@router.post("/seed-roster-from-schedule")
+def seed_roster_from_schedule(db: Session = Depends(get_db)):
+    """One-time migration: populate driver_roster from driver_schedule_entries
+    for any driver not already in the roster. Default PIN = 1234."""
+    from api.src.database import DriverScheduleEntry
+    names = {r.driver_name for r in db.query(DriverScheduleEntry.driver_name).all()}
+    existing = {
+        r.payroll_name
+        for r in db.query(DriverRosterEntry.payroll_name)
+            .filter(DriverRosterEntry.payroll_name.in_(list(names)))
+            .all()
+    }
+    added = 0
+    for name in names - existing:
+        db.add(DriverRosterEntry(payroll_name=name, is_active=True, ssn_last4="1234"))
+        added += 1
+    db.commit()
+    return {"seeded": added, "total_schedule_names": len(names), "already_existed": len(existing)}
+
+
 @router.get("/roster-list")
 def roster_list(db: Session = Depends(get_db)):
     """Admin — roster with PIN status for PIN management UI (no PIN values returned)."""

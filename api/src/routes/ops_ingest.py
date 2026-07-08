@@ -393,6 +393,18 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
                                     entry.service_type = getattr(a, 'service_type', None)
                         except Exception as e:
                             logger.warning("Schedule annotation failed: %s", e)
+                    # Upsert DriverRosterEntry for every unique driver in the
+                    # schedule so the callout page PIN check can find them.
+                    from api.src.database import DriverRosterEntry as DRE
+                    all_names = {n for dl in by_date.values() for n in dl}
+                    existing_names = {
+                        r.payroll_name
+                        for r in db.query(DRE.payroll_name)
+                            .filter(DRE.payroll_name.in_(list(all_names)))
+                            .all()
+                    }
+                    for name in all_names - existing_names:
+                        db.add(DRE(payroll_name=name, is_active=True, ssn_last4="1234"))
                     db.commit()
                     dates_saved = [d.isoformat() for d in all_dates]
             except Exception as e:

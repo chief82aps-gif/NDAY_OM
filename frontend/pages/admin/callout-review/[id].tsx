@@ -5,12 +5,11 @@ import { useRouter } from 'next/router';
 import ProtectedRoute from '../../../components/ProtectedRoute';
 
 function resolveApi() {
-  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
   if (typeof window !== 'undefined') {
     const h = window.location.hostname;
-    if (h !== 'localhost' && h !== '127.0.0.1') return 'https://nday-om.onrender.com';
+    if (h === 'localhost' || h === '127.0.0.1') return 'http://127.0.0.1:8001';
   }
-  return 'http://127.0.0.1:8001';
+  return '';
 }
 
 const REASON_LABELS: Record<string, string> = {

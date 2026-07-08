@@ -4,12 +4,11 @@ import { useState, useEffect } from 'react';
 import Head from 'next/head';
 
 function resolveApi() {
-  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
   if (typeof window !== 'undefined') {
     const h = window.location.hostname;
-    if (h !== 'localhost' && h !== '127.0.0.1') return 'https://nday-om.onrender.com';
+    if (h === 'localhost' || h === '127.0.0.1') return 'http://127.0.0.1:8001';
   }
-  return 'http://127.0.0.1:8001';
+  return '';  // production: relative paths route through Vercel proxy to Render
 }
 
 const REASONS: { value: string; label: string; emoji: string }[] = [

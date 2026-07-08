@@ -15,7 +15,7 @@ except ImportError:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.src.routes import uploads, auth, audit, enhanced_audit, weekly_audit, weekly_audit_upload, rescue
-from api.src.routes import daily_notify, quality, attendance, attendance_reports, ops_ingest, dvic, dsp_scorecard_weekly, eod_survey, route_assignment, slack_interactions
+from api.src.routes import daily_notify, quality, attendance, attendance_reports, ops_ingest, dvic, dsp_scorecard_weekly, eod_survey, route_assignment, slack_interactions, manager_accountability
 from api.src.routes.daily_notify import check_and_notify, check_ecp_and_prompt
 from api.src.database import Base, engine, SessionLocal, ensure_dop_driver_name_column, ensure_ssn_last4_column, ensure_callout_signature_column, ensure_assignment_board_columns, _ensure_manager_signature_columns
 
@@ -126,6 +126,7 @@ async def startup():
     asyncio.create_task(_dvic_reminder_loop())
     asyncio.create_task(_dsp_scorecard_reminder_loop())
     asyncio.create_task(_eod_survey_loop())
+    asyncio.create_task(manager_accountability.manager_accountability_loop())
 
 cors_origins_env = os.getenv("CORS_ORIGINS", "").strip()
 if cors_origins_env:
@@ -169,6 +170,7 @@ app.include_router(dsp_scorecard_weekly.router)
 app.include_router(eod_survey.router)
 app.include_router(route_assignment.router)
 app.include_router(slack_interactions.router)
+app.include_router(manager_accountability.router)
 
 @app.get("/")
 def root():

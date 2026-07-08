@@ -289,7 +289,8 @@ class AttendanceLogRequest(BaseModel):
 
 class CalloutRequest(BaseModel):
     driver_name: str
-    ssn_last4: str                            # 4-digit PIN matching ADP kiosk
+    ssn_last4: Optional[str] = None          # 4-digit PIN — required unless callout_token is provided
+    callout_token: Optional[str] = None      # Signed token from Slack link — alternative to PIN
     reason_code: str
     scheduled_wave: Optional[str] = None
     shift_date: Optional[str] = None         # ISO date of the shift being called out for
@@ -694,6 +695,27 @@ def schedule_dates(db: Session = Depends(get_db)):
     return {"dates": [r.schedule_date.isoformat() for r in rows]}
 
 
+@router.get("/verify-callout-token")
+def verify_callout_token(token: str):
+    """Public — validate a callout token issued by any platform adapter (Slack, etc.).
+    Returns driver_name and shift_date if valid; 401 if expired or tampered."""
+    import jwt as _jwt
+    import os
+    secret = os.getenv("JWT_SECRET", "dev-secret")
+    try:
+        payload = _jwt.decode(token, secret, algorithms=["HS256"])
+        if payload.get("purpose") != "callout":
+            raise HTTPException(401, "Invalid token purpose.")
+        return {
+            "driver_name": payload["driver_name"],
+            "shift_date": payload.get("shift_date"),
+        }
+    except _jwt.ExpiredSignatureError:
+        raise HTTPException(401, "Callout link has expired. Ask dispatch to send a new one.")
+    except Exception:
+        raise HTTPException(401, "Invalid callout link.")
+
+
 @router.get("/roster-list")
 def roster_list(db: Session = Depends(get_db)):
     """Admin — roster with PIN status for PIN management UI (no PIN values returned)."""
@@ -711,20 +733,34 @@ def roster_list(db: Session = Depends(get_db)):
     }
 
 
-@router.get("/driver-status")
-def driver_status(driver_name: str, ssn_last4: str, db: Session = Depends(get_db)):
-    """
-    Public — driver's 60-day attendance point summary. PIN-gated.
-    Called by the callout page after PIN verification to show the driver their standing.
-    """
+@router.get("/driver-status-by-token")
+def driver_status_by_token(token: str, db: Session = Depends(get_db)):
+    """Token-gated driver status — called by callout page when opened via Slack link.
+    No PIN required; the signed token is the identity proof."""
+    import jwt as _jwt, os
+    secret = os.getenv("JWT_SECRET", "dev-secret")
+    try:
+        payload = _jwt.decode(token, secret, algorithms=["HS256"])
+        if payload.get("purpose") != "callout":
+            raise HTTPException(401, "Invalid token.")
+        driver_name = payload["driver_name"]
+    except _jwt.ExpiredSignatureError:
+        raise HTTPException(401, "Callout link has expired. Ask dispatch to resend.")
+    except Exception:
+        raise HTTPException(401, "Invalid callout link.")
+
     roster_entry = db.query(DriverRosterEntry).filter(
         func.lower(DriverRosterEntry.payroll_name) == driver_name.lower(),
         DriverRosterEntry.is_active == True,
     ).first()
+    if not roster_entry:
+        raise HTTPException(404, "Driver not found in roster.")
 
-    if not roster_entry or not roster_entry.ssn_last4 or roster_entry.ssn_last4 != ssn_last4.strip():
-        raise HTTPException(401, "Name or PIN is incorrect.")
+    return _build_driver_status_response(roster_entry, db)
 
+
+def _build_driver_status_response(roster_entry: DriverRosterEntry, db: Session) -> dict:
+    """Shared logic for driver-status and driver-status-by-token."""
     summary = _driver_points_summary(roster_entry.payroll_name, db)
     callout_pts = POINT_VALUES["call_in"]
     projected = summary["current_points"] + callout_pts
@@ -732,8 +768,7 @@ def driver_status(driver_name: str, ssn_last4: str, db: Session = Depends(get_db
     today = datetime.now(PACIFIC).date()
     try:
         patterns = _detect_callout_patterns(roster_entry.payroll_name, today, db)
-    except Exception as exc:
-        logger.warning("Pattern detection failed for %s: %s", roster_entry.payroll_name, exc)
+    except Exception:
         patterns = []
 
     return {
@@ -748,6 +783,23 @@ def driver_status(driver_name: str, ssn_last4: str, db: Session = Depends(get_db
     }
 
 
+@router.get("/driver-status")
+def driver_status(driver_name: str, ssn_last4: str, db: Session = Depends(get_db)):
+    """
+    Public — driver's 60-day attendance point summary. PIN-gated.
+    Called by the callout page after PIN verification to show the driver their standing.
+    """
+    roster_entry = db.query(DriverRosterEntry).filter(
+        func.lower(DriverRosterEntry.payroll_name) == driver_name.lower(),
+        DriverRosterEntry.is_active == True,
+    ).first()
+
+    if not roster_entry or not roster_entry.ssn_last4 or roster_entry.ssn_last4 != ssn_last4.strip():
+        raise HTTPException(401, "Name or PIN is incorrect.")
+
+    return _build_driver_status_response(roster_entry, db)
+
+
 @router.post("/callout")
 def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
     """
@@ -755,16 +807,32 @@ def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
     PIN = last 4 SSN digits (same as ADP kiosk).
     """
     if req.reason_code not in VALID_REASON_CODES:
-        raise HTTPException(400, f"Invalid reason.")
+        raise HTTPException(400, "Invalid reason.")
 
     roster_entry = db.query(DriverRosterEntry).filter(
         func.lower(DriverRosterEntry.payroll_name) == req.driver_name.lower(),
         DriverRosterEntry.is_active == True,
     ).first()
 
-    # Same error for wrong name or wrong PIN — prevents enumeration
-    if not roster_entry or not roster_entry.ssn_last4 or roster_entry.ssn_last4 != req.ssn_last4.strip():
+    if not roster_entry:
         raise HTTPException(401, "Name or PIN is incorrect.")
+
+    # Accept either a valid callout token (Slack flow) or a PIN (manual flow)
+    if req.callout_token:
+        import jwt as _jwt, os as _os
+        try:
+            payload = _jwt.decode(req.callout_token, _os.getenv("JWT_SECRET", "dev-secret"), algorithms=["HS256"])
+            if payload.get("purpose") != "callout" or payload.get("driver_name", "").lower() != roster_entry.payroll_name.lower():
+                raise HTTPException(401, "Invalid callout token.")
+        except _jwt.ExpiredSignatureError:
+            raise HTTPException(401, "Callout link has expired.")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(401, "Invalid callout token.")
+    else:
+        if not roster_entry.ssn_last4 or not req.ssn_last4 or roster_entry.ssn_last4 != req.ssn_last4.strip():
+            raise HTTPException(401, "Name or PIN is incorrect.")
 
     today = datetime.now(PACIFIC).date()
     call_time = datetime.utcnow()

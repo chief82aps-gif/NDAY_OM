@@ -62,7 +62,7 @@ interface SubmitResult {
   next_threshold: { points: number; label: string; points_away: number };
 }
 
-type Step = 'identify' | 'set-pin' | 'status' | 'details' | 'review' | 'submitting' | 'done' | 'error';
+type Step = 'loading' | 'blocked' | 'identify' | 'set-pin' | 'status' | 'details' | 'review' | 'submitting' | 'done' | 'error';
 
 function fmtDate(iso: string): string {
   const [y, m, d] = iso.split('-');
@@ -111,7 +111,8 @@ function PointsBar({ points }: { points: number }) {
 }
 
 export default function CalloutPage() {
-  const [step, setStep] = useState<Step>('identify');
+  const [step, setStep] = useState<Step>('loading');
+  const [calloutToken, setCalloutToken] = useState<string>('');
 
   // Step 1 — date + name + PIN
   const [scheduleDates, setScheduleDates] = useState<string[]>([]);
@@ -149,6 +150,42 @@ export default function CalloutPage() {
   const [result, setResult] = useState<SubmitResult | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
 
+  // On mount: check for ?token= in URL first
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+
+    if (token) {
+      // Token-based flow: verify token, load driver status, skip identify step
+      setCalloutToken(token);
+      fetch(`${resolveApi()}/attendance/driver-status-by-token?token=${encodeURIComponent(token)}`)
+        .then(r => {
+          if (r.status === 401) throw new Error('expired');
+          if (!r.ok) throw new Error('invalid');
+          return r.json();
+        })
+        .then(data => {
+          setDriverStatus(data);
+          setDriverName(data.driver_name);
+          // Pre-fill shift date from token if available
+          const today = new Date().toISOString().slice(0, 10);
+          setShiftDate(today);
+          setStep('status');
+        })
+        .catch(err => {
+          setErrorMsg(
+            err.message === 'expired'
+              ? 'Your callout link has expired. Ask dispatch to send a new one from Slack.'
+              : 'This callout link is invalid. Please use the button in your Slack channel.'
+          );
+          setStep('error');
+        });
+    } else {
+      // No token — block access (only admins should reach this without a token)
+      setStep('blocked');
+    }
+  }, []);
+
   // Load available shift dates; default to today if no schedule data yet
   useEffect(() => {
     const today = new Date().toISOString().slice(0, 10);
@@ -157,13 +194,10 @@ export default function CalloutPage() {
       .then(d => {
         const dates: string[] = d.dates ?? [];
         setScheduleDates(dates);
-        // Pre-select today if available, otherwise nearest future date
         const todayOrLater = dates.find(dt => dt >= today) ?? dates[0] ?? today;
-        setShiftDate(todayOrLater);
+        setShiftDate(prev => prev || todayOrLater);
       })
-      .catch(() => {
-        setShiftDate(today);
-      });
+      .catch(() => {});
   }, []);
 
   // Re-fetch driver names whenever the selected shift date changes
@@ -274,7 +308,7 @@ export default function CalloutPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           driver_name: driverName,
-          ssn_last4: pin,
+          ...(calloutToken ? { callout_token: calloutToken } : { ssn_last4: pin }),
           reason_code: reason,
           shift_date: shiftDate || undefined,
           notes: combinedNotes || undefined,
@@ -313,6 +347,37 @@ export default function CalloutPage() {
           </div>
         ))}
       </div>
+    );
+  }
+
+  // ── LOADING ────────────────────────────────────────────────────────────────
+  if (step === 'loading') {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="text-slate-400 text-sm">Verifying your link…</div>
+      </div>
+    );
+  }
+
+  // ── BLOCKED ────────────────────────────────────────────────────────────────
+  if (step === 'blocked') {
+    return (
+      <>
+        <Head><title>Report Absence — New Day Logistics</title></Head>
+        <div className="min-h-screen bg-slate-900 flex items-center justify-center px-4">
+          <div className="w-full max-w-sm text-center space-y-5">
+            <div className="text-6xl">🔒</div>
+            <h1 className="text-xl font-bold text-white">Access via Slack</h1>
+            <p className="text-slate-400 text-sm leading-relaxed">
+              To report an absence, use the <strong className="text-white">Call Out</strong> button
+              in your Slack driver channel. A personal link will be sent directly to you.
+            </p>
+            <p className="text-slate-600 text-xs">
+              If you believe this is an error, contact your dispatcher.
+            </p>
+          </div>
+        </div>
+      </>
     );
   }
 
@@ -414,8 +479,8 @@ export default function CalloutPage() {
 
           <StepIndicator current={
             step === 'identify' || step === 'set-pin' ? 1 :
-            step === 'status'   ? 2 :
-            step === 'details'  ? 3 : 4
+            step === 'status'   ? (calloutToken ? 1 : 2) :
+            step === 'details'  ? (calloutToken ? 2 : 3) : (calloutToken ? 3 : 4)
           } />
 
           {/* ── STEP 1: Identify ────────────────────────────────────────────── */}

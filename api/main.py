@@ -15,7 +15,7 @@ except ImportError:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.src.routes import uploads, auth, audit, enhanced_audit, weekly_audit, weekly_audit_upload, rescue
-from api.src.routes import daily_notify, quality, attendance, attendance_reports, ops_ingest, dvic, dsp_scorecard_weekly, eod_survey, route_assignment
+from api.src.routes import daily_notify, quality, attendance, attendance_reports, ops_ingest, dvic, dsp_scorecard_weekly, eod_survey, route_assignment, slack_interactions
 from api.src.routes.daily_notify import check_and_notify, check_ecp_and_prompt
 from api.src.database import Base, engine, SessionLocal, ensure_dop_driver_name_column, ensure_ssn_last4_column, ensure_callout_signature_column, ensure_assignment_board_columns
 
@@ -167,6 +167,7 @@ app.include_router(dvic.router)
 app.include_router(dsp_scorecard_weekly.router)
 app.include_router(eod_survey.router)
 app.include_router(route_assignment.router)
+app.include_router(slack_interactions.router)
 
 @app.get("/")
 def root():

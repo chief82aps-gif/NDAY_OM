@@ -181,8 +181,8 @@ export default function CalloutPage() {
           setStep('error');
         });
     } else {
-      // No token — block access (only admins should reach this without a token)
-      setStep('blocked');
+      // No token — fall back to manual name + PIN flow
+      setStep('identify');
     }
   }, []);
 
@@ -744,7 +744,7 @@ export default function CalloutPage() {
                   ))}
                 </div>
                 <p className="text-xs text-slate-500">
-                  Points roll over a 90-day window. Multiple violations in the same pay period multiply.
+                  Points roll over a 60-day window. Multiple violations in the same pay period multiply.
                   You must call dispatch — texting is not accepted.
                 </p>
               </div>

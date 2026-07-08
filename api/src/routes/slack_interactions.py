@@ -266,5 +266,56 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
     if action_id == "callout_button":
         _handle_callout_button(payload, db)
 
+    elif action_id == "acknowledge_callout_alert":
+        _handle_acknowledge_callout(payload, db)
+
     # Slack requires a 200 response within 3 seconds
     return {"ok": True}
+
+
+def _handle_acknowledge_callout(payload: dict, db: Session) -> None:
+    """Manager clicked 'Acknowledge' on a tight-roster alert."""
+    try:
+        action = (payload.get("actions") or [{}])[0]
+        queue_id = int(action.get("value", "0"))
+        user = payload.get("user", {})
+        manager_name = user.get("name") or user.get("id", "Unknown")
+
+        from api.src.database import CalloutQueue
+        entry = db.query(CalloutQueue).filter(CalloutQueue.id == queue_id).first()
+        if entry and not entry.acknowledged_at:
+            from datetime import datetime
+            entry.acknowledged_at = datetime.utcnow()
+            entry.acknowledged_by = manager_name
+            db.commit()
+
+        # Update the original message to show it's been handled
+        channel_id = payload.get("channel", {}).get("id", "")
+        msg_ts = payload.get("message", {}).get("ts", "")
+        if channel_id and msg_ts:
+            try:
+                token = os.getenv("SLACK_BOT_TOKEN")
+                if token:
+                    from slack_sdk import WebClient as _WC
+                    _WC(token=token).chat_update(
+                        channel=channel_id,
+                        ts=msg_ts,
+                        text="Roster alert acknowledged.",
+                        blocks=[
+                            {
+                                "type": "section",
+                                "text": {
+                                    "type": "mrkdwn",
+                                    "text": (
+                                        f"✅ *Roster alert acknowledged* by *{manager_name}*\n"
+                                        f"Driver: {entry.driver_name if entry else '—'} · "
+                                        f"{entry.shift_date if entry else '—'}"
+                                    ),
+                                },
+                            }
+                        ],
+                    )
+            except Exception as exc:
+                logger.warning("Could not update tight-roster alert message: %s", exc)
+    except Exception as exc:
+        logger.warning("acknowledge_callout handler error: %s", exc)

@@ -75,6 +75,35 @@ async def _dsp_scorecard_reminder_loop():
         await asyncio.sleep(60)
 
 
+async def _callout_queue_loop():
+    """8:30 AM Pacific — send morning digest of normal callouts.
+    Every 15 min — re-notify #nday-mgt for unacknowledged tight-roster callouts."""
+    while True:
+        try:
+            now = datetime.now(PACIFIC)
+            db = SessionLocal()
+            try:
+                # Morning digest at 8:30 AM ± 7 minutes
+                if now.hour == 8 and 23 <= now.minute <= 37:
+                    from api.src.routes.attendance import send_morning_callout_digest
+                    count = await asyncio.to_thread(send_morning_callout_digest, now.date(), db)
+                    if count:
+                        logger.info("Morning callout digest sent: %d callout(s)", count)
+
+                # Tight-roster reminders every 15 min
+                from api.src.routes.attendance import send_tight_roster_reminders
+                sent = await asyncio.to_thread(send_tight_roster_reminders, db)
+                if sent:
+                    logger.info("Tight-roster reminders sent: %d", sent)
+            except Exception as exc:
+                logger.warning("Callout queue loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("Callout queue loop outer error: %s", exc)
+        await asyncio.sleep(900)  # 15 minutes
+
+
 async def _ops_ingest_scan_loop():
     """Scan #nday-operations-management every 60 s for new file uploads."""
     while True:
@@ -128,6 +157,7 @@ async def startup():
     asyncio.create_task(_dsp_scorecard_reminder_loop())
     asyncio.create_task(_eod_survey_loop())
     asyncio.create_task(manager_accountability.manager_accountability_loop())
+    asyncio.create_task(_callout_queue_loop())
 
 cors_origins_env = os.getenv("CORS_ORIGINS", "").strip()
 if cors_origins_env:

@@ -1261,6 +1261,30 @@ class DriverScheduleEntry(Base):
     )
 
 
+class CalloutQueue(Base):
+    """One row per submitted callout. Controls when #nday-mgt is notified.
+
+    Tight-roster callouts (no available replacement) are sent immediately.
+    Normal callouts are batched and sent as an 8:30 AM digest.
+    """
+    __tablename__ = "callout_queue"
+
+    id              = Column(Integer, primary_key=True)
+    event_id        = Column(Integer, nullable=False, unique=True, index=True)
+    shift_date      = Column(Date, nullable=False, index=True)
+    driver_name     = Column(String(255), nullable=False)
+    wave_time       = Column(String(20))
+    replacement_pool = Column(Text)             # JSON list of available driver names
+    roster_tight    = Column(Boolean, default=False, index=True)
+    queued_at       = Column(DateTime, default=datetime.utcnow)
+    digest_sent_at  = Column(DateTime)          # set when included in 8:30 digest
+    alert_slack_ts  = Column(String(50))        # ts of the tight-roster Slack message
+    acknowledged_at = Column(DateTime)
+    acknowledged_by = Column(String(150))
+    reminder_count  = Column(Integer, default=0)
+    last_reminder_at = Column(DateTime)
+
+
 class SlackIngestLog(Base):
     """Tracks files detected and processed from the Slack channel.
     slack_file_id unique constraint prevents re-processing the same file."""

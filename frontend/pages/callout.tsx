@@ -389,9 +389,13 @@ export default function CalloutPage() {
         <div className="min-h-screen bg-slate-900 px-4 py-10 flex items-start justify-center">
           <div className="w-full max-w-sm space-y-5">
             <div className="text-center space-y-2">
-              <div className="text-6xl">✅</div>
+              <div className="text-6xl">{result.roster_tight ? '⚠️' : '✅'}</div>
               <h1 className="text-2xl font-bold text-white">Call-Out Received</h1>
-              <p className="text-slate-300 text-sm">Dispatch has been notified.</p>
+              <p className={`text-sm ${result.roster_tight ? 'text-red-400 font-semibold' : 'text-slate-300'}`}>
+                {result.roster_tight
+                  ? 'Management has been alerted — roster is critically short.'
+                  : 'Dispatch has been notified.'}
+              </p>
             </div>
 
             {/* Updated points */}
@@ -416,6 +420,18 @@ export default function CalloutPage() {
                 This call-out added +{result.points_added} pts · Points reset after 60 days
               </div>
             </div>
+
+            {/* Tight roster warning */}
+            {result.roster_tight && (
+              <div className="bg-red-900/40 border border-red-500/60 rounded-xl p-4 space-y-1">
+                <p className="text-red-400 font-bold text-sm">⚠️ Critical Roster Impact</p>
+                <p className="text-red-300 text-sm">
+                  The roster for your wave is critically short. There are no available replacement drivers for your shift.
+                  Your absence will have a significant impact on today's operations and customers.
+                  Management has been notified and is working to resolve coverage immediately.
+                </p>
+              </div>
+            )}
 
             {/* Not scheduled notice */}
             {result.not_scheduled && (

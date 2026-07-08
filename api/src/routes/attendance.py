@@ -32,6 +32,8 @@ from api.src.database import (
     AttendanceEvent,
     RingCentralCallLog,
     DriverRosterEntry,
+    CalloutQueue,
+    DriverScheduleEntry,
 )
 
 logger = logging.getLogger(__name__)
@@ -912,8 +914,12 @@ def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
         req.scheduled_wave, notes_with_flag, compliant, hours_before,
     )
 
-    # Notify #nday-mgt so a manager can review and countersign
-    _notify_mgt_writeup(event.id, roster_entry.payroll_name, req.reason_code, shift_date)
+    # Queue callout notification for #nday-mgt
+    wave_time = scheduled.wave_time if (scheduled and hasattr(scheduled, "wave_time")) else req.scheduled_wave
+    roster_tight = queue_callout_notification(
+        event.id, roster_entry.payroll_name, req.reason_code,
+        shift_date, wave_time, db,
+    )
 
     # Return updated points summary so the confirmation screen can show the new total
     updated_summary = _driver_points_summary(roster_entry.payroll_name, db)
@@ -929,6 +935,7 @@ def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
         "new_total_points": updated_summary["current_points"],
         "new_status": updated_summary["status"],
         "next_threshold": updated_summary["next_threshold"],
+        "roster_tight": roster_tight,
     }
 
 
@@ -1140,48 +1147,272 @@ REASON_LABELS = {
     "sick": "Sick", "personal": "Personal", "family": "Family Emergency",
     "weather": "Weather", "transportation": "Transportation", "other": "Other",
 }
+MIN_REPLACEMENT_POOL = 2  # fewer available drivers than this = tight roster
 
 
-def _notify_mgt_writeup(event_id: int, driver_name: str, reason_code: str,
-                         shift_date, points_summary=None) -> None:
-    """Post a manager review notification to #nday-mgt when a callout writeup is submitted."""
+# ── Replacement pool ───────────────────────────────────────────────────────────
+
+def _get_replacement_pool(
+    shift_date: date, caller_name: str, wave_time: str | None, db: Session
+) -> tuple[list[str], bool]:
+    """Return (available_driver_names, is_tight).
+    Available = scheduled that day (same wave if known), not yet called out."""
+    q = db.query(DriverScheduleEntry).filter(
+        DriverScheduleEntry.schedule_date == shift_date,
+        func.lower(DriverScheduleEntry.driver_name) != caller_name.lower(),
+    )
+    if wave_time:
+        q = q.filter(DriverScheduleEntry.wave_time == wave_time)
+    scheduled = {e.driver_name for e in q.all()}
+
+    already_out = {
+        e.driver_name.lower()
+        for e in db.query(AttendanceEvent).filter(
+            AttendanceEvent.event_date == shift_date,
+            AttendanceEvent.is_missed == True,
+        ).all()
+    }
+    available = sorted(n for n in scheduled if n.lower() not in already_out)
+    return available, len(available) < MIN_REPLACEMENT_POOL
+
+
+# ── Slack client helper ────────────────────────────────────────────────────────
+
+def _slack_client():
+    from slack_sdk import WebClient
+    token = os.getenv("SLACK_BOT_TOKEN")
+    if not token:
+        return None
+    return WebClient(token=token)
+
+
+# ── Immediate tight-roster alert ───────────────────────────────────────────────
+
+def _send_tight_roster_alert(queue_entry: CalloutQueue, reason_code: str, db: Session) -> None:
+    """Post an urgent alert to #nday-mgt immediately when no replacement is available."""
+    client = _slack_client()
+    if not client:
+        return
     try:
-        from slack_sdk import WebClient
-        token = os.getenv("SLACK_BOT_TOKEN")
-        if not token:
-            return
-        client = WebClient(token=token)
-        review_url = f"{FRONTEND_URL}/admin/callout-review/{event_id}"
+        review_url = f"{FRONTEND_URL}/admin/callout-review/{queue_entry.event_id}"
         reason_label = REASON_LABELS.get(reason_code, reason_code.title())
-        date_str = shift_date.strftime("%A, %b %-d") if hasattr(shift_date, "strftime") else str(shift_date)
-        client.chat_postMessage(
+        date_str = queue_entry.shift_date.strftime("%A, %b %-d")
+        wave_str = f" (Wave {queue_entry.wave_time})" if queue_entry.wave_time else ""
+        resp = client.chat_postMessage(
             channel=MGT_CHANNEL,
-            text=f"New absence writeup requires manager review — {driver_name}",
+            text=f"ROSTER ALERT: {queue_entry.driver_name} called out — no replacement available",
             blocks=[
-                {"type": "header", "text": {"type": "plain_text", "text": "📋 Absence Writeup — Review Required", "emoji": True}},
+                {
+                    "type": "header",
+                    "text": {"type": "plain_text", "text": "🚨 ROSTER ALERT — No Replacement Available", "emoji": True},
+                },
                 {
                     "type": "section",
                     "fields": [
-                        {"type": "mrkdwn", "text": f"*Driver:*\n{driver_name}"},
-                        {"type": "mrkdwn", "text": f"*Date:*\n{date_str}"},
+                        {"type": "mrkdwn", "text": f"*Driver:*\n{queue_entry.driver_name}"},
+                        {"type": "mrkdwn", "text": f"*Date:*\n{date_str}{wave_str}"},
                         {"type": "mrkdwn", "text": f"*Reason:*\n{reason_label}"},
-                        {"type": "mrkdwn", "text": f"*Status:*\n⚠️ Awaiting manager signature"},
+                        {"type": "mrkdwn", "text": "*Replacement:*\n❌ No drivers available"},
                     ],
                 },
                 {
-                    "type": "actions",
-                    "elements": [{
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "✍️  Review & Sign", "emoji": True},
-                        "url": review_url,
-                        "style": "primary",
-                    }],
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "⚠️ The roster is tight for this wave. Immediate action required.",
+                    },
                 },
-                {"type": "context", "elements": [{"type": "mrkdwn", "text": f"Event ID: {event_id}"}]},
+                {
+                    "type": "actions",
+                    "elements": [
+                        {
+                            "type": "button",
+                            "action_id": "acknowledge_callout_alert",
+                            "value": str(queue_entry.id),
+                            "text": {"type": "plain_text", "text": "✅  Acknowledge", "emoji": True},
+                            "style": "primary",
+                        },
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": "✍️  Review & Sign", "emoji": True},
+                            "url": review_url,
+                        },
+                    ],
+                },
             ],
         )
+        queue_entry.alert_slack_ts = resp.get("ts")
+        db.commit()
     except Exception as exc:
-        logger.warning("MGT writeup notification failed: %s", exc)
+        logger.warning("Tight-roster alert failed: %s", exc)
+
+
+# ── Tight-roster reminders ─────────────────────────────────────────────────────
+
+def send_tight_roster_reminders(db: Session) -> int:
+    """Re-post to #nday-mgt for any tight-roster callouts not yet acknowledged.
+    Called every 15 min by the background loop."""
+    from datetime import timezone
+    cutoff = datetime.utcnow() - timedelta(hours=12)
+    pending = db.query(CalloutQueue).filter(
+        CalloutQueue.roster_tight == True,
+        CalloutQueue.acknowledged_at == None,
+        CalloutQueue.queued_at >= cutoff,
+    ).all()
+    if not pending:
+        return 0
+
+    client = _slack_client()
+    if not client:
+        return 0
+
+    sent = 0
+    for entry in pending:
+        try:
+            review_url = f"{FRONTEND_URL}/admin/callout-review/{entry.event_id}"
+            date_str = entry.shift_date.strftime("%A, %b %-d")
+            n = entry.reminder_count + 1
+            client.chat_postMessage(
+                channel=MGT_CHANNEL,
+                text=f"REMINDER #{n}: {entry.driver_name} callout still unacknowledged — no replacement",
+                blocks=[
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": (
+                                f"🔴 *Reminder #{n}* — Roster alert for *{entry.driver_name}* "
+                                f"({date_str}) has not been acknowledged. "
+                                f"No replacement driver is available for this wave."
+                            ),
+                        },
+                    },
+                    {
+                        "type": "actions",
+                        "elements": [
+                            {
+                                "type": "button",
+                                "action_id": "acknowledge_callout_alert",
+                                "value": str(entry.id),
+                                "text": {"type": "plain_text", "text": "✅  Acknowledge", "emoji": True},
+                                "style": "primary",
+                            },
+                            {
+                                "type": "button",
+                                "text": {"type": "plain_text", "text": "✍️  Review & Sign", "emoji": True},
+                                "url": review_url,
+                            },
+                        ],
+                    },
+                ],
+            )
+            entry.reminder_count += 1
+            entry.last_reminder_at = datetime.utcnow()
+            sent += 1
+        except Exception as exc:
+            logger.warning("Tight-roster reminder failed for queue %d: %s", entry.id, exc)
+    db.commit()
+    return sent
+
+
+# ── 8:30 AM morning digest ─────────────────────────────────────────────────────
+
+def send_morning_callout_digest(shift_date: date, db: Session) -> int:
+    """Send a single grouped callout digest to #nday-mgt at 8:30 AM.
+    Returns number of callouts included."""
+    pending = db.query(CalloutQueue).filter(
+        CalloutQueue.shift_date == shift_date,
+        CalloutQueue.roster_tight == False,
+        CalloutQueue.digest_sent_at == None,
+    ).all()
+    if not pending:
+        return 0
+
+    client = _slack_client()
+    if not client:
+        return 0
+
+    date_str = shift_date.strftime("%A, %B %-d")
+    lines = []
+    for entry in pending:
+        event = db.query(AttendanceEvent).filter(AttendanceEvent.id == entry.event_id).first()
+        reason = REASON_LABELS.get(event.reason_code, event.reason_code.title()) if event else "—"
+        pool = json.loads(entry.replacement_pool or "[]")
+        wave_str = f" · Wave {entry.wave_time}" if entry.wave_time else ""
+        if pool:
+            replacement = pool[0]
+            extra = f" (+{len(pool)-1} more)" if len(pool) > 1 else ""
+            repl_str = f"Replacement: *{replacement}*{extra}"
+        else:
+            repl_str = "Replacement: *None available*"
+        review_url = f"{FRONTEND_URL}/admin/callout-review/{entry.event_id}"
+        lines.append(
+            f"• <{review_url}|{entry.driver_name}>{wave_str} — {reason} | {repl_str}"
+        )
+
+    try:
+        client.chat_postMessage(
+            channel=MGT_CHANNEL,
+            text=f"Morning callout digest for {date_str} — {len(pending)} call-out(s)",
+            blocks=[
+                {
+                    "type": "header",
+                    "text": {
+                        "type": "plain_text",
+                        "text": f"📋 Morning Callout Digest — {date_str}",
+                        "emoji": True,
+                    },
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "\n".join(lines),
+                    },
+                },
+                {
+                    "type": "context",
+                    "elements": [
+                        {
+                            "type": "mrkdwn",
+                            "text": f"Click a driver name to review & countersign their writeup.",
+                        }
+                    ],
+                },
+            ],
+        )
+        now = datetime.utcnow()
+        for entry in pending:
+            entry.digest_sent_at = now
+        db.commit()
+        return len(pending)
+    except Exception as exc:
+        logger.warning("Morning callout digest failed: %s", exc)
+        return 0
+
+
+# ── Queue a callout notification ───────────────────────────────────────────────
+
+def queue_callout_notification(
+    event_id: int, driver_name: str, reason_code: str,
+    shift_date: date, wave_time: str | None, db: Session,
+) -> bool:
+    """Create a CalloutQueue entry. Returns True if roster_tight."""
+    available, is_tight = _get_replacement_pool(shift_date, driver_name, wave_time, db)
+    entry = CalloutQueue(
+        event_id=event_id,
+        shift_date=shift_date,
+        driver_name=driver_name,
+        wave_time=wave_time,
+        replacement_pool=json.dumps(available),
+        roster_tight=is_tight,
+    )
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    if is_tight:
+        _send_tight_roster_alert(entry, reason_code, db)
+    return is_tight
 
 
 class ManagerSignRequest(BaseModel):
@@ -1293,3 +1524,60 @@ def eod_unsigned_reminder(db: Session = Depends(get_db)):
     except Exception as exc:
         raise HTTPException(500, str(exc))
     return {"status": "reminded", "count": len(events)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Callout queue endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/callout-queue/{queue_id}/acknowledge")
+def acknowledge_callout_alert(
+    queue_id: int,
+    acknowledged_by: str = "",
+    db: Session = Depends(get_db),
+):
+    """Mark a tight-roster callout alert as acknowledged (called by Slack interaction handler)."""
+    entry = db.query(CalloutQueue).filter(CalloutQueue.id == queue_id).first()
+    if not entry:
+        raise HTTPException(404, "Queue entry not found.")
+    if not entry.acknowledged_at:
+        entry.acknowledged_at = datetime.utcnow()
+        entry.acknowledged_by = acknowledged_by
+        db.commit()
+    return {"status": "acknowledged", "queue_id": queue_id, "by": acknowledged_by}
+
+
+@router.post("/callout-queue/send-digest")
+def trigger_morning_digest(shift_date_str: str = "", db: Session = Depends(get_db)):
+    """Manually trigger the morning callout digest for a given date (default: today)."""
+    try:
+        d = date.fromisoformat(shift_date_str) if shift_date_str else datetime.now(PACIFIC).date()
+    except ValueError:
+        raise HTTPException(400, "Invalid date format.")
+    count = send_morning_callout_digest(d, db)
+    return {"status": "sent", "callouts_included": count, "date": d.isoformat()}
+
+
+@router.get("/callout-queue/pending")
+def get_pending_queue(db: Session = Depends(get_db)):
+    """Admin — list all queued callout notifications not yet sent."""
+    rows = (
+        db.query(CalloutQueue)
+        .filter(CalloutQueue.digest_sent_at == None, CalloutQueue.acknowledged_at == None)
+        .order_by(CalloutQueue.queued_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "event_id": r.event_id,
+            "shift_date": r.shift_date.isoformat(),
+            "driver_name": r.driver_name,
+            "wave_time": r.wave_time,
+            "roster_tight": r.roster_tight,
+            "replacement_pool": json.loads(r.replacement_pool or "[]"),
+            "reminder_count": r.reminder_count,
+            "queued_at": r.queued_at.isoformat() if r.queued_at else None,
+        }
+        for r in rows
+    ]

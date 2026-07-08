@@ -1557,6 +1557,11 @@ class AttendanceEvent(Base):
     signature_name = Column(String(150))
     signature_at = Column(DateTime)
 
+    # Manager review & countersignature
+    manager_signature_name = Column(String(150))
+    manager_signature_at = Column(DateTime)
+    manager_id = Column(String(100))        # username of manager who signed
+
     # RingCentral link (populated when event auto-detected from call)
     ringcentral_call_id = Column(String(100), index=True)
     caller_number = Column(String(20))
@@ -1684,6 +1689,23 @@ def ensure_callout_signature_column():
                     conn.execute(text(f"ALTER TABLE attendance_events ADD COLUMN IF NOT EXISTS {col} {typedef}"))
         except Exception:
             pass  # Column already exists
+
+
+def _ensure_manager_signature_columns():
+    """Add manager countersignature columns to attendance_events — added 2026-07-08."""
+    for col, typedef in [
+        ("manager_signature_name", "VARCHAR(150)"),
+        ("manager_signature_at", "DATETIME"),
+        ("manager_id", "VARCHAR(100)"),
+    ]:
+        try:
+            with engine.begin() as conn:
+                if DATABASE_URL.startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE attendance_events ADD COLUMN {col} {typedef}"))
+                else:
+                    conn.execute(text(f"ALTER TABLE attendance_events ADD COLUMN IF NOT EXISTS {col} {typedef}"))
+        except Exception:
+            pass
 
 
 # ============================================================================

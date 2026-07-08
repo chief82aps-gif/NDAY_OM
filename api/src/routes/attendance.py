@@ -912,6 +912,9 @@ def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
         req.scheduled_wave, notes_with_flag, compliant, hours_before,
     )
 
+    # Notify #nday-mgt so a manager can review and countersign
+    _notify_mgt_writeup(event.id, roster_entry.payroll_name, req.reason_code, shift_date)
+
     # Return updated points summary so the confirmation screen can show the new total
     updated_summary = _driver_points_summary(roster_entry.payroll_name, db)
 
@@ -1125,3 +1128,168 @@ async def ringcentral_webhook(request: Request, db: Session = Depends(get_db)):
         )
 
     return {"status": "ok"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Manager review & countersignature
+# ─────────────────────────────────────────────────────────────────────────────
+
+MGT_CHANNEL = "C0BCYAW7QP3"  # #nday-mgt
+FRONTEND_URL = os.getenv("FRONTEND_URL", "https://nday-om.vercel.app")
+REASON_LABELS = {
+    "sick": "Sick", "personal": "Personal", "family": "Family Emergency",
+    "weather": "Weather", "transportation": "Transportation", "other": "Other",
+}
+
+
+def _notify_mgt_writeup(event_id: int, driver_name: str, reason_code: str,
+                         shift_date, points_summary=None) -> None:
+    """Post a manager review notification to #nday-mgt when a callout writeup is submitted."""
+    try:
+        from slack_sdk import WebClient
+        token = os.getenv("SLACK_BOT_TOKEN")
+        if not token:
+            return
+        client = WebClient(token=token)
+        review_url = f"{FRONTEND_URL}/admin/callout-review/{event_id}"
+        reason_label = REASON_LABELS.get(reason_code, reason_code.title())
+        date_str = shift_date.strftime("%A, %b %-d") if hasattr(shift_date, "strftime") else str(shift_date)
+        client.chat_postMessage(
+            channel=MGT_CHANNEL,
+            text=f"New absence writeup requires manager review — {driver_name}",
+            blocks=[
+                {"type": "header", "text": {"type": "plain_text", "text": "📋 Absence Writeup — Review Required", "emoji": True}},
+                {
+                    "type": "section",
+                    "fields": [
+                        {"type": "mrkdwn", "text": f"*Driver:*\n{driver_name}"},
+                        {"type": "mrkdwn", "text": f"*Date:*\n{date_str}"},
+                        {"type": "mrkdwn", "text": f"*Reason:*\n{reason_label}"},
+                        {"type": "mrkdwn", "text": f"*Status:*\n⚠️ Awaiting manager signature"},
+                    ],
+                },
+                {
+                    "type": "actions",
+                    "elements": [{
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "✍️  Review & Sign", "emoji": True},
+                        "url": review_url,
+                        "style": "primary",
+                    }],
+                },
+                {"type": "context", "elements": [{"type": "mrkdwn", "text": f"Event ID: {event_id}"}]},
+            ],
+        )
+    except Exception as exc:
+        logger.warning("MGT writeup notification failed: %s", exc)
+
+
+class ManagerSignRequest(BaseModel):
+    manager_name: str
+    manager_id: Optional[str] = None
+
+
+@router.get("/events/{event_id}")
+def get_event(event_id: int, db: Session = Depends(get_db)):
+    """Get a single attendance event for the manager review page."""
+    event = db.query(AttendanceEvent).filter(AttendanceEvent.id == event_id).first()
+    if not event:
+        raise HTTPException(404, "Event not found.")
+    return {
+        "id": event.id,
+        "driver_name": event.driver_name,
+        "event_date": event.event_date.isoformat() if event.event_date else None,
+        "event_type": event.event_type,
+        "reason_code": event.reason_code,
+        "notes": event.notes,
+        "call_time": event.call_time.isoformat() if event.call_time else None,
+        "hours_before_shift": float(event.hours_before_shift) if event.hours_before_shift else None,
+        "compliant": event.compliant,
+        "scheduled_wave": event.scheduled_wave,
+        "signature_name": event.signature_name,
+        "signature_at": event.signature_at.isoformat() if event.signature_at else None,
+        "manager_signature_name": event.manager_signature_name,
+        "manager_signature_at": event.manager_signature_at.isoformat() if event.manager_signature_at else None,
+        "created_at": event.created_at.isoformat() if event.created_at else None,
+    }
+
+
+@router.post("/events/{event_id}/manager-sign")
+def manager_sign_event(event_id: int, req: ManagerSignRequest, db: Session = Depends(get_db)):
+    """Manager countersigns an attendance writeup."""
+    event = db.query(AttendanceEvent).filter(AttendanceEvent.id == event_id).first()
+    if not event:
+        raise HTTPException(404, "Event not found.")
+    if not req.manager_name.strip():
+        raise HTTPException(400, "Manager name is required.")
+    event.manager_signature_name = req.manager_name.strip()
+    event.manager_signature_at = datetime.utcnow()
+    event.manager_id = req.manager_id
+    db.commit()
+    return {"status": "signed", "manager_signature_name": event.manager_signature_name}
+
+
+@router.get("/pending-review")
+def pending_review(db: Session = Depends(get_db)):
+    """Admin — all callout writeups with driver signature but no manager countersignature."""
+    events = (
+        db.query(AttendanceEvent)
+        .filter(
+            AttendanceEvent.signature_name != None,
+            AttendanceEvent.manager_signature_name == None,
+        )
+        .order_by(AttendanceEvent.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": e.id,
+            "driver_name": e.driver_name,
+            "event_date": e.event_date.isoformat() if e.event_date else None,
+            "reason_code": e.reason_code,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in events
+    ]
+
+
+@router.post("/eod-unsigned-reminder")
+def eod_unsigned_reminder(db: Session = Depends(get_db)):
+    """Post a summary of all unsigned writeups to #nday-mgt. Intended to run at EOD."""
+    events = (
+        db.query(AttendanceEvent)
+        .filter(
+            AttendanceEvent.signature_name != None,
+            AttendanceEvent.manager_signature_name == None,
+        )
+        .order_by(AttendanceEvent.event_date.desc())
+        .all()
+    )
+    if not events:
+        return {"status": "nothing_to_remind", "count": 0}
+    try:
+        from slack_sdk import WebClient
+        token = os.getenv("SLACK_BOT_TOKEN")
+        if not token:
+            raise HTTPException(500, "SLACK_BOT_TOKEN not set.")
+        client = WebClient(token=token)
+        lines = "\n".join(
+            f"• <{FRONTEND_URL}/admin/callout-review/{e.id}|{e.driver_name}> — "
+            f"{REASON_LABELS.get(e.reason_code, e.reason_code)} "
+            f"({e.event_date})"
+            for e in events
+        )
+        client.chat_postMessage(
+            channel=MGT_CHANNEL,
+            text=f"⏰ EOD Reminder: {len(events)} unsigned writeup(s) still need manager review.",
+            blocks=[
+                {"type": "header", "text": {"type": "plain_text", "text": f"⏰ EOD — {len(events)} Unsigned Writeup(s)", "emoji": True}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": "The following callout writeups are awaiting manager countersignature:\n\n" + lines}},
+                {"type": "context", "elements": [{"type": "mrkdwn", "text": "Click each driver's name to review and sign."}]},
+            ],
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+    return {"status": "reminded", "count": len(events)}

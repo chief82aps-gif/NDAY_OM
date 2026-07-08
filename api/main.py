@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.src.routes import uploads, auth, audit, enhanced_audit, weekly_audit, weekly_audit_upload, rescue
 from api.src.routes import daily_notify, quality, attendance, attendance_reports, ops_ingest, dvic, dsp_scorecard_weekly, eod_survey, route_assignment, slack_interactions
 from api.src.routes.daily_notify import check_and_notify, check_ecp_and_prompt
-from api.src.database import Base, engine, SessionLocal, ensure_dop_driver_name_column, ensure_ssn_last4_column, ensure_callout_signature_column, ensure_assignment_board_columns
+from api.src.database import Base, engine, SessionLocal, ensure_dop_driver_name_column, ensure_ssn_last4_column, ensure_callout_signature_column, ensure_assignment_board_columns, _ensure_manager_signature_columns
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +119,7 @@ async def startup():
     ensure_ssn_last4_column()
     ensure_callout_signature_column()
     ensure_assignment_board_columns()
+    _ensure_manager_signature_columns()
     asyncio.create_task(_daily_notify_loop())
     asyncio.create_task(_ecp_watch_loop())
     asyncio.create_task(_ops_ingest_scan_loop())

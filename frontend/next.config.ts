@@ -30,6 +30,18 @@ const nextConfig: NextConfig = {
         source: '/rescue/:path*',
         destination: `${backendUrl}/rescue/:path*`,
       },
+      {
+        source: '/attendance/:path*',
+        destination: `${backendUrl}/attendance/:path*`,
+      },
+      {
+        source: '/slack/:path*',
+        destination: `${backendUrl}/slack/:path*`,
+      },
+      {
+        source: '/ops-ingest/:path*',
+        destination: `${backendUrl}/ops-ingest/:path*`,
+      },
     ];
   },
 };

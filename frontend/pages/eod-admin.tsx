@@ -215,7 +215,7 @@ export default function EodAdminPage() {
                               ['All equipment present', yn(r.all_equipment_present)],
                               r.all_equipment_present === false ? ['Missing', r.missing_equipment || '—'] : null,
                               ['Needs mgmt contact', yn(r.needs_management_contact, 'Yes 👔', 'No')],
-                            ].filter(Boolean).map(([label, value]) => (
+                            ].filter((x): x is [string, string] => x !== null).map(([label, value]) => (
                               <div key={String(label)} style={{ background: '#0f172a', borderRadius: 8, padding: '8px 12px' }}>
                                 <div style={{ fontSize: 11, color: '#64748b', marginBottom: 2 }}>{label}</div>
                                 <div style={{ fontSize: 14, color: '#e2e8f0' }}>{value}</div>

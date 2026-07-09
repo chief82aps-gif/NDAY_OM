@@ -47,6 +47,10 @@ const nextConfig: NextConfig = {
         destination: `${backendUrl}/rostering/:path*`,
       },
       {
+        source: '/adp/:path*',
+        destination: `${backendUrl}/adp/:path*`,
+      },
+      {
         source: '/cortex-tracking/:path*',
         destination: `${backendUrl}/cortex-tracking/:path*`,
       },

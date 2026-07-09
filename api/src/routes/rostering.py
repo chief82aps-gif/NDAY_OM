@@ -1040,6 +1040,135 @@ def send_day_of_dms(shift_date: date, db: Session) -> dict:
 
 # ─── API endpoints ───────────────────────────────────────────────────────────
 
+@router.get("/wave-status")
+def get_wave_status(shift_date: Optional[str] = None, db: Session = Depends(get_db)):
+    """
+    Return wave-by-wave attendance status for shift_date (defaults to today).
+    Used by the Wave Status dashboard page.
+    """
+    from zoneinfo import ZoneInfo
+    PACIFIC = ZoneInfo("America/Los_Angeles")
+    now_pt = datetime.now(PACIFIC)
+
+    if shift_date:
+        try:
+            target = date.fromisoformat(shift_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
+    else:
+        target = now_pt.date()
+
+    wave_lead_name, _ = _wave_lead_name(target)
+
+    # All assignments for the date
+    assignments = (
+        db.query(DailyRouteAssignment)
+        .filter(
+            DailyRouteAssignment.assignment_date == target,
+            DailyRouteAssignment.driver_name != None,
+            DailyRouteAssignment.driver_name != "",
+        )
+        .order_by(DailyRouteAssignment.wave, DailyRouteAssignment.driver_name)
+        .all()
+    )
+
+    # Arrival records
+    arrived_map: dict[str, Optional[datetime]] = {}
+    for r in db.query(DriverShiftDM).filter(
+        DriverShiftDM.shift_date == target,
+        DriverShiftDM.arrival_confirmed == True,
+    ).all():
+        arrived_map[r.driver_name] = r.arrived_at
+
+    # Group by wave
+    from collections import defaultdict
+    waves_map: dict[str, list] = defaultdict(list)
+    for a in assignments:
+        waves_map[a.wave or "Unscheduled"].append(a)
+
+    def _parse_wave_minutes(wt: str) -> float:
+        """Return wave time as minutes since midnight for sorting."""
+        for fmt in ("%I:%M %p", "%H:%M", "%I:%M%p"):
+            try:
+                t = datetime.strptime(wt.strip(), fmt)
+                return t.hour * 60 + t.minute
+            except ValueError:
+                continue
+        return 9999.0
+
+    def _minutes_to_wave(wt: str) -> Optional[float]:
+        for fmt in ("%I:%M %p", "%H:%M", "%I:%M%p"):
+            try:
+                parsed = datetime.strptime(wt.strip(), fmt)
+                wave_dt = now_pt.replace(hour=parsed.hour, minute=parsed.minute, second=0, microsecond=0)
+                return (wave_dt - now_pt).total_seconds() / 60
+            except ValueError:
+                continue
+        return None
+
+    waves_out = []
+    total_all = arrived_all = missing_all = pending_all = 0
+
+    for wave_time_str in sorted(waves_map.keys(), key=_parse_wave_minutes):
+        wave_drivers = waves_map[wave_time_str]
+        mins = _minutes_to_wave(wave_time_str)
+        wave_past = mins is not None and mins < 0
+
+        drivers_out = []
+        w_arrived = w_missing = w_pending = 0
+
+        for a in wave_drivers:
+            if a.driver_name in arrived_map:
+                status = "arrived"
+                w_arrived += 1
+            elif wave_past:
+                status = "missing"
+                w_missing += 1
+            else:
+                status = "pending"
+                w_pending += 1
+
+            drivers_out.append({
+                "driver_name": a.driver_name,
+                "route_code": a.route_code,
+                "van_number": a.van_number,
+                "stage_location": a.stage_location,
+                "stops": a.stops or a.packages,
+                "service_type": a.service_type,
+                "status": status,
+                "arrived_at": arrived_map[a.driver_name].isoformat() if a.driver_name in arrived_map and arrived_map[a.driver_name] else None,
+            })
+
+        total_all += len(wave_drivers)
+        arrived_all += w_arrived
+        missing_all += w_missing
+        pending_all += w_pending
+
+        waves_out.append({
+            "wave_time": wave_time_str,
+            "wave_past": wave_past,
+            "minutes_to_wave": round(mins, 1) if mins is not None else None,
+            "total": len(wave_drivers),
+            "arrived": w_arrived,
+            "missing": w_missing,
+            "pending": w_pending,
+            "drivers": drivers_out,
+        })
+
+    return {
+        "date": target.isoformat(),
+        "wave_lead": wave_lead_name,
+        "as_of": now_pt.isoformat(),
+        "summary": {
+            "total": total_all,
+            "arrived": arrived_all,
+            "missing": missing_all,
+            "pending": pending_all,
+        },
+        "waves": waves_out,
+    }
+
+
 @router.post("/nightly-reminder")
 def trigger_nightly_reminder(shift_date: Optional[str] = None, db: Session = Depends(get_db)):
     """Manually trigger the nightly roster reminder for a given date (defaults to tomorrow)."""

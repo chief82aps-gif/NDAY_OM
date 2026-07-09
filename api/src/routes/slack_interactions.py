@@ -289,9 +289,10 @@ def _driver_dashboard_hub_blocks() -> list:
                 },
                 {
                     "type": "button",
-                    "action_id": "rts_button",
+                    "action_id": "btn_rts",
                     "text": {"type": "plain_text", "text": "🔄 Return to Station", "emoji": True},
                     "style": "primary",
+                    "url": f"{FRONTEND_URL}/rts",
                 },
             ],
         },
@@ -378,48 +379,8 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
     elif action_id == "driver_eod_complete":
         _handle_eod_complete(payload, db)
 
-    elif action_id == "rts_button":
-        _handle_rts_button(payload, db)
-
     # Slack requires a 200 response within 3 seconds
     return {"ok": True}
-
-
-def _handle_rts_button(payload: dict, db: Session) -> None:
-    """Driver tapped 'Return to Station'. Routes to an existing rescue assignment
-    if dispatch already opened one for them; otherwise sends a personal debrief link."""
-    channel_id = payload.get("channel", {}).get("id", "")
-    user_id = payload.get("user", {}).get("id", "")
-
-    driver = _resolve_driver(user_id, db)
-    if not driver:
-        _send_ephemeral(
-            channel_id, user_id,
-            "⚠️ *Your Slack account isn't linked to a driver roster entry.*\n"
-            "Contact your dispatcher to get set up, then try again.",
-        )
-        return
-
-    try:
-        from api.src.routes.rts import start_rts
-        result = start_rts(driver.payroll_name, user_id, db)
-    except Exception as exc:
-        logger.warning("start_rts failed for %s: %s", driver.payroll_name, exc)
-        _send_ephemeral(channel_id, user_id, "⚠️ Something went wrong starting your RTS. Contact dispatch.")
-        return
-
-    if result["routed_to_rescue"]:
-        _send_ephemeral(
-            channel_id, user_id,
-            f"🚨 *You're assigned a rescue* — assist *{result['rescued_driver_name']}*.\n\n"
-            f"<{result['contribute_url']}|👆 Tap here to log your pickup>",
-        )
-    else:
-        _send_ephemeral(
-            channel_id, user_id,
-            f"🔄 *Return to Station* — quick debrief before you head in (~3 min).\n\n"
-            f"<{result['debrief_url']}|👆 Tap here to start> · _only you can see this link_",
-        )
 
 
 def _handle_acknowledge_callout(payload: dict, db: Session) -> None:

@@ -26,9 +26,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from sqlalchemy import func
+
 from api.src.database import (
     get_db, RtsDebrief, RescueEvent, RescueContribution,
-    DailyRouteAssignment, CortexSnapshot,
+    DailyRouteAssignment, CortexSnapshot, DriverRosterEntry,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,7 +100,7 @@ def _expected_return_time(assignment: Optional[DailyRouteAssignment], shift_date
 # Called directly from the Slack action handler (not over HTTP)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def start_rts(driver_name: str, slack_user_id: str, db: Session) -> dict:
+def start_rts(driver_name: str, slack_user_id: Optional[str], db: Session) -> dict:
     """Driver tapped the RTS button. Returns either a rescue handoff or a debrief link."""
     today = date.today()
 
@@ -136,6 +138,26 @@ def start_rts(driver_name: str, slack_user_id: str, db: Session) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # HTTP endpoints — used by the frontend debrief page
 # ─────────────────────────────────────────────────────────────────────────────
+
+class IdentifyRequest(BaseModel):
+    driver_name: str
+    ssn_last4: str
+
+
+@router.post("/identify")
+def identify(req: IdentifyRequest, db: Session = Depends(get_db)):
+    """Public — name + PIN identification (same PIN as ADP kiosk / callout page),
+    used when a driver opens the Return to Station link directly from the
+    driver-dashboard channel instead of a personal Slack DM."""
+    roster_entry = db.query(DriverRosterEntry).filter(
+        func.lower(DriverRosterEntry.payroll_name) == req.driver_name.lower(),
+        DriverRosterEntry.is_active == True,
+    ).first()
+    if not roster_entry or not roster_entry.ssn_last4 or roster_entry.ssn_last4 != req.ssn_last4.strip():
+        raise HTTPException(status_code=401, detail="Name or PIN is incorrect.")
+
+    return start_rts(roster_entry.payroll_name, None, db)
+
 
 @router.get("/debrief")
 def get_debrief(token: str, db: Session = Depends(get_db)):

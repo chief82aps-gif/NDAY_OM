@@ -242,57 +242,101 @@ def post_callout_button():
         raise HTTPException(500, str(exc))
 
 
-@router.post("/post-rts-button")
-def post_rts_button():
-    """One-time setup: posts the Return to Station button to #driver-dashboard."""
+def _driver_dashboard_hub_blocks() -> list:
+    """The single #driver-dashboard hub card: one message, one group of buttons."""
+    return [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": "New Day Logistics - Driver Dashboard", "emoji": True},
+        },
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "Your one-stop hub for all driver tools. Tap a button below to get started."},
+        },
+        {"type": "divider"},
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": "btn_callout",
+                    "text": {"type": "plain_text", "text": "Submit Call-Out", "emoji": True},
+                    "style": "danger",
+                    "url": f"{FRONTEND_URL}/callout",
+                },
+                {
+                    "type": "button",
+                    "action_id": "btn_pto",
+                    "text": {"type": "plain_text", "text": "Request PTO", "emoji": True},
+                    "url": f"{FRONTEND_URL}/pto-request",
+                },
+            ],
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": "btn_eod",
+                    "text": {"type": "plain_text", "text": "End of Day Survey", "emoji": True},
+                    "url": f"{FRONTEND_URL}/eod",
+                },
+                {
+                    "type": "button",
+                    "action_id": "btn_suggestions",
+                    "text": {"type": "plain_text", "text": "Suggestion Box", "emoji": True},
+                    "url": f"{FRONTEND_URL}/suggestions",
+                },
+                {
+                    "type": "button",
+                    "action_id": "rts_button",
+                    "text": {"type": "plain_text", "text": "🔄 Return to Station", "emoji": True},
+                    "style": "primary",
+                },
+            ],
+        },
+        {
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": "New Day Logistics LLC . Questions? Contact dispatch directly."}
+            ],
+        },
+    ]
+
+
+@router.post("/sync-driver-dashboard")
+def sync_driver_dashboard():
+    """Idempotent setup: finds the existing #driver-dashboard hub card and updates it
+    in place (adding/replacing the Return to Station button), or posts it fresh if
+    no hub card exists yet. Safe to call repeatedly."""
     try:
         from slack_sdk import WebClient
         token = os.getenv("SLACK_BOT_TOKEN")
         if not token:
             raise HTTPException(500, "SLACK_BOT_TOKEN not set.")
         client = WebClient(token=token)
-        resp = client.chat_postMessage(
-            channel=DRIVER_DASHBOARD_CHANNEL,
-            text="Heading back to the station? Use the button below.",
-            blocks=[
-                {
-                    "type": "header",
-                    "text": {"type": "plain_text", "text": "🔄 Return to Station", "emoji": True},
-                },
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": "Wrapping up your route? Tap the button below for a quick "
-                                "(~3 min) debrief on any packages coming back before you head in.",
-                    },
-                },
-                {
-                    "type": "actions",
-                    "elements": [
-                        {
-                            "type": "button",
-                            "action_id": "rts_button",
-                            "text": {"type": "plain_text", "text": "🔄  Return to Station", "emoji": True},
-                            "style": "primary",
-                        }
-                    ],
-                },
-                {
-                    "type": "context",
-                    "elements": [
-                        {"type": "mrkdwn", "text": "If you already have a rescue assignment, this will take you straight to it."}
-                    ],
-                },
-            ],
-        )
-        pinned = False
-        try:
-            client.pins_add(channel=DRIVER_DASHBOARD_CHANNEL, timestamp=resp["ts"])
-            pinned = True
-        except Exception as exc:
-            logger.warning("Could not pin RTS button message: %s", exc)
-        return {"status": "posted", "channel": DRIVER_DASHBOARD_CHANNEL, "pinned": pinned}
+        blocks = _driver_dashboard_hub_blocks()
+        fallback_text = "New Day Logistics - Driver Dashboard: Call-Out, PTO, EOD Survey, Suggestion Box, Return to Station."
+
+        existing_ts = None
+        history = client.conversations_history(channel=DRIVER_DASHBOARD_CHANNEL, limit=50)
+        for msg in history.get("messages", []):
+            if not msg.get("bot_id"):
+                continue
+            has_marker = "Driver Dashboard" in (msg.get("text") or "") or any(
+                "Driver Dashboard" in (b.get("text", {}).get("text", "") or "")
+                for b in msg.get("blocks", []) if b.get("type") == "header"
+            )
+            if has_marker:
+                existing_ts = msg["ts"]
+                break
+
+        if existing_ts:
+            client.chat_update(channel=DRIVER_DASHBOARD_CHANNEL, ts=existing_ts, text=fallback_text, blocks=blocks)
+            return {"status": "updated", "channel": DRIVER_DASHBOARD_CHANNEL, "ts": existing_ts}
+        else:
+            resp = client.chat_postMessage(channel=DRIVER_DASHBOARD_CHANNEL, text=fallback_text, blocks=blocks)
+            return {"status": "posted", "channel": DRIVER_DASHBOARD_CHANNEL, "ts": resp["ts"]}
     except Exception as exc:
         raise HTTPException(500, str(exc))
 

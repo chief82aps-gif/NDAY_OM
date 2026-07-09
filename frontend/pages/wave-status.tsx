@@ -21,6 +21,7 @@ interface Driver {
   service_type: string | null;
   status: 'arrived' | 'missing' | 'pending';
   arrived_at: string | null;
+  adp_clocked_in: boolean | null;  // null = ADP not configured
 }
 
 interface Wave {
@@ -282,6 +283,11 @@ export default function WaveStatusPage() {
     }
     .meta-chip.route { color: var(--accent); border-color: rgba(245,161,35,0.3);
                        background: rgba(245,161,35,0.08); font-weight: 600; }
+    .meta-chip.adp-in  { color: #20D9A0; border-color: rgba(32,217,160,0.3);
+                          background: rgba(32,217,160,0.08); font-weight: 600; }
+    .meta-chip.adp-out { color: #F87171; border-color: rgba(248,113,113,0.3);
+                          background: rgba(248,113,113,0.08); font-weight: 600; }
+    .meta-chip.adp-unknown { color: var(--muted); }
     .driver-status-col { display: flex; flex-direction: column;
                           align-items: flex-end; justify-content: space-between;
                           min-width: 70px; text-align: right; }
@@ -446,6 +452,9 @@ export default function WaveStatusPage() {
                             {driver.van_number && <span className="meta-chip">{driver.van_number}</span>}
                             {driver.stage_location && <span className="meta-chip">{driver.stage_location}</span>}
                             {driver.stops != null && <span className="meta-chip">{driver.stops} stops</span>}
+                            {driver.adp_clocked_in === true  && <span className="meta-chip adp-in">ADP ✓</span>}
+                            {driver.adp_clocked_in === false && <span className="meta-chip adp-out">ADP ✗</span>}
+                            {driver.adp_clocked_in === null  && <span className="meta-chip adp-unknown">ADP —</span>}
                           </div>
                         </div>
                         <div className="driver-status-col">

@@ -1072,6 +1072,14 @@ def get_wave_status(shift_date: Optional[str] = None, db: Session = Depends(get_
         .all()
     )
 
+    # ADP clock-in status — fetched once per request, cached 2 min inside adp module
+    adp_clocked_in_set: Optional[set[str]] = None
+    try:
+        from api.src.routes.adp import get_clocked_in_names as _adp_names, normalize_name as _adp_norm
+        adp_clocked_in_set = _adp_names()
+    except Exception:
+        pass
+
     # Arrival records
     arrived_map: dict[str, Optional[datetime]] = {}
     for r in db.query(DriverShiftDM).filter(
@@ -1128,6 +1136,13 @@ def get_wave_status(shift_date: Optional[str] = None, db: Session = Depends(get_
                 status = "pending"
                 w_pending += 1
 
+            adp_status: Optional[bool] = None
+            if adp_clocked_in_set is not None:
+                try:
+                    adp_status = _adp_norm(a.driver_name) in adp_clocked_in_set
+                except Exception:
+                    pass
+
             drivers_out.append({
                 "driver_name": a.driver_name,
                 "route_code": a.route_code,
@@ -1137,6 +1152,7 @@ def get_wave_status(shift_date: Optional[str] = None, db: Session = Depends(get_
                 "service_type": a.service_type,
                 "status": status,
                 "arrived_at": arrived_map[a.driver_name].isoformat() if a.driver_name in arrived_map and arrived_map[a.driver_name] else None,
+                "adp_clocked_in": adp_status,
             })
 
         total_all += len(wave_drivers)

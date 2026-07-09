@@ -14,6 +14,7 @@ import { financialUploadsModule } from './financialUploads';
 import { invoiceAuditModule } from './invoiceAudit';
 import { performanceUploadsModule } from './performanceUploads';
 import { rescueTrackerModule } from './rescueTracker';
+import { adpStatusModule } from './adpStatus';
 import { DashboardModule } from './types';
 
 export const dashboardModules: DashboardModule[] = [
@@ -33,4 +34,5 @@ export const dashboardModules: DashboardModule[] = [
   dspScorecardModule,
   driverQualityModule,
   eodSurveyModule,
+  adpStatusModule,
 ];

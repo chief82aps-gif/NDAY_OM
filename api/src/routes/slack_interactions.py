@@ -190,6 +190,7 @@ def _handle_callout_button(payload: dict, db: Session) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 DRIVER_CHANNEL = "C0BAQAYKANS"  # #nday-team-room
+DRIVER_DASHBOARD_CHANNEL = os.getenv("DRIVER_DASHBOARD_CHANNEL_ID", "C0BEDCXNQNT")  # #driver-dashboard
 
 @router.post("/post-callout-button")
 def post_callout_button():
@@ -243,7 +244,7 @@ def post_callout_button():
 
 @router.post("/post-rts-button")
 def post_rts_button():
-    """One-time setup: posts the Return to Station button to #nday-team-room."""
+    """One-time setup: posts the Return to Station button to #driver-dashboard."""
     try:
         from slack_sdk import WebClient
         token = os.getenv("SLACK_BOT_TOKEN")
@@ -251,7 +252,7 @@ def post_rts_button():
             raise HTTPException(500, "SLACK_BOT_TOKEN not set.")
         client = WebClient(token=token)
         client.chat_postMessage(
-            channel=DRIVER_CHANNEL,
+            channel=DRIVER_DASHBOARD_CHANNEL,
             text="Heading back to the station? Use the button below.",
             blocks=[
                 {
@@ -285,7 +286,7 @@ def post_rts_button():
                 },
             ],
         )
-        return {"status": "posted", "channel": DRIVER_CHANNEL}
+        return {"status": "posted", "channel": DRIVER_DASHBOARD_CHANNEL}
     except Exception as exc:
         raise HTTPException(500, str(exc))
 

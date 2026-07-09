@@ -2041,6 +2041,39 @@ class DriverShiftDM(Base):
     )
 
 
+class RtsDebrief(Base):
+    """Return-to-Station debrief — driver-reported returns reviewed before heading back."""
+    __tablename__ = "rts_debriefs"
+
+    id = Column(Integer, primary_key=True)
+    token = Column(String(64), unique=True, nullable=False, index=True)
+
+    shift_date = Column(Date, nullable=False, index=True)
+    driver_name = Column(String(150), nullable=False, index=True)
+    slack_user_id = Column(String(50))
+    route_id = Column(String(20))
+
+    started_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime)
+
+    # Driver-reported return counts
+    damaged_count = Column(Integer, default=0)
+    reverse_count = Column(Integer, default=0)          # customer return / SWA pickup
+    excluded_count = Column(Integer, default=0)         # Business Closed / Refused / Rescheduled — not reattemptable
+    reattempt_eligible_count = Column(Integer, default=0)   # candidates that could still be delivered
+    reattempt_assigned_count = Column(Integer, default=0)   # driver self-reported as within 10-15 min drive
+    reattempt_skipped_count = Column(Integer, default=0)    # too far — handed back to dispatch instead
+
+    expected_return_time = Column(String(20))
+
+    routed_to_rescue = Column(Boolean, default=False)
+    rescue_event_id = Column(String(30))
+
+    __table_args__ = (
+        Index("idx_rts_date_driver", "shift_date", "driver_name"),
+    )
+
+
 class MgtSummaryPost(Base):
     """Tracks the #nday-mgt roster summary matrix message for each shift date."""
     __tablename__ = "mgt_summary_posts"

@@ -251,7 +251,7 @@ def post_rts_button():
         if not token:
             raise HTTPException(500, "SLACK_BOT_TOKEN not set.")
         client = WebClient(token=token)
-        client.chat_postMessage(
+        resp = client.chat_postMessage(
             channel=DRIVER_DASHBOARD_CHANNEL,
             text="Heading back to the station? Use the button below.",
             blocks=[
@@ -286,7 +286,13 @@ def post_rts_button():
                 },
             ],
         )
-        return {"status": "posted", "channel": DRIVER_DASHBOARD_CHANNEL}
+        pinned = False
+        try:
+            client.pins_add(channel=DRIVER_DASHBOARD_CHANNEL, timestamp=resp["ts"])
+            pinned = True
+        except Exception as exc:
+            logger.warning("Could not pin RTS button message: %s", exc)
+        return {"status": "posted", "channel": DRIVER_DASHBOARD_CHANNEL, "pinned": pinned}
     except Exception as exc:
         raise HTTPException(500, str(exc))
 

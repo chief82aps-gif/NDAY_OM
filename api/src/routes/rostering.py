@@ -38,6 +38,7 @@ from api.src.database import (
     AttendanceEvent,
     DailyRouteAssignment,
     WaveLeadNotification,
+    CortexSnapshot,
 )
 
 logger = logging.getLogger(__name__)
@@ -139,6 +140,66 @@ def _called_out_today(shift_date: date, db: Session) -> set[str]:
         .all()
     )
     return {r.driver_name for r in rows}
+
+
+# ─── ETA helper ──────────────────────────────────────────────────────────────
+
+def _calc_eta(snap: "CortexSnapshot", wave_str: Optional[str], shift_date: "date") -> Optional[str]:
+    """
+    Estimate when a driver will return to station based on their latest Cortex snapshot.
+
+    Logic: pace (pkgs/hr) = delivered / elapsed_since_wave
+           time_remaining  = remaining / pace
+           eta             = snapshot_at + time_remaining + 0.5h (return drive buffer)
+
+    Returns a Pacific-time string like "3:45 PM", "Done", or None if data is insufficient.
+    """
+    from zoneinfo import ZoneInfo as _ZI
+    _PACIFIC = _ZI("America/Los_Angeles")
+    _UTC = _ZI("UTC")
+
+    if not snap:
+        return None
+    if (snap.packages_remaining or 0) == 0 and (snap.pct_complete or 0) >= 99:
+        return "Done"
+
+    delivered = snap.packages_delivered
+    remaining = snap.packages_remaining
+    snap_at   = snap.snapshot_at   # naive UTC from datetime.utcnow()
+
+    if not delivered or not remaining or not snap_at or not wave_str:
+        return None
+
+    # Parse wave time into a naive UTC datetime on shift_date
+    wave_utc: Optional[datetime] = None
+    for fmt in ("%I:%M %p", "%H:%M", "%I:%M%p"):
+        try:
+            parsed = datetime.strptime(wave_str.strip(), fmt)
+            wave_local = datetime(
+                shift_date.year, shift_date.month, shift_date.day,
+                parsed.hour, parsed.minute, 0, tzinfo=_PACIFIC,
+            )
+            wave_utc = wave_local.astimezone(_UTC).replace(tzinfo=None)
+            break
+        except ValueError:
+            continue
+
+    if not wave_utc:
+        return None
+
+    elapsed_hours = (snap_at - wave_utc).total_seconds() / 3600
+    if elapsed_hours <= 0.1:
+        return None
+
+    pace = delivered / elapsed_hours        # packages per hour
+    if pace <= 0:
+        return None
+
+    hours_left = remaining / pace           # hours until finished
+    eta_utc_naive = snap_at + timedelta(hours=hours_left + 0.5)   # +30 min return buffer
+
+    eta_pt = eta_utc_naive.replace(tzinfo=_UTC).astimezone(_PACIFIC)
+    return eta_pt.strftime("%-I:%M %p")
 
 
 # ─── Roster suggestion builder ───────────────────────────────────────────────
@@ -324,6 +385,7 @@ def send_driver_shift_dms(shift_date: date, db: Session) -> dict:
             f"Please confirm your arrival by tapping the button when you arrive."
         )
 
+        btn_value = json.dumps({"shift_date": shift_date.isoformat(), "driver_name": name})
         blocks = [
             {
                 "type": "section",
@@ -350,11 +412,17 @@ def send_driver_shift_dms(shift_date: date, db: Session) -> dict:
                 "elements": [
                     {
                         "type": "button",
+                        "text": {"type": "plain_text", "text": "📋  I've Got My Schedule", "emoji": True},
+                        "action_id": "driver_schedule_ack",
+                        "value": btn_value,
+                    },
+                    {
+                        "type": "button",
                         "text": {"type": "plain_text", "text": "✅  I Have Arrived for My Shift", "emoji": True},
                         "style": "primary",
                         "action_id": "driver_arrived_shift",
-                        "value": json.dumps({"shift_date": shift_date.isoformat(), "driver_name": name}),
-                    }
+                        "value": btn_value,
+                    },
                 ],
             },
         ]
@@ -1072,21 +1140,48 @@ def get_wave_status(shift_date: Optional[str] = None, db: Session = Depends(get_
         .all()
     )
 
-    # ADP clock-in status — fetched once per request, cached 2 min inside adp module
-    adp_clocked_in_set: Optional[set[str]] = None
+    # ADP punch status — fetched once per request, cached 2 min inside adp module
+    # {normalized_name: {"clocked_in": bool, "clocked_out": bool, "in_at": str|None, "out_at": str|None}}
+    adp_punch_map: Optional[dict] = None
     try:
-        from api.src.routes.adp import get_clocked_in_names as _adp_names, normalize_name as _adp_norm
-        adp_clocked_in_set = _adp_names()
+        from api.src.routes.adp import get_adp_punch_status as _adp_status, normalize_name as _adp_norm
+        adp_punch_map = _adp_status()
     except Exception:
         pass
 
-    # Arrival records
-    arrived_map: dict[str, Optional[datetime]] = {}
-    for r in db.query(DriverShiftDM).filter(
-        DriverShiftDM.shift_date == target,
-        DriverShiftDM.arrival_confirmed == True,
-    ).all():
-        arrived_map[r.driver_name] = r.arrived_at
+    # Latest Cortex snapshot per route for today → ETA calculation
+    # Subquery: max snapshot_at per route_code on target date
+    from sqlalchemy import func as _func
+    cortex_subq = (
+        db.query(
+            CortexSnapshot.route_code,
+            _func.max(CortexSnapshot.snapshot_at).label("latest_at"),
+        )
+        .filter(CortexSnapshot.route_date == target)
+        .group_by(CortexSnapshot.route_code)
+        .subquery()
+    )
+    latest_cortex = (
+        db.query(CortexSnapshot)
+        .join(
+            cortex_subq,
+            (CortexSnapshot.route_code == cortex_subq.c.route_code)
+            & (CortexSnapshot.snapshot_at == cortex_subq.c.latest_at),
+        )
+        .all()
+    )
+    cortex_map: dict[str, CortexSnapshot] = {s.route_code: s for s in latest_cortex}
+
+    # Shift DM records — arrival + checklist items
+    shift_dm_map: dict[str, DriverShiftDM] = {}
+    for r in db.query(DriverShiftDM).filter(DriverShiftDM.shift_date == target).all():
+        shift_dm_map[r.driver_name] = r
+
+    arrived_map: dict[str, Optional[datetime]] = {
+        name: r.arrived_at
+        for name, r in shift_dm_map.items()
+        if r.arrival_confirmed
+    }
 
     # Group by wave
     from collections import defaultdict
@@ -1136,12 +1231,36 @@ def get_wave_status(shift_date: Optional[str] = None, db: Session = Depends(get_
                 status = "pending"
                 w_pending += 1
 
-            adp_status: Optional[bool] = None
-            if adp_clocked_in_set is not None:
+            # ── Per-driver checklist ───────────────────────────────────────
+            dm_rec = shift_dm_map.get(a.driver_name)
+
+            adp_ps = None
+            if adp_punch_map is not None:
                 try:
-                    adp_status = _adp_norm(a.driver_name) in adp_clocked_in_set
+                    adp_ps = adp_punch_map.get(_adp_norm(a.driver_name))
                 except Exception:
                     pass
+
+            def _ci_bool(flag: Optional[bool], ts=None) -> dict:
+                return {"done": flag, "at": ts.isoformat() if ts and hasattr(ts, "isoformat") else ts}
+
+            sch_acked_at = getattr(dm_rec, "schedule_acked_at", None) if dm_rec else None
+            eod_at       = getattr(dm_rec, "eod_checklist_at", None) if dm_rec else None
+            arr_at       = arrived_map.get(a.driver_name)
+
+            checklist = {
+                "schedule_acked":  _ci_bool(bool(sch_acked_at), sch_acked_at),
+                "adp_clocked_in":  {"done": adp_ps["clocked_in"],  "at": adp_ps.get("in_at")}  if adp_ps else {"done": None, "at": None},
+                "arrived":         _ci_bool(a.driver_name in arrived_map, arr_at),
+                "eod_checklist":   _ci_bool(bool(eod_at), eod_at),
+                "adp_clocked_out": {"done": adp_ps["clocked_out"], "at": adp_ps.get("out_at")} if adp_ps else {"done": None, "at": None},
+            }
+
+            # ── Cortex ETA ─────────────────────────────────────────────────
+            snap = cortex_map.get(a.route_code or "")
+            eta_return = _calc_eta(snap, a.wave, target) if snap else None
+            pct_complete = float(snap.pct_complete) if snap and snap.pct_complete is not None else None
+            pkgs_remaining = snap.packages_remaining if snap else None
 
             drivers_out.append({
                 "driver_name": a.driver_name,
@@ -1151,8 +1270,11 @@ def get_wave_status(shift_date: Optional[str] = None, db: Session = Depends(get_
                 "stops": a.stops or a.packages,
                 "service_type": a.service_type,
                 "status": status,
-                "arrived_at": arrived_map[a.driver_name].isoformat() if a.driver_name in arrived_map and arrived_map[a.driver_name] else None,
-                "adp_clocked_in": adp_status,
+                "arrived_at": arr_at.isoformat() if arr_at else None,
+                "checklist": checklist,
+                "eta_return": eta_return,
+                "pct_complete": pct_complete,
+                "packages_remaining": pkgs_remaining,
             })
 
         total_all += len(wave_drivers)
@@ -1245,6 +1367,167 @@ def trigger_day_of_dms(shift_date: str, db: Session = Depends(get_db)):
     except ValueError:
         raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
     return send_day_of_dms(target, db)
+
+
+@router.post("/ack-schedule")
+def ack_schedule(
+    shift_date: str, driver_name: str, db: Session = Depends(get_db)
+):
+    """
+    Mark a driver as having acknowledged their schedule.
+    Called by the Slack interaction handler when the driver taps 'I've Got My Schedule'.
+    Also callable directly by dispatch if needed.
+    """
+    try:
+        target = date.fromisoformat(shift_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
+
+    rec = db.query(DriverShiftDM).filter(
+        DriverShiftDM.shift_date == target,
+        DriverShiftDM.driver_name == driver_name,
+    ).first()
+    if not rec:
+        rec = DriverShiftDM(shift_date=target, driver_name=driver_name)
+        db.add(rec)
+
+    if not getattr(rec, "schedule_acked_at", None):
+        try:
+            rec.schedule_acked_at = datetime.utcnow()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+    db.commit()
+    return {"status": "ok", "driver_name": driver_name, "shift_date": shift_date}
+
+
+@router.post("/eod-complete")
+def eod_complete(
+    shift_date: str, driver_name: str, db: Session = Depends(get_db)
+):
+    """
+    Mark a driver's end-of-day checklist as complete.
+    Called by the Slack interaction handler when the driver taps 'EOD Complete',
+    or by dispatch on the driver's behalf.
+    """
+    try:
+        target = date.fromisoformat(shift_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
+
+    rec = db.query(DriverShiftDM).filter(
+        DriverShiftDM.shift_date == target,
+        DriverShiftDM.driver_name == driver_name,
+    ).first()
+    if not rec:
+        rec = DriverShiftDM(shift_date=target, driver_name=driver_name)
+        db.add(rec)
+
+    if not getattr(rec, "eod_checklist_at", None):
+        try:
+            rec.eod_checklist_at = datetime.utcnow()  # type: ignore[attr-defined]
+        except Exception:
+            pass
+    db.commit()
+    return {"status": "ok", "driver_name": driver_name, "shift_date": shift_date}
+
+
+def send_eod_checklist_dms(shift_date: date, db: Session) -> dict:
+    """
+    Send EOD completion DMs to all drivers who finished their shift today.
+    Includes an 'EOD Complete' button that drivers tap when they've done the
+    end-of-day van checklist and submitted their delivery report.
+    Gated by ROSTERING_ACTIVE=true.
+    """
+    if not _ACTIVE:
+        return {"status": "inactive"}
+
+    assignments = (
+        db.query(DailyRouteAssignment)
+        .filter(
+            DailyRouteAssignment.assignment_date == shift_date,
+            DailyRouteAssignment.driver_name != None,
+            DailyRouteAssignment.driver_name != "",
+        )
+        .all()
+    )
+    if not assignments:
+        return {"status": "no_assignments", "date": shift_date.isoformat()}
+
+    client = _slack_client()
+    date_str = shift_date.strftime("%A, %B %-d")
+    sent = skipped = 0
+
+    for a in assignments:
+        # Skip if EOD already recorded
+        rec = db.query(DriverShiftDM).filter(
+            DriverShiftDM.shift_date == shift_date,
+            DriverShiftDM.driver_name == a.driver_name,
+        ).first()
+        if rec and getattr(rec, "eod_checklist_at", None):
+            skipped += 1
+            continue
+
+        slack_id = _get_driver_slack_id(a.driver_name, db)
+        if not slack_id or not client:
+            continue
+
+        first_name = a.driver_name.split(",")[1].strip().split()[0] if "," in (a.driver_name or "") else (a.driver_name or "Driver").split()[0]
+
+        eod_value = json.dumps({"shift_date": shift_date.isoformat(), "driver_name": a.driver_name})
+        blocks = [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": f"📋 End of Day Checklist — {date_str}", "emoji": True},
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"Great work today, {first_name}! Before you go, please confirm the following:\n\n"
+                        f"• Packages delivered or returned to station\n"
+                        f"• Van returned, locked, and plugged in (if electric)\n"
+                        f"• Delivery report submitted in Cortex\n"
+                        f"• Any incidents or damages reported to dispatch"
+                    ),
+                },
+            },
+            {"type": "divider"},
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "✅  EOD Complete", "emoji": True},
+                        "style": "primary",
+                        "action_id": "driver_eod_complete",
+                        "value": eod_value,
+                    }
+                ],
+            },
+        ]
+
+        try:
+            client.chat_postMessage(
+                channel=slack_id,
+                text=f"End of day checklist for {date_str} — please confirm before leaving.",
+                blocks=blocks,
+            )
+            sent += 1
+        except Exception as exc:
+            logger.warning("EOD DM failed for %s: %s", a.driver_name, exc)
+
+    return {"status": "done", "sent": sent, "skipped": skipped}
+
+
+@router.post("/eod-dms/{shift_date}")
+def trigger_eod_dms(shift_date: str, db: Session = Depends(get_db)):
+    """Send EOD checklist DMs to all drivers for shift_date. Typically called ~5pm."""
+    try:
+        target = date.fromisoformat(shift_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
+    return send_eod_checklist_dms(target, db)
 
 
 @router.get("/shift-dms/{shift_date}")

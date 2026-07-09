@@ -59,6 +59,12 @@ CLOCKIN_CACHE_TTL = 120   # 2 min  — punch events need to be near-real-time
 API_TIMEOUT = 8           # seconds per request
 MAX_PARALLEL = 5          # max concurrent ADP requests
 
+# ─── Types ────────────────────────────────────────────────────────────────────
+
+# PunchStatus per worker: {"clocked_in": bool, "clocked_out": bool,
+#                           "in_at": "ISO str or None", "out_at": "ISO str or None"}
+PunchStatus = dict
+
 # ─── In-memory caches (module-level, survive request lifetime) ────────────────
 
 _lock = threading.Lock()
@@ -66,8 +72,8 @@ _lock = threading.Lock()
 _token_cache: dict = {"token": None, "expires_at": 0.0}
 # {aoid: normalized_name}  e.g. {"G3349PZHN2N8V64H": "derric reed"}
 _worker_cache: dict = {"map": None, "fetched_at": 0.0}
-# set of normalized driver names currently clocked in, or None on error
-_clockin_cache: dict = {"names": None, "fetched_at": 0.0}
+# {normalized_name: PunchStatus} — full in+out status per worker, 2-min TTL
+_punch_cache: dict = {"status": None, "fetched_at": 0.0}
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -198,17 +204,21 @@ def _fetch_worker_map(token: str) -> dict[str, str]:
     return workers
 
 
-def _check_worker_clocked_in(token: str, aoid: str, today_str: str) -> bool:
+def _check_worker_punch(token: str, aoid: str, today_str: str) -> PunchStatus:
     """
-    Return True if worker {aoid} has an open punch today.
+    Return full punch status for worker {aoid} today.
 
     API: GET /time/v1/workers/{aoid}/time-cards
     Filter: timeCards/timeCardDate eq 'YYYY-MM-DD'
-    A worker is clocked in when any workingTimePair has startDateTime set and stopDateTime is null.
 
-    Note: If your ADP org uses a different time & attendance module, the path may be
-    /time/v2/... — verify against your ADP Marketplace API explorer.
+    Detection logic (from workingTimePairs in dailySummaries):
+      - Open pair  (startDateTime set, stopDateTime null) → clocked_in=True, clocked_out=False
+      - Closed pair (both set)                           → clocked_in=False, clocked_out=True
+      - No pairs                                         → both False
+
+    Note: ADP org may use /time/v2/... — verify against ADP Marketplace API explorer.
     """
+    result: PunchStatus = {"clocked_in": False, "clocked_out": False, "in_at": None, "out_at": None}
     import requests as _req
     try:
         resp = _req.get(
@@ -219,17 +229,23 @@ def _check_worker_clocked_in(token: str, aoid: str, today_str: str) -> bool:
             timeout=API_TIMEOUT,
         )
         if resp.status_code == 404:
-            return False
+            return result
         resp.raise_for_status()
         for card in resp.json().get("timeCards", []):
             for summary in card.get("dailySummaries", []):
                 for pair in summary.get("timeInformation", {}).get("workingTimePairs", []):
-                    # An open pair has a start but no stop
-                    if pair.get("startDateTime") and not pair.get("stopDateTime"):
-                        return True
+                    start = pair.get("startDateTime")
+                    stop = pair.get("stopDateTime")
+                    if start and not stop:
+                        result["clocked_in"] = True
+                        result["in_at"] = start
+                    elif start and stop:
+                        result["clocked_out"] = True
+                        result["in_at"] = result["in_at"] or start
+                        result["out_at"] = stop
     except Exception as exc:
         logger.debug("ADP time card check failed for %s: %s", aoid, exc)
-    return False
+    return result
 
 
 def _get_worker_map() -> Optional[dict[str, str]]:
@@ -249,20 +265,21 @@ def _get_worker_map() -> Optional[dict[str, str]]:
     return worker_map
 
 
-def get_clocked_in_names() -> Optional[set[str]]:
+def get_adp_punch_status() -> Optional[dict[str, PunchStatus]]:
     """
-    Public function — returns the set of normalized driver names currently clocked in to ADP.
-    Returns None if ADP is not configured or if the API call fails.
+    Returns {normalized_name: PunchStatus} for all active ADP workers.
+    PunchStatus = {"clocked_in": bool, "clocked_out": bool, "in_at": str|None, "out_at": str|None}
 
+    Returns None if ADP is not configured or the API call fails.
     Result is cached for CLOCKIN_CACHE_TTL seconds (2 minutes).
-    Used by rostering.get_wave_status() to enrich driver cards.
+    Used by rostering.get_wave_status() to enrich driver checklist.
     """
     if not _configured():
         return None
 
     with _lock:
-        if _clockin_cache["names"] is not None and (time.time() - _clockin_cache["fetched_at"]) < CLOCKIN_CACHE_TTL:
-            return _clockin_cache["names"]
+        if _punch_cache["status"] is not None and (time.time() - _punch_cache["fetched_at"]) < CLOCKIN_CACHE_TTL:
+            return _punch_cache["status"]
 
     worker_map = _get_worker_map()
     if not worker_map:
@@ -275,39 +292,51 @@ def get_clocked_in_names() -> Optional[set[str]]:
     today_str = date.today().isoformat()
     aoids = list(worker_map.keys())
 
-    # Check all workers in parallel (max MAX_PARALLEL concurrent requests)
-    clocked_in_aoids: set[str] = set()
+    punch_by_aoid: dict[str, PunchStatus] = {}
     try:
         with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as ex:
             futures = {
-                ex.submit(_check_worker_clocked_in, token, aoid, today_str): aoid
+                ex.submit(_check_worker_punch, token, aoid, today_str): aoid
                 for aoid in aoids
             }
             for f in as_completed(futures, timeout=15):
                 aoid = futures[f]
                 try:
-                    if f.result():
-                        clocked_in_aoids.add(aoid)
+                    punch_by_aoid[aoid] = f.result()
                 except Exception:
                     pass
     except Exception as exc:
-        logger.warning("ADP clock-in parallel fetch failed: %s", exc)
+        logger.warning("ADP punch status parallel fetch failed: %s", exc)
         return None
 
-    clocked_in_names = {worker_map[aoid] for aoid in clocked_in_aoids if aoid in worker_map}
+    status_by_name: dict[str, PunchStatus] = {
+        worker_map[aoid]: punch_by_aoid[aoid]
+        for aoid in punch_by_aoid
+        if aoid in worker_map
+    }
 
     with _lock:
-        _clockin_cache["names"] = clocked_in_names
-        _clockin_cache["fetched_at"] = time.time()
+        _punch_cache["status"] = status_by_name
+        _punch_cache["fetched_at"] = time.time()
 
-    logger.info("ADP clock-in refresh: %d/%d workers currently clocked in", len(clocked_in_names), len(aoids))
-    return clocked_in_names
+    clocked_in = sum(1 for s in status_by_name.values() if s["clocked_in"])
+    clocked_out = sum(1 for s in status_by_name.values() if s["clocked_out"])
+    logger.info("ADP punch refresh: %d in, %d out of %d workers", clocked_in, clocked_out, len(aoids))
+    return status_by_name
 
 
-def _invalidate_clockin_cache() -> None:
+def get_clocked_in_names() -> Optional[set[str]]:
+    """Backward-compat wrapper. Returns set of normalized names currently clocked in."""
+    status = get_adp_punch_status()
+    if status is None:
+        return None
+    return {name for name, s in status.items() if s["clocked_in"]}
+
+
+def _invalidate_punch_cache() -> None:
     with _lock:
-        _clockin_cache["names"] = None
-        _clockin_cache["fetched_at"] = 0.0
+        _punch_cache["status"] = None
+        _punch_cache["fetched_at"] = 0.0
 
 
 # ─── API endpoints ────────────────────────────────────────────────────────────
@@ -329,18 +358,23 @@ def adp_status():
             "optional_env_vars": ["ADP_API_URL", "ADP_CERT_PATH", "ADP_KEY_PATH"],
         }
 
-    names = get_clocked_in_names()
+    punch_status = get_adp_punch_status()
     with _lock:
-        cache_age = round(time.time() - _clockin_cache["fetched_at"], 1)
+        cache_age = round(time.time() - _punch_cache["fetched_at"], 1)
         worker_count = len(_worker_cache["map"] or {})
+
+    clocked_in = [n for n, s in (punch_status or {}).items() if s["clocked_in"]]
+    clocked_out = [n for n, s in (punch_status or {}).items() if s["clocked_out"]]
 
     return {
         "configured": True,
-        "clocked_in_count": len(names) if names is not None else None,
-        "clocked_in_names": sorted(names) if names is not None else None,
+        "clocked_in_count": len(clocked_in) if punch_status is not None else None,
+        "clocked_out_count": len(clocked_out) if punch_status is not None else None,
+        "clocked_in_names": sorted(clocked_in) if punch_status is not None else None,
+        "clocked_out_names": sorted(clocked_out) if punch_status is not None else None,
         "cache_age_seconds": cache_age,
         "worker_count": worker_count,
-        "status": "ok" if names is not None else "error",
+        "status": "ok" if punch_status is not None else "error",
     }
 
 
@@ -370,9 +404,9 @@ def adp_driver_status(driver_name: str):
 
 @router.post("/refresh")
 def adp_refresh():
-    """Force-expire the clock-in cache so the next wave-status request pulls fresh data from ADP."""
-    _invalidate_clockin_cache()
-    return {"status": "cache_cleared", "message": "Clock-in cache cleared. Next request will re-fetch from ADP."}
+    """Force-expire the punch status cache so the next wave-status request pulls fresh data from ADP."""
+    _invalidate_punch_cache()
+    return {"status": "cache_cleared", "message": "Punch status cache cleared. Next request will re-fetch from ADP."}
 
 
 @router.get("/setup-guide")

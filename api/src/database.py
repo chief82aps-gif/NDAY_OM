@@ -1964,6 +1964,27 @@ def ensure_assignment_board_columns():
             pass  # Column already exists
 
 
+def ensure_driver_shift_dm_checklist_columns():
+    """Add daily-checklist columns to driver_shift_dms — added 2026-07-09.
+
+    driver_shift_dms: schedule_acked_at  TIMESTAMP (when driver tapped 'Got My Schedule')
+                      eod_checklist_at   TIMESTAMP (when driver tapped 'EOD Complete')
+    """
+    migrations = [
+        ("driver_shift_dms", "schedule_acked_at", "TIMESTAMP"),
+        ("driver_shift_dms", "eod_checklist_at",  "TIMESTAMP"),
+    ]
+    for table, col, typedef in migrations:
+        try:
+            with engine.begin() as conn:
+                if DATABASE_URL.startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}"))
+                else:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {typedef}"))
+        except Exception:
+            pass  # Column already exists
+
+
 # ============================================================================
 # ROSTERING & DRIVER SHIFT DMs
 # ============================================================================

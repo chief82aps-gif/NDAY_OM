@@ -272,6 +272,12 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
     elif action_id == "driver_arrived_shift":
         _handle_driver_arrived(payload, db)
 
+    elif action_id == "driver_schedule_ack":
+        _handle_schedule_ack(payload, db)
+
+    elif action_id == "driver_eod_complete":
+        _handle_eod_complete(payload, db)
+
     # Slack requires a 200 response within 3 seconds
     return {"ok": True}
 
@@ -322,6 +328,86 @@ def _handle_acknowledge_callout(payload: dict, db: Session) -> None:
                 logger.warning("Could not update tight-roster alert message: %s", exc)
     except Exception as exc:
         logger.warning("acknowledge_callout handler error: %s", exc)
+
+
+def _handle_schedule_ack(payload: dict, db: Session) -> None:
+    """Driver tapped 'I've Got My Schedule' on their night-before DM."""
+    try:
+        action = (payload.get("actions") or [{}])[0]
+        value = json.loads(action.get("value", "{}"))
+        shift_date_str = value.get("shift_date", "")
+        driver_name = value.get("driver_name", "")
+
+        from api.src.routes.rostering import ack_schedule
+        ack_schedule(shift_date_str, driver_name, db)
+
+        channel_id = payload.get("channel", {}).get("id", "")
+        msg_ts = payload.get("message", {}).get("ts", "")
+        if channel_id and msg_ts:
+            token = os.getenv("SLACK_BOT_TOKEN")
+            if token:
+                from slack_sdk import WebClient as _WC
+                # Update the two-button block: replace schedule-ack button with confirmation text
+                _WC(token=token).chat_update(
+                    channel=channel_id,
+                    ts=msg_ts,
+                    text="Schedule acknowledged.",
+                    blocks=[
+                        {
+                            "type": "section",
+                            "text": {"type": "mrkdwn", "text": f"📋 *Schedule acknowledged* — See you tomorrow, {driver_name.split()[0]}! ✅"},
+                        },
+                        {
+                            "type": "actions",
+                            "elements": [
+                                {
+                                    "type": "button",
+                                    "text": {"type": "plain_text", "text": "✅  I Have Arrived for My Shift", "emoji": True},
+                                    "style": "primary",
+                                    "action_id": "driver_arrived_shift",
+                                    "value": action.get("value", "{}"),
+                                }
+                            ],
+                        },
+                    ],
+                )
+    except Exception as exc:
+        logger.warning("schedule_ack handler error: %s", exc)
+
+
+def _handle_eod_complete(payload: dict, db: Session) -> None:
+    """Driver tapped 'EOD Complete' on their end-of-day DM."""
+    try:
+        action = (payload.get("actions") or [{}])[0]
+        value = json.loads(action.get("value", "{}"))
+        shift_date_str = value.get("shift_date", "")
+        driver_name = value.get("driver_name", "")
+
+        from api.src.routes.rostering import eod_complete
+        eod_complete(shift_date_str, driver_name, db)
+
+        channel_id = payload.get("channel", {}).get("id", "")
+        msg_ts = payload.get("message", {}).get("ts", "")
+        if channel_id and msg_ts:
+            token = os.getenv("SLACK_BOT_TOKEN")
+            if token:
+                from slack_sdk import WebClient as _WC
+                _WC(token=token).chat_update(
+                    channel=channel_id,
+                    ts=msg_ts,
+                    text="EOD checklist complete.",
+                    blocks=[
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"✅ *EOD Checklist Complete* — Thanks {driver_name.split()[0]}, great work today! See you next shift. 🚐",
+                            },
+                        }
+                    ],
+                )
+    except Exception as exc:
+        logger.warning("eod_complete handler error: %s", exc)
 
 
 def _handle_driver_arrived(payload: dict, db: Session) -> None:

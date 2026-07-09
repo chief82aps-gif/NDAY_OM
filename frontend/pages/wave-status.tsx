@@ -12,6 +12,19 @@ function resolveApi() {
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+interface ChecklistItem {
+  done: boolean | null;  // null = source not configured (e.g. ADP)
+  at: string | null;
+}
+
+interface Checklist {
+  schedule_acked:  ChecklistItem;
+  adp_clocked_in:  ChecklistItem;
+  arrived:         ChecklistItem;
+  eod_checklist:   ChecklistItem;
+  adp_clocked_out: ChecklistItem;
+}
+
 interface Driver {
   driver_name: string;
   route_code: string | null;
@@ -21,7 +34,10 @@ interface Driver {
   service_type: string | null;
   status: 'arrived' | 'missing' | 'pending';
   arrived_at: string | null;
-  adp_clocked_in: boolean | null;  // null = ADP not configured
+  checklist: Checklist;
+  eta_return: string | null;       // "3:45 PM" | "Done" | null
+  pct_complete: number | null;     // 0–100 from latest Cortex snapshot
+  packages_remaining: number | null;
 }
 
 interface Wave {
@@ -56,6 +72,11 @@ function fmt12(isoOrNull: string | null): string {
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function clDotClass(done: boolean | null): string {
+  if (done === null) return 'cl-dot cl-na';
+  return done ? 'cl-dot cl-done' : 'cl-dot cl-undone';
 }
 
 function waveCountdown(mins: number | null): string {
@@ -288,6 +309,40 @@ export default function WaveStatusPage() {
     .meta-chip.adp-out { color: #F87171; border-color: rgba(248,113,113,0.3);
                           background: rgba(248,113,113,0.08); font-weight: 600; }
     .meta-chip.adp-unknown { color: var(--muted); }
+
+    .eta-row {
+      display: flex; align-items: center; gap: 8px; margin-top: 7px;
+    }
+    .eta-label { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+    .eta-value { font-size: 12px; font-weight: 700; font-family: var(--mono);
+                 color: var(--accent); }
+    .eta-value.done { color: var(--arrived); }
+    .pkg-bar {
+      flex: 1; height: 3px; background: var(--surface2);
+      border-radius: 2px; overflow: hidden;
+    }
+    .pkg-bar-fill {
+      height: 100%; border-radius: 2px; background: var(--accent);
+      transition: width 0.6s ease;
+    }
+    .pkg-bar-fill.high { background: var(--arrived); }
+
+    .checklist-row {
+      display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px;
+      padding-top: 8px; border-top: 1px solid var(--border);
+    }
+    .cl-item {
+      display: flex; align-items: center; gap: 3px;
+      font-size: 10px; font-family: var(--mono);
+      color: var(--muted); white-space: nowrap;
+    }
+    .cl-dot {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    }
+    .cl-done   { background: #20D9A0; }
+    .cl-undone { background: var(--border); }
+    .cl-na     { background: transparent; border: 1px solid var(--border); }
+    .cl-label-done { color: var(--text-dim); }
     .driver-status-col { display: flex; flex-direction: column;
                           align-items: flex-end; justify-content: space-between;
                           min-width: 70px; text-align: right; }
@@ -452,10 +507,49 @@ export default function WaveStatusPage() {
                             {driver.van_number && <span className="meta-chip">{driver.van_number}</span>}
                             {driver.stage_location && <span className="meta-chip">{driver.stage_location}</span>}
                             {driver.stops != null && <span className="meta-chip">{driver.stops} stops</span>}
-                            {driver.adp_clocked_in === true  && <span className="meta-chip adp-in">ADP ✓</span>}
-                            {driver.adp_clocked_in === false && <span className="meta-chip adp-out">ADP ✗</span>}
-                            {driver.adp_clocked_in === null  && <span className="meta-chip adp-unknown">ADP —</span>}
                           </div>
+                          {(driver.eta_return || driver.pct_complete != null) && (
+                            <div className="eta-row">
+                              {driver.pct_complete != null && (
+                                <div className="pkg-bar" title={`${Math.round(driver.pct_complete)}% delivered`}>
+                                  <div
+                                    className={`pkg-bar-fill${driver.pct_complete >= 95 ? ' high' : ''}`}
+                                    style={{ width: `${Math.min(100, driver.pct_complete)}%` }}
+                                  />
+                                </div>
+                              )}
+                              {driver.eta_return && (
+                                <>
+                                  <span className="eta-label">ETA</span>
+                                  <span className={`eta-value${driver.eta_return === 'Done' ? ' done' : ''}`}>
+                                    {driver.eta_return}
+                                  </span>
+                                  {driver.packages_remaining != null && driver.packages_remaining > 0 && (
+                                    <span className="eta-label">· {driver.packages_remaining} left</span>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          )}
+                          {driver.checklist && (
+                            <div className="checklist-row">
+                              {([
+                                ['schedule_acked',  'Sched'],
+                                ['adp_clocked_in',  'ADP In'],
+                                ['arrived',         'Arrived'],
+                                ['eod_checklist',   'EOD'],
+                                ['adp_clocked_out', 'Clk Out'],
+                              ] as [keyof Checklist, string][]).map(([key, label]) => {
+                                const item = driver.checklist[key];
+                                return (
+                                  <span key={key} className="cl-item" title={item.at ? fmt12(item.at) : label}>
+                                    <span className={clDotClass(item.done)} />
+                                    <span className={item.done ? 'cl-label-done' : ''}>{label}</span>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                         <div className="driver-status-col">
                           <span className={`status-label status-${driver.status}`}>{cfg.label}</span>

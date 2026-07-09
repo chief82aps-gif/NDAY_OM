@@ -1968,6 +1968,23 @@ def ensure_assignment_board_columns():
 # ROSTERING & DRIVER SHIFT DMs
 # ============================================================================
 
+class WaveLeadNotification(Base):
+    """Deduplication tracker for wave-lead pre-wave and missing-summary messages."""
+    __tablename__ = "wave_lead_notifications"
+
+    id = Column(Integer, primary_key=True)
+    shift_date = Column(Date, nullable=False, index=True)
+    wave_time = Column(String(20), nullable=False)
+    notif_type = Column(String(20), nullable=False)  # "pre_wave" | "missing_summary"
+    sent_at = Column(DateTime, default=datetime.utcnow)
+    slack_ts = Column(String(50))
+    wave_lead_slack_id = Column(String(50))
+
+    __table_args__ = (
+        Index("idx_wln_date_wave_type", "shift_date", "wave_time", "notif_type"),
+    )
+
+
 class NightlyRosterReminder(Base):
     """Deduplication tracker for the 1900-hrs nightly roster reminder DMs."""
     __tablename__ = "nightly_roster_reminders"

@@ -18,7 +18,7 @@ from api.src.routes import uploads, auth, audit, enhanced_audit, weekly_audit, w
 from api.src.routes import daily_notify, quality, attendance, attendance_reports, ops_ingest, dvic, dsp_scorecard_weekly, eod_survey, route_assignment, slack_interactions, manager_accountability
 from api.src.routes import rostering, cortex_tracking
 from api.src.routes.daily_notify import check_and_notify, check_ecp_and_prompt
-from api.src.routes.rostering import send_nightly_roster_reminder
+from api.src.routes.rostering import send_nightly_roster_reminder, send_wave_lead_pre_wave_dm, send_missing_drivers_summary
 from api.src.database import Base, engine, SessionLocal, ensure_dop_driver_name_column, ensure_ssn_last4_column, ensure_callout_signature_column, ensure_assignment_board_columns, _ensure_manager_signature_columns, _ensure_position_id_nullable
 
 logger = logging.getLogger(__name__)
@@ -164,6 +164,72 @@ async def _nightly_roster_reminder_loop():
         await asyncio.sleep(600)  # check every 10 min
 
 
+async def _wave_lead_watcher_loop():
+    """
+    Runs every 60 s. For each unique wave time today:
+      - Fires pre-wave DM to wave lead when now >= wave_time - 10 min (deduped)
+      - Fires missing-drivers summary when now >= wave_time (deduped)
+    Gated by ROSTERING_ACTIVE=true.
+    """
+    import os as _os
+    while True:
+        try:
+            if _os.getenv("ROSTERING_ACTIVE", "false").lower() == "true":
+                now_pt = datetime.now(PACIFIC)
+                today = now_pt.date()
+                db = SessionLocal()
+                try:
+                    from api.src.database import DailyRouteAssignment
+                    from sqlalchemy import distinct
+                    wave_times = [
+                        r[0] for r in
+                        db.query(DailyRouteAssignment.wave)
+                        .filter(
+                            DailyRouteAssignment.assignment_date == today,
+                            DailyRouteAssignment.wave != None,
+                            DailyRouteAssignment.wave != "",
+                        )
+                        .distinct()
+                        .all()
+                    ]
+                    for wave_str in wave_times:
+                        # Parse wave time into today's datetime (Pacific)
+                        wave_dt = None
+                        for fmt in ("%I:%M %p", "%H:%M", "%I:%M%p"):
+                            try:
+                                parsed = datetime.strptime(wave_str.strip(), fmt)
+                                wave_dt = now_pt.replace(
+                                    hour=parsed.hour, minute=parsed.minute,
+                                    second=0, microsecond=0
+                                )
+                                break
+                            except ValueError:
+                                continue
+                        if not wave_dt:
+                            continue
+
+                        minutes_to_wave = (wave_dt - now_pt).total_seconds() / 60
+
+                        # Pre-wave briefing: between 12 and 9 minutes before wave
+                        if -12 <= minutes_to_wave <= -9:
+                            await asyncio.to_thread(
+                                send_wave_lead_pre_wave_dm, today, wave_str, db
+                            )
+
+                        # Missing summary: between 0 and 5 minutes after wave
+                        if -5 <= minutes_to_wave <= 0:
+                            await asyncio.to_thread(
+                                send_missing_drivers_summary, today, wave_str, db
+                            )
+                except Exception as exc:
+                    logger.warning("Wave lead watcher poll error: %s", exc)
+                finally:
+                    db.close()
+        except Exception as exc:
+            logger.warning("Wave lead watcher loop error: %s", exc)
+        await asyncio.sleep(60)  # every minute
+
+
 async def _grounded_van_watcher_loop():
     """Poll #nday-team-room every 30 min for grounded-van mentions.
     Gated by ROSTERING_ACTIVE=true."""
@@ -212,6 +278,7 @@ async def startup():
     asyncio.create_task(_callout_queue_loop())
     asyncio.create_task(_nightly_roster_reminder_loop())
     asyncio.create_task(_grounded_van_watcher_loop())
+    asyncio.create_task(_wave_lead_watcher_loop())
 
 cors_origins_env = os.getenv("CORS_ORIGINS", "").strip()
 if cors_origins_env:

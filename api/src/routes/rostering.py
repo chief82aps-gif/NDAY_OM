@@ -37,6 +37,7 @@ from api.src.database import (
     QualityMetricSnapshot,
     AttendanceEvent,
     DailyRouteAssignment,
+    WaveLeadNotification,
 )
 
 logger = logging.getLogger(__name__)
@@ -539,10 +540,296 @@ def post_mgt_summary(shift_date: date, db: Session, grounded_vans: Optional[list
         return {"status": "error", "detail": str(exc)}
 
 
+# ─── Wave lead notifications ─────────────────────────────────────────────────
+
+def _wave_assignments(shift_date: date, wave_time_str: str, db: Session) -> list:
+    """All DailyRouteAssignment rows for a specific wave on shift_date."""
+    return (
+        db.query(DailyRouteAssignment)
+        .filter(
+            DailyRouteAssignment.assignment_date == shift_date,
+            DailyRouteAssignment.wave == wave_time_str,
+            DailyRouteAssignment.driver_name != None,
+            DailyRouteAssignment.driver_name != "",
+        )
+        .order_by(DailyRouteAssignment.driver_name)
+        .all()
+    )
+
+
+def _arrived_names(shift_date: date, db: Session) -> set[str]:
+    """Set of driver names who have confirmed arrival for shift_date."""
+    rows = (
+        db.query(DriverShiftDM.driver_name)
+        .filter(
+            DriverShiftDM.shift_date == shift_date,
+            DriverShiftDM.arrival_confirmed == True,
+        )
+        .all()
+    )
+    return {r.driver_name for r in rows}
+
+
+def send_wave_lead_pre_wave_dm(shift_date: date, wave_time_str: str, db: Session) -> bool:
+    """
+    Send the wave lead a briefing DM 10 minutes before their wave.
+    Lists every driver on that wave with their route, van, and staging.
+    Deduped — fires once per wave per day.
+    Gated by ROSTERING_ACTIVE=true.
+    """
+    if not _ACTIVE:
+        return False
+
+    # Dedup check
+    already = db.query(WaveLeadNotification).filter(
+        WaveLeadNotification.shift_date == shift_date,
+        WaveLeadNotification.wave_time == wave_time_str,
+        WaveLeadNotification.notif_type == "pre_wave",
+    ).first()
+    if already:
+        return False
+
+    assignments = _wave_assignments(shift_date, wave_time_str, db)
+    if not assignments:
+        return False
+
+    _, wave_lead_id = _wave_lead_name(shift_date)
+    client = _slack_client()
+    if not client:
+        return False
+
+    date_str = shift_date.strftime("%A, %B %-d")
+    arrived = _arrived_names(shift_date, db)
+
+    lines = []
+    for a in assignments:
+        icon = "✅" if a.driver_name in arrived else "⏳"
+        parts = [f"{icon} *{a.driver_name}*"]
+        if a.route_code:
+            parts.append(a.route_code)
+        if a.van_number:
+            parts.append(a.van_number)
+        if a.stage_location:
+            parts.append(a.stage_location)
+        lines.append(" | ".join(parts))
+
+    present_count = sum(1 for a in assignments if a.driver_name in arrived)
+    total = len(assignments)
+
+    blocks = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": f"📋 Wave Briefing — {wave_time_str}",
+                "emoji": True,
+            },
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*{date_str} · {wave_time_str} wave launches in ~10 minutes*\n"
+                    f"Confirmed: *{present_count}/{total}* drivers on-site"
+                ),
+            },
+        },
+        {"type": "divider"},
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "\n".join(lines) or "_No driver assignments found_",
+            },
+        },
+        {
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": "✅ = arrived  ⏳ = not yet confirmed  —  You'll get a ping as each driver checks in."},
+            ],
+        },
+    ]
+
+    try:
+        resp = client.chat_postMessage(
+            channel=wave_lead_id,
+            text=f"Wave briefing for {wave_time_str} — {present_count}/{total} confirmed",
+            blocks=blocks,
+        )
+        db.add(WaveLeadNotification(
+            shift_date=shift_date,
+            wave_time=wave_time_str,
+            notif_type="pre_wave",
+            slack_ts=resp.get("ts"),
+            wave_lead_slack_id=wave_lead_id,
+        ))
+        db.commit()
+        return True
+    except Exception as exc:
+        logger.warning("Wave lead pre-wave DM failed: %s", exc)
+        return False
+
+
+def notify_wave_lead_driver_arrived(
+    shift_date: date, driver_name: str, db: Session
+) -> None:
+    """
+    Ping the wave lead immediately when a driver taps 'I Have Arrived'.
+    Not deduped — each arrival is a distinct event.
+    Gated by ROSTERING_ACTIVE=true.
+    """
+    if not _ACTIVE:
+        return
+
+    _, wave_lead_id = _wave_lead_name(shift_date)
+    client = _slack_client()
+    if not client:
+        return
+
+    # Look up this driver's assignment for context
+    assignment = (
+        db.query(DailyRouteAssignment)
+        .filter(
+            DailyRouteAssignment.assignment_date == shift_date,
+            DailyRouteAssignment.driver_name == driver_name,
+        )
+        .first()
+    )
+
+    # Tally arrived/total for this wave
+    wave_time_str = assignment.wave if assignment else None
+    total_on_wave = 0
+    arrived_on_wave = 0
+    if wave_time_str:
+        wave_assignments = _wave_assignments(shift_date, wave_time_str, db)
+        arrived = _arrived_names(shift_date, db)
+        # Include the driver who just arrived
+        arrived.add(driver_name)
+        total_on_wave = len(wave_assignments)
+        arrived_on_wave = sum(1 for a in wave_assignments if a.driver_name in arrived)
+
+    now_pt_str = datetime.utcnow().strftime("%-I:%M %p") + " UTC"
+    detail_parts = []
+    if assignment:
+        if assignment.route_code:
+            detail_parts.append(f"Route *{assignment.route_code}*")
+        if assignment.van_number:
+            detail_parts.append(f"Van *{assignment.van_number}*")
+        if assignment.stops or assignment.packages:
+            detail_parts.append(f"{assignment.stops or assignment.packages} stops")
+    detail_str = " · ".join(detail_parts) if detail_parts else ""
+
+    wave_tally = f"  ({arrived_on_wave}/{total_on_wave} on {wave_time_str} wave)" if wave_time_str else ""
+
+    text = f"✅ *{driver_name}* arrived at {now_pt_str}{wave_tally}"
+    if detail_str:
+        text += f"\n{detail_str}"
+
+    try:
+        client.chat_postMessage(channel=wave_lead_id, text=text)
+    except Exception as exc:
+        logger.warning("Wave lead arrival ping failed: %s", exc)
+
+
+def send_missing_drivers_summary(shift_date: date, wave_time_str: str, db: Session) -> bool:
+    """
+    Send the wave lead a missing-drivers summary at wave time.
+    Lists everyone on that wave who has NOT confirmed arrival.
+    Deduped — fires once per wave per day.
+    Gated by ROSTERING_ACTIVE=true.
+    """
+    if not _ACTIVE:
+        return False
+
+    already = db.query(WaveLeadNotification).filter(
+        WaveLeadNotification.shift_date == shift_date,
+        WaveLeadNotification.wave_time == wave_time_str,
+        WaveLeadNotification.notif_type == "missing_summary",
+    ).first()
+    if already:
+        return False
+
+    assignments = _wave_assignments(shift_date, wave_time_str, db)
+    if not assignments:
+        return False
+
+    _, wave_lead_id = _wave_lead_name(shift_date)
+    client = _slack_client()
+    if not client:
+        return False
+
+    arrived = _arrived_names(shift_date, db)
+    missing = [a for a in assignments if a.driver_name not in arrived]
+    present_count = len(assignments) - len(missing)
+    total = len(assignments)
+
+    if not missing:
+        text = f"✅ *All {total} drivers confirmed for {wave_time_str} wave.* Full roster accounted for!"
+        blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": text}}]
+    else:
+        missing_lines = []
+        for a in missing:
+            parts = [f"• *{a.driver_name}*"]
+            if a.route_code:
+                parts.append(f"Route {a.route_code}")
+            if a.van_number:
+                parts.append(f"Van {a.van_number}")
+            missing_lines.append(" — ".join(parts))
+
+        blocks = [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": f"🚨 Missing Drivers — {wave_time_str} Wave",
+                    "emoji": True,
+                },
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"*Wave time has arrived.* "
+                        f"{present_count}/{total} drivers confirmed on-site.\n\n"
+                        f"*Not yet confirmed ({len(missing)}):*\n"
+                        + "\n".join(missing_lines)
+                    ),
+                },
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {"type": "mrkdwn", "text": "_Check attendance system or contact drivers directly._"},
+                ],
+            },
+        ]
+
+    try:
+        resp = client.chat_postMessage(
+            channel=wave_lead_id,
+            text=f"Missing drivers for {wave_time_str} wave: {len(missing)}/{total}",
+            blocks=blocks,
+        )
+        db.add(WaveLeadNotification(
+            shift_date=shift_date,
+            wave_time=wave_time_str,
+            notif_type="missing_summary",
+            slack_ts=resp.get("ts"),
+            wave_lead_slack_id=wave_lead_id,
+        ))
+        db.commit()
+        return True
+    except Exception as exc:
+        logger.warning("Missing drivers summary failed: %s", exc)
+        return False
+
+
 # ─── Arrival confirmation (called from slack_interactions.py) ────────────────
 
 def mark_driver_arrived(shift_date_str: str, driver_name: str, slack_user_id: str, db: Session) -> bool:
-    """Record driver arrival from the Slack button tap."""
+    """Record driver arrival from the Slack button tap and ping the wave lead."""
     try:
         shift_date = date.fromisoformat(shift_date_str)
     except ValueError:
@@ -561,6 +848,13 @@ def mark_driver_arrived(shift_date_str: str, driver_name: str, slack_user_id: st
     record.arrived_slack_user_id = slack_user_id
     record.arrival_confirmed = True
     db.commit()
+
+    # Ping the wave lead with this arrival
+    try:
+        notify_wave_lead_driver_arrived(shift_date, driver_name, db)
+    except Exception as exc:
+        logger.warning("Wave lead arrival ping error: %s", exc)
+
     return True
 
 

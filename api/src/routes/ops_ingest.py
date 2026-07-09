@@ -297,6 +297,14 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
                        if hasattr(rec, "transporter_id") else {}),
                 ))
             db.commit()
+
+            # Trigger day-of DMs now that route assignments are populated
+            try:
+                from api.src.routes.rostering import send_day_of_dms
+                send_day_of_dms(upload_date, db)
+            except Exception as e:
+                logger.warning("Day-of DM trigger after Cortex ingest failed: %s", e)
+
             return {"status": "ingested", "records": len(orchestrator.status.cortex_records)}
         finally:
             try:

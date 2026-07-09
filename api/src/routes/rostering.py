@@ -36,6 +36,7 @@ from api.src.database import (
     QualityMetricDriver,
     QualityMetricSnapshot,
     AttendanceEvent,
+    DailyRouteAssignment,
 )
 
 logger = logging.getLogger(__name__)
@@ -563,6 +564,186 @@ def mark_driver_arrived(shift_date_str: str, driver_name: str, slack_user_id: st
     return True
 
 
+# ─── Day-of DMs (route + van + staging + packages) ──────────────────────────
+
+def _parse_wave_dt(wave_str: str) -> Optional[datetime]:
+    """Parse a wave time string into a datetime (date portion ignored)."""
+    for fmt in ("%I:%M %p", "%H:%M", "%I:%M%p", "%-I:%M %p"):
+        try:
+            return datetime.strptime(wave_str.strip(), fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _calc_return_time(wave_str: str, duration_minutes: Optional[int]) -> Optional[str]:
+    """Expected return = wave + route_duration - 30 min."""
+    if not wave_str or not duration_minutes:
+        return None
+    dt = _parse_wave_dt(wave_str)
+    if not dt:
+        return None
+    return (dt + timedelta(minutes=int(duration_minutes) - 30)).strftime("%-I:%M %p")
+
+
+def send_day_of_dms(shift_date: date, db: Session) -> dict:
+    """
+    Send morning-of route assignment DMs to all drivers with a confirmed assignment.
+
+    Queries DailyRouteAssignment for shift_date where dm_sent=False.
+    Each DM is Block Kit with route, van, staging, wave, showtime, expected return,
+    stop count, wave lead, and the arrival confirmation button.
+
+    Marks dm_sent=True on each record so daily_notify.send_all_dms() won't double-send.
+    Gated by ROSTERING_ACTIVE=true.
+    """
+    if not _ACTIVE:
+        return {"status": "inactive", "note": "Set ROSTERING_ACTIVE=true on Render to enable"}
+
+    assignments = (
+        db.query(DailyRouteAssignment)
+        .filter(
+            DailyRouteAssignment.assignment_date == shift_date,
+            DailyRouteAssignment.dm_sent == False,
+            DailyRouteAssignment.driver_name != None,
+            DailyRouteAssignment.driver_name != "",
+        )
+        .order_by(DailyRouteAssignment.driver_name)
+        .all()
+    )
+
+    if not assignments:
+        return {"status": "no_assignments", "date": shift_date.isoformat()}
+
+    wave_lead_name, _ = _wave_lead_name(shift_date)
+    client = _slack_client()
+    date_str = shift_date.strftime("%A, %B %-d")
+
+    sent = skipped = no_slack = 0
+
+    for a in assignments:
+        slack_id = _get_driver_slack_id(a.driver_name, db)
+        if not slack_id:
+            no_slack += 1
+            # Still mark dm_sent so daily_notify plain-text fallback can pick it up
+            continue
+
+        first_name = a.driver_name.split(",")[1].strip().split()[0] if "," in (a.driver_name or "") else (a.driver_name or "Driver").split()[0]
+
+        showtime = _calc_showtime(a.wave)
+        return_time = _calc_return_time(a.wave or "", a.route_duration)
+
+        # Build detail fields — only include rows we have data for
+        fields = []
+        if a.route_code:
+            fields.append({"type": "mrkdwn", "text": f"*Route:*\n{a.route_code}"})
+        if a.van_number:
+            fields.append({"type": "mrkdwn", "text": f"*Van:*\n{a.van_number}"})
+        if a.stage_location:
+            fields.append({"type": "mrkdwn", "text": f"*Staging:*\n{a.stage_location}"})
+        if showtime:
+            fields.append({"type": "mrkdwn", "text": f"*Showtime:*\n{showtime}"})
+        if a.wave:
+            fields.append({"type": "mrkdwn", "text": f"*Wave:*\n{a.wave}"})
+        if return_time:
+            fields.append({"type": "mrkdwn", "text": f"*Est. Return:*\n{return_time}"})
+        stops_val = a.stops or a.packages
+        if stops_val:
+            fields.append({"type": "mrkdwn", "text": f"*Stops:*\n{stops_val}"})
+        fields.append({"type": "mrkdwn", "text": f"*Wave Lead:*\n{wave_lead_name}"})
+
+        arrival_value = json.dumps({
+            "shift_date": shift_date.isoformat(),
+            "driver_name": a.driver_name,
+        })
+
+        blocks = [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": f"🚐 Your Assignment — {date_str}",
+                    "emoji": True,
+                },
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"Good morning, {first_name}! Here's everything you need for today's shift:",
+                },
+            },
+            {
+                "type": "section",
+                "fields": fields,
+            },
+            {"type": "divider"},
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "_Drive safe and have a great shift! 💪 For questions before your wave, contact your wave lead on Zello._",
+                },
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "✅  I Have Arrived for My Shift",
+                            "emoji": True,
+                        },
+                        "style": "primary",
+                        "action_id": "driver_arrived_shift",
+                        "value": arrival_value,
+                    }
+                ],
+            },
+        ]
+
+        fallback_text = (
+            f"Good morning {first_name}! Your assignment for {date_str}: "
+            f"Route {a.route_code or '?'} | Van {a.van_number or '?'} | "
+            f"Staging {a.stage_location or '?'} | Showtime {showtime or '?'} | Wave {a.wave or '?'} | "
+            f"Wave Lead {wave_lead_name}"
+        )
+
+        dm_ts = None
+        if client:
+            try:
+                resp = client.chat_postMessage(
+                    channel=slack_id,
+                    text=fallback_text,
+                    blocks=blocks,
+                )
+                dm_ts = resp.get("ts")
+                sent += 1
+            except Exception as exc:
+                logger.warning("Day-of DM failed for %s: %s", a.driver_name, exc)
+                no_slack += 1
+                continue
+
+        # Mark sent on DailyRouteAssignment to prevent daily_notify double-send
+        a.dm_sent = True
+        a.dm_sent_at = datetime.utcnow()
+        if dm_ts:
+            a.dm_message_ts = dm_ts
+            a.dm_channel = slack_id
+
+    db.commit()
+
+    return {
+        "status": "done",
+        "date": shift_date.isoformat(),
+        "sent": sent,
+        "skipped": skipped,
+        "no_slack_id": no_slack,
+        "total": len(assignments),
+    }
+
+
 # ─── API endpoints ───────────────────────────────────────────────────────────
 
 @router.post("/nightly-reminder")
@@ -615,6 +796,16 @@ def get_suggested_roster(shift_date: str, db: Session = Depends(get_db)):
         "roster": suggestions,
         "wave_lead": _wave_lead_name(target)[0],
     }
+
+
+@router.post("/day-of-dms/{shift_date}")
+def trigger_day_of_dms(shift_date: str, db: Session = Depends(get_db)):
+    """Send morning-of route/van/staging DMs for all drivers with assignments on shift_date."""
+    try:
+        target = date.fromisoformat(shift_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
+    return send_day_of_dms(target, db)
 
 
 @router.get("/shift-dms/{shift_date}")

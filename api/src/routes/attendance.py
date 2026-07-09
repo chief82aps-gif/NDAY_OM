@@ -909,11 +909,6 @@ def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
     db.add(event)
     db.commit()
 
-    _notify_dispatch_callout(
-        roster_entry.payroll_name, req.reason_code,
-        req.scheduled_wave, notes_with_flag, compliant, hours_before,
-    )
-
     # Queue callout notification for #nday-mgt
     wave_time = scheduled.wave_time if (scheduled and hasattr(scheduled, "wave_time")) else req.scheduled_wave
     roster_tight = queue_callout_notification(

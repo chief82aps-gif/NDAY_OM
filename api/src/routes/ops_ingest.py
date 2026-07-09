@@ -410,6 +410,22 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
             except Exception as e:
                 logger.warning("Schedule DB persist failed: %s", e)
 
+            # Trigger driver shift DMs + #nday-mgt summary for tomorrow's date
+            primary_date_obj = None
+            if summary and summary.date:
+                try:
+                    from datetime import datetime as _dt2
+                    primary_date_obj = _dt2.strptime(summary.date, "%m/%d/%Y").date()
+                except Exception:
+                    pass
+            if primary_date_obj:
+                try:
+                    from api.src.routes.rostering import send_driver_shift_dms, post_mgt_summary
+                    send_driver_shift_dms(primary_date_obj, db)
+                    post_mgt_summary(primary_date_obj, db)
+                except Exception as e:
+                    logger.warning("Post-schedule DM/summary trigger failed: %s", e)
+
             return {
                 "status": "ingested",
                 "schedule_date": summary.date if summary else None,

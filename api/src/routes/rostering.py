@@ -1,0 +1,650 @@
+"""
+Rostering module — nightly reminder, driver shift DMs, #nday-mgt summary matrix.
+
+Background loops (started in main.py):
+  _nightly_roster_reminder_loop()  — fires daily at 19:00 PT
+  _grounded_van_watcher_loop()     — polls #nday-team-room for grounded-van mentions
+
+Endpoints:
+  POST /rostering/nightly-reminder        manual trigger for 1900hrs reminder
+  POST /rostering/driver-dms/{date}       send shift DMs for a given date (YYYY-MM-DD)
+  POST /rostering/mgt-summary/{date}      post/refresh #nday-mgt matrix
+  GET  /rostering/suggested/{date}        return ranked roster suggestion
+  GET  /rostering/shift-dms/{date}        list DM status + arrival confirmations
+  POST /rostering/mark-arrived            called by Slack interaction handler
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+from datetime import date, datetime, timedelta
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from api.src.database import (
+    get_db,
+    DriverScheduleEntry,
+    DriverRosterEntry,
+    NightlyRosterReminder,
+    DriverShiftDM,
+    MgtSummaryPost,
+    QualityMetricDriver,
+    QualityMetricSnapshot,
+    AttendanceEvent,
+)
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/rostering", tags=["rostering"])
+
+# ─── Slack constants ──────────────────────────────────────────────────────────
+MGT_CHANNEL   = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
+TEAM_CHANNEL  = os.getenv("SLACK_TEAM_CHANNEL", "C0BAQAYKANS")  # #nday-team-room
+
+SPENCER_ID    = "U0BE493C5K9"
+LUIS_ID       = "U0B36C9R8N4"
+FABIAN_ID     = "U0AJPQALDLL"
+
+# Managers by weekday (0=Mon … 6=Sun)
+# Spencer: Sun(6), Mon(0), Tue(1), Wed(2)
+# Fabian:  Wed(2), Thu(3), Fri(4), Sat(5)
+_SPENCER_DAYS = {0, 1, 2, 6}
+_FABIAN_DAYS  = {2, 3, 4, 5}
+
+# Hard van constraints per driver (override all other assignment logic)
+DRIVER_VAN_CONSTRAINTS: dict[str, str] = {
+    "Austin Spitzer": "4WD P31 Delivery Truck",
+    # Riley's last name TBD — add here once confirmed
+}
+
+# Known nursery-area routes (flagged as risk in summary — extend as needed)
+NURSERY_ROUTE_PREFIXES: set[str] = set()   # e.g. {"NUR", "GRD"} — populated later
+
+# Feature gate — set ROSTERING_ACTIVE=true on Render to enable live messages
+_ACTIVE = os.getenv("ROSTERING_ACTIVE", "false").lower() == "true"
+
+# Standing rank for quality tiers
+_STANDING_RANK = {"Platinum": 4, "Gold": 3, "Silver": 2, "Bronze": 1}
+
+
+# ─── Helpers ─────────────────────────────────────────────────────────────────
+
+def _slack_client():
+    token = os.getenv("SLACK_BOT_TOKEN", "")
+    if not token:
+        return None
+    from slack_sdk import WebClient
+    return WebClient(token=token)
+
+
+def _wave_lead_name(shift_date: date) -> tuple[str, str]:
+    """Return (display_name, slack_user_id) for the on-duty wave lead."""
+    wd = shift_date.weekday()   # 0=Mon … 6=Sun
+    if wd in _SPENCER_DAYS and wd not in (_FABIAN_DAYS - {2}):
+        return "Spencer Colby", SPENCER_ID
+    return "Galo (Fabian Marcillo)", FABIAN_ID
+
+
+def _calc_showtime(wave_time_str: Optional[str]) -> Optional[str]:
+    """Return showtime = wave_time - 25 minutes, formatted HH:MM AM/PM."""
+    if not wave_time_str:
+        return None
+    for fmt in ("%I:%M %p", "%H:%M", "%I:%M%p"):
+        try:
+            t = datetime.strptime(wave_time_str.strip(), fmt)
+            show = (t - timedelta(minutes=25)).strftime("%-I:%M %p")
+            return show
+        except ValueError:
+            continue
+    return None
+
+
+def _latest_quality_map(db: Session) -> dict[str, dict]:
+    """Return {driver_name: {standing, score}} from the most recent quality snapshot."""
+    latest = (
+        db.query(QualityMetricSnapshot)
+        .order_by(QualityMetricSnapshot.id.desc())
+        .first()
+    )
+    if not latest:
+        return {}
+    rows = (
+        db.query(QualityMetricDriver)
+        .filter(QualityMetricDriver.snapshot_id == latest.id)
+        .all()
+    )
+    return {
+        r.driver_name: {
+            "standing": r.overall_standing or "Bronze",
+            "score": float(r.overall_score or 0),
+        }
+        for r in rows
+    }
+
+
+def _called_out_today(shift_date: date, db: Session) -> set[str]:
+    """Return names of drivers who called out for shift_date."""
+    rows = (
+        db.query(AttendanceEvent.driver_name)
+        .filter(
+            AttendanceEvent.event_date == shift_date,
+            AttendanceEvent.is_missed == True,
+        )
+        .all()
+    )
+    return {r.driver_name for r in rows}
+
+
+# ─── Roster suggestion builder ───────────────────────────────────────────────
+
+def _build_roster_suggestion(shift_date: date, db: Session) -> list[dict]:
+    """
+    Return drivers scheduled for shift_date, ranked by quality standing.
+    Each entry: {driver_name, standing, score, rank, constraints, callout}
+    """
+    scheduled = (
+        db.query(DriverScheduleEntry)
+        .filter(DriverScheduleEntry.schedule_date == shift_date)
+        .order_by(DriverScheduleEntry.driver_name)
+        .all()
+    )
+    if not scheduled:
+        return []
+
+    quality_map = _latest_quality_map(db)
+    called_out = _called_out_today(shift_date, db)
+
+    suggestions = []
+    for entry in scheduled:
+        name = entry.driver_name
+        q = quality_map.get(name, {"standing": "Unknown", "score": 0.0})
+        constraint = DRIVER_VAN_CONSTRAINTS.get(name)
+        suggestions.append({
+            "driver_name": name,
+            "standing": q["standing"],
+            "score": q["score"],
+            "rank": _STANDING_RANK.get(q["standing"], 0),
+            "wave_time": entry.wave_time,
+            "show_time": entry.show_time,
+            "is_sweeper": entry.is_sweeper,
+            "van_constraint": constraint,
+            "called_out": name in called_out,
+        })
+
+    suggestions.sort(key=lambda x: (-x["rank"], -x["score"], x["driver_name"]))
+    return suggestions
+
+
+# ─── Nightly reminder (1900 PT) ──────────────────────────────────────────────
+
+def send_nightly_roster_reminder(shift_date: date, db: Session) -> dict:
+    """
+    DM Spencer, Luis, and Fabian with suggested roster for shift_date.
+    Deduped by date — safe to call repeatedly.
+    Returns {"status": "sent"|"already_sent"|"inactive"|"no_schedule", ...}
+    """
+    if not _ACTIVE:
+        return {"status": "inactive", "note": "Set ROSTERING_ACTIVE=true on Render to enable"}
+
+    existing = db.query(NightlyRosterReminder).filter(
+        NightlyRosterReminder.shift_date == shift_date
+    ).first()
+    if existing:
+        return {"status": "already_sent", "date": shift_date.isoformat()}
+
+    suggestions = _build_roster_suggestion(shift_date, db)
+    if not suggestions:
+        return {"status": "no_schedule", "date": shift_date.isoformat()}
+
+    client = _slack_client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    date_str = shift_date.strftime("%A, %B %-d")
+    wave_lead_name, _ = _wave_lead_name(shift_date)
+
+    # Build roster text
+    lines = []
+    for i, s in enumerate(suggestions, 1):
+        flag = "⚠️ CALLED OUT" if s["called_out"] else ""
+        constraint = f" | 🔒 {s['van_constraint']}" if s["van_constraint"] else ""
+        sweeper = " | 🧹 Sweeper" if s["is_sweeper"] else ""
+        standing_emoji = {"Platinum": "💎", "Gold": "🥇", "Silver": "🥈", "Bronze": "🥉"}.get(s["standing"], "❔")
+        lines.append(
+            f"  {i}. {standing_emoji} *{s['driver_name']}* — {s['standing']}{constraint}{sweeper} {flag}"
+        )
+
+    roster_text = "\n".join(lines)
+    active_count = sum(1 for s in suggestions if not s["called_out"])
+
+    text = (
+        f"📋 *Nightly Roster Reminder — {date_str}*\n\n"
+        f"The schedule for tomorrow needs to be uploaded to the system before you leave tonight.\n"
+        f"Wave Lead: *{wave_lead_name}*\n\n"
+        f"*Suggested rostering order ({active_count} available):*\n"
+        f"{roster_text}\n\n"
+        f"Once rostering is complete in Cortex, upload the Routes xlsx to "
+        f"#nday-operations-management so driver DMs can go out."
+    )
+
+    ts_map: dict[str, Optional[str]] = {
+        "spencer": None, "luis": None, "fabian": None
+    }
+    for key, uid in [("spencer", SPENCER_ID), ("luis", LUIS_ID), ("fabian", FABIAN_ID)]:
+        try:
+            resp = client.chat_postMessage(channel=uid, text=text)
+            ts_map[key] = resp.get("ts")
+        except Exception as exc:
+            logger.warning("Nightly reminder DM to %s failed: %s", key, exc)
+
+    record = NightlyRosterReminder(
+        shift_date=shift_date,
+        driver_count=len(suggestions),
+        reminder_ts_spencer=ts_map["spencer"],
+        reminder_ts_luis=ts_map["luis"],
+        reminder_ts_fabian=ts_map["fabian"],
+    )
+    db.add(record)
+    db.commit()
+
+    return {
+        "status": "sent",
+        "date": shift_date.isoformat(),
+        "driver_count": len(suggestions),
+        "ts": ts_map,
+    }
+
+
+# ─── Driver shift DMs ────────────────────────────────────────────────────────
+
+def _get_driver_slack_id(driver_name: str, db: Session) -> Optional[str]:
+    """Look up Slack user ID from driver_roster (populated by SSN import script)."""
+    entry = (
+        db.query(DriverRosterEntry)
+        .filter(DriverRosterEntry.payroll_name == driver_name, DriverRosterEntry.is_active == True)
+        .first()
+    )
+    if entry:
+        return getattr(entry, "slack_user_id", None)
+    return None
+
+
+def send_driver_shift_dms(shift_date: date, db: Session) -> dict:
+    """
+    Send pre-shift DMs to all drivers scheduled for shift_date.
+    Each DM includes showtime, wave lead, and an arrival confirmation button.
+    Safe to call multiple times — skips drivers already DM'd.
+    """
+    if not _ACTIVE:
+        return {"status": "inactive", "note": "Set ROSTERING_ACTIVE=true on Render to enable"}
+
+    scheduled = (
+        db.query(DriverScheduleEntry)
+        .filter(DriverScheduleEntry.schedule_date == shift_date)
+        .all()
+    )
+    if not scheduled:
+        return {"status": "no_schedule", "date": shift_date.isoformat()}
+
+    # Already-sent set
+    already_sent = {
+        r.driver_name
+        for r in db.query(DriverShiftDM.driver_name)
+        .filter(DriverShiftDM.shift_date == shift_date, DriverShiftDM.dm_sent_at != None)
+        .all()
+    }
+
+    called_out = _called_out_today(shift_date, db)
+    wave_lead_name, _ = _wave_lead_name(shift_date)
+    client = _slack_client()
+    date_str = shift_date.strftime("%A, %B %-d")
+
+    sent, skipped, no_slack = 0, 0, 0
+
+    for entry in scheduled:
+        name = entry.driver_name
+        if name in already_sent or name in called_out:
+            skipped += 1
+            continue
+
+        slack_id = _get_driver_slack_id(name, db)
+        showtime = _calc_showtime(entry.wave_time) or entry.show_time
+        wave_display = entry.wave_time or "TBD"
+
+        text_fallback = (
+            f"👋 Hi {name.split()[0]}! Your shift is tomorrow ({date_str}).\n"
+            f"🕐 *Showtime:* {showtime or 'See dispatch'} | *Wave:* {wave_display}\n"
+            f"👤 *Wave Lead:* {wave_lead_name}\n"
+            f"Please confirm your arrival by tapping the button when you arrive."
+        )
+
+        blocks = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"👋 *Shift Reminder — {date_str}*\n\n"
+                        f"Hi {name.split()[0]}! Here are your details for tomorrow:"
+                    ),
+                },
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": f"*Showtime:*\n{showtime or 'See dispatch'}"},
+                    {"type": "mrkdwn", "text": f"*Wave:*\n{wave_display}"},
+                    {"type": "mrkdwn", "text": f"*Wave Lead:*\n{wave_lead_name}"},
+                    {"type": "mrkdwn", "text": f"*Date:*\n{date_str}"},
+                ],
+            },
+            {"type": "divider"},
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "✅  I Have Arrived for My Shift", "emoji": True},
+                        "style": "primary",
+                        "action_id": "driver_arrived_shift",
+                        "value": json.dumps({"shift_date": shift_date.isoformat(), "driver_name": name}),
+                    }
+                ],
+            },
+        ]
+
+        dm_ts = None
+        if client and slack_id:
+            try:
+                resp = client.chat_postMessage(channel=slack_id, text=text_fallback, blocks=blocks)
+                dm_ts = resp.get("ts")
+                sent += 1
+            except Exception as exc:
+                logger.warning("Driver DM failed for %s: %s", name, exc)
+                no_slack += 1
+        else:
+            no_slack += 1
+
+        dm_record = db.query(DriverShiftDM).filter(
+            DriverShiftDM.shift_date == shift_date,
+            DriverShiftDM.driver_name == name,
+        ).first()
+        if not dm_record:
+            dm_record = DriverShiftDM(shift_date=shift_date, driver_name=name)
+            db.add(dm_record)
+
+        dm_record.slack_user_id = slack_id
+        dm_record.wave_time = entry.wave_time
+        dm_record.showtime = showtime
+        dm_record.wave_lead = wave_lead_name
+        dm_record.dm_ts = dm_ts
+        dm_record.dm_sent_at = datetime.utcnow()
+
+    db.commit()
+
+    return {
+        "status": "done",
+        "date": shift_date.isoformat(),
+        "sent": sent,
+        "skipped": skipped,
+        "no_slack_id": no_slack,
+    }
+
+
+# ─── #nday-mgt summary matrix ────────────────────────────────────────────────
+
+def post_mgt_summary(shift_date: date, db: Session, grounded_vans: Optional[list[str]] = None) -> dict:
+    """
+    Post (or update) the daily assignment matrix to #nday-mgt.
+    Includes extras, van constraint risks, callout impacts, and grounded-van flags.
+    """
+    if not _ACTIVE:
+        return {"status": "inactive"}
+
+    suggestions = _build_roster_suggestion(shift_date, db)
+    if not suggestions:
+        return {"status": "no_schedule", "date": shift_date.isoformat()}
+
+    client = _slack_client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    wave_lead_name, _ = _wave_lead_name(shift_date)
+    date_str = shift_date.strftime("%A, %B %-d")
+    called_out = {s["driver_name"] for s in suggestions if s["called_out"]}
+
+    # Build sections
+    active   = [s for s in suggestions if not s["called_out"] and not s["is_sweeper"]]
+    sweepers = [s for s in suggestions if not s["called_out"] and s["is_sweeper"]]
+    absent   = [s for s in suggestions if s["called_out"]]
+
+    risks: list[str] = []
+
+    def _standing_emoji(st: str) -> str:
+        return {"Platinum": "💎", "Gold": "🥇", "Silver": "🥈", "Bronze": "🥉"}.get(st, "❔")
+
+    def _driver_line(s: dict) -> str:
+        em = _standing_emoji(s["standing"])
+        parts = [f"{em} {s['driver_name']} ({s['standing']})"]
+        if s["van_constraint"]:
+            parts.append(f"🔒 {s['van_constraint']}")
+            risks.append(f"⚠️ {s['driver_name']} requires {s['van_constraint']} — confirm van available")
+        wave = s.get("wave_time") or "?"
+        parts.append(f"Wave {wave}")
+        return " | ".join(parts)
+
+    roster_lines = [_driver_line(s) for s in active]
+    sweeper_lines = [_driver_line(s) for s in sweepers]
+    absent_lines = [f"❌ {s['driver_name']} — Called Out" for s in absent]
+
+    if absent:
+        risks.append(f"⚠️ {len(absent)} driver(s) called out — roster may be short")
+
+    if grounded_vans:
+        for v in grounded_vans:
+            risks.append(f"🚫 Grounded van reported: *{v}* — remove from assignment pool")
+
+    # Identify drivers with no quality history
+    no_quality = [s["driver_name"] for s in active if s["standing"] == "Unknown"]
+    if no_quality:
+        risks.append(f"❔ No quality data for: {', '.join(no_quality)}")
+
+    risk_block = "\n".join(f"• {r}" for r in risks) if risks else "✅ No flags"
+
+    blocks = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": f"📊 Daily Roster Matrix — {date_str}", "emoji": True},
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Wave Lead:*\n{wave_lead_name}"},
+                {"type": "mrkdwn", "text": f"*Active Drivers:*\n{len(active)}"},
+                {"type": "mrkdwn", "text": f"*Sweepers:*\n{len(sweepers)}"},
+                {"type": "mrkdwn", "text": f"*Called Out:*\n{len(absent)}"},
+            ],
+        },
+        {"type": "divider"},
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "*🏁 Active Drivers (ranked by quality):*\n" + "\n".join(roster_lines) if roster_lines else "_None_"},
+        },
+    ]
+
+    if sweeper_lines:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "*🧹 Sweepers:*\n" + "\n".join(sweeper_lines)},
+        })
+
+    if absent_lines:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "*❌ Absent:*\n" + "\n".join(absent_lines)},
+        })
+
+    blocks += [
+        {"type": "divider"},
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*⚠️ Risk Flags:*\n{risk_block}"},
+        },
+        {
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": f"_Posted by NDAY Route Manager · {datetime.utcnow().strftime('%H:%M UTC')}_"}],
+        },
+    ]
+
+    # Check for existing post to update vs new post
+    existing = db.query(MgtSummaryPost).filter(
+        MgtSummaryPost.shift_date == shift_date
+    ).first()
+
+    try:
+        if existing and existing.slack_ts:
+            resp = client.chat_update(
+                channel=MGT_CHANNEL,
+                ts=existing.slack_ts,
+                text=f"Daily Roster Matrix — {date_str}",
+                blocks=blocks,
+            )
+            slack_ts = existing.slack_ts
+        else:
+            resp = client.chat_postMessage(
+                channel=MGT_CHANNEL,
+                text=f"Daily Roster Matrix — {date_str}",
+                blocks=blocks,
+            )
+            slack_ts = resp.get("ts")
+
+        if not existing:
+            existing = MgtSummaryPost(shift_date=shift_date)
+            db.add(existing)
+        existing.slack_ts = slack_ts
+        existing.driver_count = len(active)
+        existing.risk_flags = json.dumps(risks)
+        existing.posted_at = datetime.utcnow()
+        db.commit()
+
+        return {"status": "posted", "date": shift_date.isoformat(), "slack_ts": slack_ts, "risks": risks}
+
+    except Exception as exc:
+        logger.error("MGT summary post failed: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+
+# ─── Arrival confirmation (called from slack_interactions.py) ────────────────
+
+def mark_driver_arrived(shift_date_str: str, driver_name: str, slack_user_id: str, db: Session) -> bool:
+    """Record driver arrival from the Slack button tap."""
+    try:
+        shift_date = date.fromisoformat(shift_date_str)
+    except ValueError:
+        return False
+
+    record = db.query(DriverShiftDM).filter(
+        DriverShiftDM.shift_date == shift_date,
+        DriverShiftDM.driver_name == driver_name,
+    ).first()
+
+    if not record:
+        record = DriverShiftDM(shift_date=shift_date, driver_name=driver_name)
+        db.add(record)
+
+    record.arrived_at = datetime.utcnow()
+    record.arrived_slack_user_id = slack_user_id
+    record.arrival_confirmed = True
+    db.commit()
+    return True
+
+
+# ─── API endpoints ───────────────────────────────────────────────────────────
+
+@router.post("/nightly-reminder")
+def trigger_nightly_reminder(shift_date: Optional[str] = None, db: Session = Depends(get_db)):
+    """Manually trigger the nightly roster reminder for a given date (defaults to tomorrow)."""
+    if shift_date:
+        try:
+            target = date.fromisoformat(shift_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
+    else:
+        from zoneinfo import ZoneInfo
+        now_pt = datetime.now(ZoneInfo("America/Los_Angeles"))
+        target = now_pt.date() + timedelta(days=1)
+
+    return send_nightly_roster_reminder(target, db)
+
+
+@router.post("/driver-dms/{shift_date}")
+def trigger_driver_dms(shift_date: str, db: Session = Depends(get_db)):
+    """Send pre-shift DMs to all drivers scheduled for shift_date (YYYY-MM-DD)."""
+    try:
+        target = date.fromisoformat(shift_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
+    return send_driver_shift_dms(target, db)
+
+
+@router.post("/mgt-summary/{shift_date}")
+def trigger_mgt_summary(shift_date: str, db: Session = Depends(get_db)):
+    """Post (or refresh) the #nday-mgt roster matrix for shift_date."""
+    try:
+        target = date.fromisoformat(shift_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
+    return post_mgt_summary(target, db)
+
+
+@router.get("/suggested/{shift_date}")
+def get_suggested_roster(shift_date: str, db: Session = Depends(get_db)):
+    """Return the suggested roster ranking for shift_date — no Slack messages sent."""
+    try:
+        target = date.fromisoformat(shift_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
+    suggestions = _build_roster_suggestion(target, db)
+    return {
+        "date": shift_date,
+        "count": len(suggestions),
+        "roster": suggestions,
+        "wave_lead": _wave_lead_name(target)[0],
+    }
+
+
+@router.get("/shift-dms/{shift_date}")
+def get_shift_dm_status(shift_date: str, db: Session = Depends(get_db)):
+    """List DM send status and arrival confirmations for all drivers on shift_date."""
+    try:
+        target = date.fromisoformat(shift_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
+
+    records = (
+        db.query(DriverShiftDM)
+        .filter(DriverShiftDM.shift_date == target)
+        .order_by(DriverShiftDM.driver_name)
+        .all()
+    )
+    return {
+        "date": shift_date,
+        "total": len(records),
+        "arrived": sum(1 for r in records if r.arrival_confirmed),
+        "dms": [
+            {
+                "driver_name": r.driver_name,
+                "dm_sent": r.dm_sent_at is not None,
+                "dm_sent_at": r.dm_sent_at.isoformat() if r.dm_sent_at else None,
+                "wave_time": r.wave_time,
+                "showtime": r.showtime,
+                "arrived": r.arrival_confirmed,
+                "arrived_at": r.arrived_at.isoformat() if r.arrived_at else None,
+            }
+            for r in records
+        ],
+    }

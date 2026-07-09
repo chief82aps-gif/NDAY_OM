@@ -16,7 +16,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.src.routes import uploads, auth, audit, enhanced_audit, weekly_audit, weekly_audit_upload, rescue
 from api.src.routes import daily_notify, quality, attendance, attendance_reports, ops_ingest, dvic, dsp_scorecard_weekly, eod_survey, route_assignment, slack_interactions, manager_accountability
+from api.src.routes import rostering, cortex_tracking
 from api.src.routes.daily_notify import check_and_notify, check_ecp_and_prompt
+from api.src.routes.rostering import send_nightly_roster_reminder
 from api.src.database import Base, engine, SessionLocal, ensure_dop_driver_name_column, ensure_ssn_last4_column, ensure_callout_signature_column, ensure_assignment_board_columns, _ensure_manager_signature_columns, _ensure_position_id_nullable
 
 logger = logging.getLogger(__name__)
@@ -123,7 +125,8 @@ async def _ops_ingest_scan_loop():
 
 
 async def _ecp_watch_loop():
-    """Poll #dlv3-nday-info every 15 min from 6 PM–midnight Pacific for the ECP roster message."""
+    """Poll #dlv3-nday-info every 15 min from 6 PM–midnight Pacific for the ECP roster message.
+    NOTE: ECP channel source is being updated — see daily_notify.py NOTIFY_CHANNEL."""
     while True:
         try:
             now = datetime.now(PACIFIC)
@@ -138,6 +141,55 @@ async def _ecp_watch_loop():
         except Exception as exc:
             logger.warning("ECP watch loop error: %s", exc)
         await asyncio.sleep(900)  # 15 minutes
+
+
+async def _nightly_roster_reminder_loop():
+    """Fire at 19:00 PT daily — DM Spencer/Luis/Fabian with suggested roster for tomorrow.
+    Gated by ROSTERING_ACTIVE=true env var (default off)."""
+    while True:
+        try:
+            now = datetime.now(PACIFIC)
+            if now.hour == 19 and now.minute < 10:
+                from datetime import timedelta
+                tomorrow = now.date() + timedelta(days=1)
+                db = SessionLocal()
+                try:
+                    await asyncio.to_thread(send_nightly_roster_reminder, tomorrow, db)
+                except Exception as exc:
+                    logger.warning("Nightly roster reminder error: %s", exc)
+                finally:
+                    db.close()
+        except Exception as exc:
+            logger.warning("Nightly roster reminder loop error: %s", exc)
+        await asyncio.sleep(600)  # check every 10 min
+
+
+async def _grounded_van_watcher_loop():
+    """Poll #nday-team-room every 30 min for grounded-van mentions.
+    Gated by ROSTERING_ACTIVE=true."""
+    import os as _os
+    TEAM_CHANNEL = _os.getenv("SLACK_TEAM_CHANNEL", "C0BAQAYKANS")
+    while True:
+        try:
+            if _os.getenv("ROSTERING_ACTIVE", "false").lower() == "true":
+                token = _os.getenv("SLACK_BOT_TOKEN", "")
+                if token:
+                    from slack_sdk import WebClient
+                    client = WebClient(token=token)
+                    try:
+                        resp = client.conversations_history(channel=TEAM_CHANNEL, limit=50)
+                        grounded: list[str] = []
+                        for msg in resp.get("messages", []):
+                            text = (msg.get("text") or "").lower()
+                            if "grounded" in text:
+                                grounded.append(msg.get("text", "")[:120])
+                        if grounded:
+                            logger.info("Grounded van mentions in #nday-team-room: %s", grounded)
+                    except Exception as exc:
+                        logger.warning("Grounded van watcher poll error: %s", exc)
+        except Exception as exc:
+            logger.warning("Grounded van watcher loop error: %s", exc)
+        await asyncio.sleep(1800)  # 30 minutes
 
 
 # Create all tables on startup
@@ -158,6 +210,8 @@ async def startup():
     asyncio.create_task(_eod_survey_loop())
     asyncio.create_task(manager_accountability.manager_accountability_loop())
     asyncio.create_task(_callout_queue_loop())
+    asyncio.create_task(_nightly_roster_reminder_loop())
+    asyncio.create_task(_grounded_van_watcher_loop())
 
 cors_origins_env = os.getenv("CORS_ORIGINS", "").strip()
 if cors_origins_env:
@@ -202,6 +256,8 @@ app.include_router(eod_survey.router)
 app.include_router(route_assignment.router)
 app.include_router(slack_interactions.router)
 app.include_router(manager_accountability.router)
+app.include_router(rostering.router)
+app.include_router(cortex_tracking.router)
 
 @app.get("/")
 def root():

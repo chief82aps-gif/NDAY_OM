@@ -42,6 +42,14 @@ const nextConfig: NextConfig = {
         source: '/ops-ingest/:path*',
         destination: `${backendUrl}/ops-ingest/:path*`,
       },
+      {
+        source: '/rostering/:path*',
+        destination: `${backendUrl}/rostering/:path*`,
+      },
+      {
+        source: '/cortex-tracking/:path*',
+        destination: `${backendUrl}/cortex-tracking/:path*`,
+      },
     ];
   },
 };

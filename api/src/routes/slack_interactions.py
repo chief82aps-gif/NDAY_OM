@@ -269,6 +269,9 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
     elif action_id == "acknowledge_callout_alert":
         _handle_acknowledge_callout(payload, db)
 
+    elif action_id == "driver_arrived_shift":
+        _handle_driver_arrived(payload, db)
+
     # Slack requires a 200 response within 3 seconds
     return {"ok": True}
 
@@ -319,3 +322,48 @@ def _handle_acknowledge_callout(payload: dict, db: Session) -> None:
                 logger.warning("Could not update tight-roster alert message: %s", exc)
     except Exception as exc:
         logger.warning("acknowledge_callout handler error: %s", exc)
+
+
+def _handle_driver_arrived(payload: dict, db: Session) -> None:
+    """Driver tapped 'I Have Arrived for My Shift' in their DM."""
+    try:
+        import json as _json
+        action = (payload.get("actions") or [{}])[0]
+        value = _json.loads(action.get("value", "{}"))
+        shift_date_str = value.get("shift_date", "")
+        driver_name = value.get("driver_name", "")
+        user = payload.get("user", {})
+        slack_user_id = user.get("id", "")
+
+        from api.src.routes.rostering import mark_driver_arrived
+        success = mark_driver_arrived(shift_date_str, driver_name, slack_user_id, db)
+
+        # Update the DM to show arrival confirmed
+        channel_id = payload.get("channel", {}).get("id", "")
+        msg_ts = payload.get("message", {}).get("ts", "")
+        if channel_id and msg_ts:
+            token = os.getenv("SLACK_BOT_TOKEN")
+            if token:
+                from slack_sdk import WebClient as _WC
+                from datetime import datetime as _dt
+                _WC(token=token).chat_update(
+                    channel=channel_id,
+                    ts=msg_ts,
+                    text="Arrival confirmed.",
+                    blocks=[
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": (
+                                    f"✅ *Arrival Confirmed*\n"
+                                    f"*{driver_name}* checked in at "
+                                    f"{_dt.utcnow().strftime('%-I:%M %p')} UTC\n"
+                                    f"Shift date: {shift_date_str}"
+                                ),
+                            },
+                        }
+                    ],
+                )
+    except Exception as exc:
+        logger.warning("driver_arrived handler error: %s", exc)

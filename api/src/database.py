@@ -1964,6 +1964,106 @@ def ensure_assignment_board_columns():
             pass  # Column already exists
 
 
+# ============================================================================
+# ROSTERING & DRIVER SHIFT DMs
+# ============================================================================
+
+class NightlyRosterReminder(Base):
+    """Deduplication tracker for the 1900-hrs nightly roster reminder DMs."""
+    __tablename__ = "nightly_roster_reminders"
+
+    id = Column(Integer, primary_key=True)
+    shift_date = Column(Date, nullable=False, unique=True, index=True)
+    sent_at = Column(DateTime, default=datetime.utcnow)
+    driver_count = Column(Integer, default=0)
+    reminder_ts_spencer = Column(String(50))
+    reminder_ts_luis = Column(String(50))
+    reminder_ts_fabian = Column(String(50))
+
+
+class DriverShiftDM(Base):
+    """Tracks the pre-shift DM sent to each driver and their arrival confirmation."""
+    __tablename__ = "driver_shift_dms"
+
+    id = Column(Integer, primary_key=True)
+    shift_date = Column(Date, nullable=False, index=True)
+    driver_name = Column(String(255), nullable=False, index=True)
+    slack_user_id = Column(String(50))
+    wave_time = Column(String(20))
+    showtime = Column(String(20))         # wave_time - 25 min
+    wave_lead = Column(String(150))
+    dm_ts = Column(String(50))            # Slack message ts of the DM
+    dm_sent_at = Column(DateTime)
+    arrived_at = Column(DateTime)
+    arrived_slack_user_id = Column(String(50))
+    arrival_confirmed = Column(Boolean, default=False)
+
+    __table_args__ = (
+        Index("idx_dsdm_date_driver", "shift_date", "driver_name"),
+    )
+
+
+class MgtSummaryPost(Base):
+    """Tracks the #nday-mgt roster summary matrix message for each shift date."""
+    __tablename__ = "mgt_summary_posts"
+
+    id = Column(Integer, primary_key=True)
+    shift_date = Column(Date, nullable=False, unique=True, index=True)
+    posted_at = Column(DateTime, default=datetime.utcnow)
+    slack_ts = Column(String(50))         # ts for future updates
+    driver_count = Column(Integer, default=0)
+    risk_flags = Column(Text)             # JSON list of risk strings
+
+
+# ============================================================================
+# CORTEX PACE TRACKING
+# ============================================================================
+
+class CortexSnapshot(Base):
+    """Every 2-hour Cortex ingest during delivery — tracks route progress for pace prediction."""
+    __tablename__ = "cortex_snapshots"
+
+    id = Column(Integer, primary_key=True)
+    snapshot_at = Column(DateTime, nullable=False, index=True, default=datetime.utcnow)
+    route_date = Column(Date, nullable=False, index=True)
+    route_code = Column(String(50), nullable=False, index=True)
+    driver_name = Column(String(255), index=True)
+    wave_time = Column(String(20))
+    service_type = Column(String(100))
+    packages_total = Column(Integer)
+    packages_delivered = Column(Integer)
+    packages_remaining = Column(Integer)
+    pct_complete = Column(DECIMAL(5, 2))  # 0.00–100.00
+    source_file = Column(String(255))
+
+    __table_args__ = (
+        Index("idx_cs_date_route", "route_date", "route_code"),
+        Index("idx_cs_date_driver", "route_date", "driver_name"),
+    )
+
+
+class DriverRoutePerformance(Base):
+    """Historical pace performance by driver — built from CortexSnapshot data.
+    Used to predict whether a driver will finish on time based on 2-hr pace."""
+    __tablename__ = "driver_route_performance"
+
+    id = Column(Integer, primary_key=True)
+    driver_name = Column(String(255), nullable=False, index=True)
+    route_date = Column(Date, nullable=False, index=True)
+    route_code = Column(String(50), index=True)
+    service_type = Column(String(100))
+    wave_time = Column(String(20))
+    pct_at_2hr = Column(DECIMAL(5, 2))    # % complete at ~2hr mark
+    pct_at_4hr = Column(DECIMAL(5, 2))
+    final_pct = Column(DECIMAL(5, 2))
+    finished_on_time = Column(Boolean)
+    snapshot_count = Column(Integer, default=0)
+
+    __table_args__ = (
+        Index("idx_drp_driver_date", "driver_name", "route_date"),
+    )
+
+
 def get_db():
     """Get database session"""
     db = SessionLocal()

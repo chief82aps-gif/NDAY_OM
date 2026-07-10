@@ -694,6 +694,52 @@ def _ops_manager_prompt(for_date: date, route_count: int, db: Session) -> int:
     return sent
 
 
+def _fleet_manager_prompt(for_date: date, db: Session) -> int:
+    """
+    DM Spencer, Fabian, and Luis once DOP is ingested, reminding them to also
+    drop the daily fleet/vehicle data file (VIN, service type, operational
+    status — used to build available vans for assignment) into
+    *#nday-operations-management*.
+    Idempotent — uses a synthetic SlackIngestLog entry so it only fires once.
+    Returns the number of DMs successfully sent (0 if already prompted today).
+    """
+    fake_id = f"fleet_prompt_{for_date.isoformat()}"
+    if db.query(SlackIngestLog).filter(SlackIngestLog.slack_file_id == fake_id).first():
+        return 0
+
+    client = _slack_client()
+    if not client:
+        return 0
+
+    date_str = _fmt_date(for_date)
+    message = (
+        f"*Don't forget the daily fleet file for {date_str}!*\n\n"
+        "Drop today's vehicle data (VIN / service type / operational status) into "
+        "*#nday-operations-management* so grounded vans get excluded and the "
+        "assignment engine has accurate availability."
+    )
+
+    sent = 0
+    for name, uid in OPS_MANAGER_IDS:
+        try:
+            client.chat_postMessage(channel=uid, text=message)
+            sent += 1
+        except Exception as exc:
+            logger.warning("Fleet-prompt DM failed for %s (%s): %s", name, uid, exc)
+
+    db.add(SlackIngestLog(
+        ingest_date=for_date,
+        file_type="fleet_prompt",
+        slack_file_id=fake_id,
+        filename=f"fleet_prompt_{for_date.isoformat()}",
+        processed_at=datetime.utcnow(),
+        status="success",
+        records_processed=sent,
+    ))
+    db.commit()
+    return sent
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Sweeper notifications — fires after Cortex assignments are built
 # ─────────────────────────────────────────────────────────────────────────────
@@ -773,7 +819,7 @@ def check_and_notify(
     """
     Full morning pipeline:
       1. Cortex scan → ingest (driver names first)
-      2. DOP scan → ingest → ops-manager DMs (Spencer/Fabian/Luis)
+      2. DOP scan → ingest → ops-manager DMs (Spencer/Fabian/Luis) + fleet-file reminder DM
       3. Route Sheet scan → ingest
       4. Build daily_route_assignments (DOP + Cortex + PDF)
       5. Send per-driver DMs (route, van, stage, show time, expected return)
@@ -792,6 +838,7 @@ def check_and_notify(
         "assignments": 0,
         "dms": {},
         "ops_prompt_sent": 0,
+        "fleet_prompt_sent": 0,
         "sweepers": {},
     }
 
@@ -859,6 +906,7 @@ def check_and_notify(
                 result["ingest"]["dop"] = {"records": count, "error": err}
                 if not err and count:
                     result["ops_prompt_sent"] = _ops_manager_prompt(for_date, count, db)
+                    result["fleet_prompt_sent"] = _fleet_manager_prompt(for_date, db)
 
     # ── 3. Ingest Route Sheet ─────────────────────────────────────────────────
     rs_file = files.get("route_sheet")

@@ -138,6 +138,7 @@ _TYPE_LABELS = {
     "dvic":              "DVIC Pre-Trip Under-90s (Excel)",
     "cortex":            "Cortex Routes (Excel)",
     "dop":               "DOP / Dispatch (Excel)",
+    "fleet":             "Vehicle Data / Daily Fleet File (Excel)",
     "driver_schedule":   "Driver Schedule (Excel)",
     "route_sheets":      "Route Sheets (PDF)",
     "wst_zip":           "WST Data (ZIP)",
@@ -160,6 +161,8 @@ def _classify(filename: str, message: str) -> str:
         return "wst_zip"
 
     if ext == ".csv":
+        if any(k in combined for k in ("vehicledata", "vehicle data", "vehicle_data", "fleet", "daily fleet")):
+            return "fleet"
         if any(k in combined for k in ("quality", "trailing", "overview", "scorecard")):
             return "quality_csv"
         if re.search(r"\bw\d{2}\b", combined):   # W27, W03, etc.
@@ -173,6 +176,8 @@ def _classify(filename: str, message: str) -> str:
             return "cortex"
         if any(k in combined for k in ("dop", "dispatch ops", "dispatch_ops")):
             return "dop"
+        if any(k in combined for k in ("vehicledata", "vehicle data", "vehicle_data", "fleet", "daily fleet")):
+            return "fleet"
         if any(k in combined for k in ("schedule", "shift", "availability", "rostered work")):
             return "driver_schedule"
         return "unknown"
@@ -300,10 +305,11 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
 
             # Trigger day-of DMs now that route assignments are populated
             try:
-                from api.src.routes.rostering import send_day_of_dms
+                from api.src.routes.rostering import send_day_of_dms, post_assignment_matrix
                 send_day_of_dms(upload_date, db)
+                post_assignment_matrix(upload_date, db)
             except Exception as e:
-                logger.warning("Day-of DM trigger after Cortex ingest failed: %s", e)
+                logger.warning("Day-of DM / assignment-matrix trigger after Cortex ingest failed: %s", e)
 
             return {"status": "ingested", "records": len(orchestrator.status.cortex_records)}
         finally:
@@ -338,6 +344,42 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
                 ))
             db.commit()
             return {"status": "ingested", "records": len(orchestrator.status.dop_records)}
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
+    # ── Vehicle Data / Daily Fleet File (Excel or CSV) ──────────────────────
+    if t == "fleet":
+        ext = os.path.splitext(job.file_name)[1].lower() or ".xlsx"
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        try:
+            from api.src.orchestrator import orchestrator
+            from api.src.database import Vehicle
+            orchestrator.ingest_fleet(tmp_path)
+            records = orchestrator.status.fleet_records
+            updated = created = 0
+            for record in records:
+                existing = db.query(Vehicle).filter(Vehicle.vin == record.vin).first()
+                status_value = str(record.operational_status or "active").lower()
+                if existing:
+                    existing.vehicle_name = record.vehicle_name
+                    existing.service_type = record.service_type
+                    existing.status = status_value
+                    updated += 1
+                else:
+                    db.add(Vehicle(
+                        vin=record.vin,
+                        vehicle_name=record.vehicle_name,
+                        service_type=record.service_type,
+                        status=status_value,
+                    ))
+                    created += 1
+            db.commit()
+            return {"status": "ingested", "records": len(records), "created": created, "updated": updated}
         finally:
             try:
                 os.unlink(tmp_path)

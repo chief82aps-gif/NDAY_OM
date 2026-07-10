@@ -765,6 +765,13 @@ def finalize_assignments(date_str: Optional[str] = None, db: Session = Depends(g
         except Exception:
             pass
     db.commit()
+
+    try:
+        from api.src.routes.rostering import post_assignment_matrix
+        post_assignment_matrix(target, db)
+    except Exception as e:
+        logger.warning("Assignment-matrix post after finalize failed: %s", e)
+
     unassigned = [r for r in rows if not r.driver_name]
     return {
         "status": "finalized",

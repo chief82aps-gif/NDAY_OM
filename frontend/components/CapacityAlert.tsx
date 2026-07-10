@@ -28,7 +28,7 @@ interface CapacityAlertProps {
   apiUrl?: string;
 }
 
-export default function CapacityAlert({ apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000' }: CapacityAlertProps) {
+export default function CapacityAlert({ apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8001' }: CapacityAlertProps) {
   const [capacityStatus, setCapacityStatus] = useState<CapacityStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [hasError, setHasError] = useState(false);

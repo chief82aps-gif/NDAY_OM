@@ -16,7 +16,7 @@ interface StatusMessage {
   text: string;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8001';
 
 export default function AdminPage() {
   const { user } = useAuth();
@@ -199,7 +199,7 @@ export default function AdminPage() {
         throw new Error(errorData.detail || 'Failed to delete user');
       }
 
-      showMessage('success', `User '$" + "usernameToDelete}' deleted successfully`);
+      showMessage('success', `User '${usernameToDelete}' deleted successfully`);
       await loadUsers();
     } catch (error) {
       showMessage('error', error instanceof Error ? error.message : 'Failed to delete user');
@@ -255,7 +255,7 @@ export default function AdminPage() {
   };
 
   return (
-    <ProtectedRoute>
+    <ProtectedRoute allowedRoles={['admin']}>
       <div className="min-h-screen bg-gray-50">
         <PageHeader title="Admin Panel" showBack={true} />
 

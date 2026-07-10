@@ -137,6 +137,17 @@ def _verify_user_password(users, username: str, password: str) -> bool:
     return record.get("password") == password
 
 
+def _verify_admin_password(users, username: str, password: str) -> bool:
+    """Same as _verify_user_password, but also requires the account's role to
+    actually be admin — used to gate create/delete-user and password resets so
+    a valid non-admin login can't pass its own credentials as "admin creds"."""
+    user_data = users.get(username)
+    if not user_data:
+        return False
+    record = _normalize_user_record(username, user_data)
+    return record.get("password") == password and record.get("role") == "admin"
+
+
 def save_users(users):
     """Save users to JSON file (optional, for local development).
     
@@ -228,15 +239,12 @@ async def create_user(request: CreateUserRequest):
     
     # Validate admin credentials
     admin_username = request.admin_username.lower().strip()
-    if not _verify_user_password(USERS, admin_username, request.admin_password):
+    if not _verify_admin_password(USERS, admin_username, request.admin_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid admin credentials",
         )
-    
-    # Check if user is actually an admin (username contains 'admin' or password matches admin password pattern)
-    # For simplicity, we just check if they have a valid account
-    
+
     # Validate new user input
     new_username = request.username.lower().strip()
     if not new_username or not request.password:
@@ -288,12 +296,12 @@ async def list_users(request: LoginRequest):
     
     # Validate admin credentials
     admin_username = request.username.lower().strip()
-    if not _verify_user_password(USERS, admin_username, request.password):
+    if not _verify_admin_password(USERS, admin_username, request.password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid admin credentials",
         )
-    
+
     # Return list of users
     users_list = []
     for username, user_data in USERS.items():
@@ -312,12 +320,12 @@ async def delete_user(request: CreateUserRequest):
     
     # Validate admin credentials
     admin_username = request.admin_username.lower().strip()
-    if not _verify_user_password(USERS, admin_username, request.admin_password):
+    if not _verify_admin_password(USERS, admin_username, request.admin_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid admin credentials",
         )
-    
+
     # Prevent deleting the last admin
     username_to_delete = request.username.lower().strip()
     if username_to_delete not in USERS:
@@ -358,7 +366,7 @@ async def change_password(request: ChangePasswordRequest):
     
     # Admin can change any password OR user can change their own with old password
     admin_username = request.admin_username.lower().strip()
-    is_admin_change = _verify_user_password(USERS, admin_username, request.admin_password)
+    is_admin_change = _verify_admin_password(USERS, admin_username, request.admin_password)
     is_self_change = (
         username_to_change == admin_username and
         _verify_user_password(USERS, username_to_change, request.old_password)

@@ -32,14 +32,14 @@ npm run dev
 
 Frontend will be available at: `http://localhost:3000`
 
-Backend API must be running on `http://127.0.0.1:8000`
+Backend API must be running on `http://127.0.0.1:8001`
 
 ### Environment Variables
 
 Create `.env.local` for development:
 
 ```bash
-NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8001
 ```
 
 ### Build & Production
@@ -124,7 +124,7 @@ Creates professional PDF handouts:
 ## Troubleshooting
 
 ### "Cannot connect to API"
-- Ensure backend is running on `http://127.0.0.1:8000`
+- Ensure backend is running on `http://127.0.0.1:8001`
 - Check `NEXT_PUBLIC_API_URL` environment variable
 - Verify CORS headers on backend
 

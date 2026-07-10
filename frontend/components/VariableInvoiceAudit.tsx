@@ -68,7 +68,7 @@ interface StatusMessage {
   text: string;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8001';
 
 const formatApiError = async (response: Response, fallback: string): Promise<string> => {
   const statusText = response.statusText || 'Request failed';

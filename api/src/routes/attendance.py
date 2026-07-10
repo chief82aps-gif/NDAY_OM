@@ -1455,7 +1455,7 @@ def manager_sign_event(event_id: int, req: ManagerSignRequest, db: Session = Dep
     return {"status": "signed", "manager_signature_name": event.manager_signature_name}
 
 
-@router.get("/pending-review")
+@router.get("/unsigned-writeups")
 def pending_review(db: Session = Depends(get_db)):
     """Admin — all callout writeups with driver signature but no manager countersignature."""
     events = (

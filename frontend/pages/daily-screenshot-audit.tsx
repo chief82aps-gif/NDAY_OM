@@ -580,7 +580,7 @@ export default function DailyScreenshotAuditPage() {
   useEffect(() => {
     (async () => {
       try {
-        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8001';
         const token = localStorage.getItem('access_token');
         const headers: Record<string, string> = {};
         if (token) {
@@ -621,7 +621,7 @@ export default function DailyScreenshotAuditPage() {
 
     setStatusMessage('Saving audit...');
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8001';
       const token = localStorage.getItem('access_token');
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',

@@ -11,7 +11,7 @@ function resolveApi() {
     const h = window.location.hostname;
     if (h !== 'localhost' && h !== '127.0.0.1') return 'https://nday-om.onrender.com';
   }
-  return 'http://127.0.0.1:8000';
+  return 'http://127.0.0.1:8001';
 }
 
 interface IngestLog {

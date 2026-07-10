@@ -110,7 +110,7 @@ export default function EnhancedDailyScreenshotAudit() {
     if (!cortexText.trim() || !wstText.trim()) return;
     
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8001';
       const token = localStorage.getItem('access_token');
       const headers: Record<string, string> = {'Content-Type': 'application/json'};
       if (token) {
@@ -172,7 +172,7 @@ export default function EnhancedDailyScreenshotAudit() {
     console.log(`[${type.toUpperCase()}] Starting OCR upload...`);
     
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8001';
       const token = localStorage.getItem('access_token');
       const formData = new FormData();
       formData.append('file', file);
@@ -263,7 +263,7 @@ export default function EnhancedDailyScreenshotAudit() {
     }
 
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8001';
       const token = localStorage.getItem('access_token');
       const headers: Record<string, string> = {'Content-Type': 'application/json'};
       if (token) {
@@ -322,7 +322,7 @@ export default function EnhancedDailyScreenshotAudit() {
     }
 
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8001';
       
       // Extract service names from parsed data (placeholder)
       const serviceNames = ['Nursery Route Level 2', 'Standard Parcel Electric - Rivian'];
@@ -408,7 +408,7 @@ export default function EnhancedDailyScreenshotAudit() {
 
   const handleGenerateSummary = async () => {
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8001';
       
       const response = await fetch(`${API_URL}/audit/screenshot/generate-dispute-summary`, {
         method: 'POST',
@@ -433,7 +433,7 @@ export default function EnhancedDailyScreenshotAudit() {
     }
 
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8001';
       const token = localStorage.getItem('access_token');
 
       const payload = {

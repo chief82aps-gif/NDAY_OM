@@ -1,5 +1,7 @@
 # Variable Invoice Rules
 
+> Discovery: Browse all governance docs in [Governance Index](README.md).
+
 ## Purpose
 Store weekly Amazon variable invoice summary lines for later comparison against Work Summary uploads.
 

@@ -1,5 +1,7 @@
 # Monthly Fleet Invoice Rules
 
+> Discovery: Browse all governance docs in [Governance Index](README.md).
+
 ## Purpose
 Capture monthly fleet invoice data for forward-looking prepayment and prior-month reconciliation.
 

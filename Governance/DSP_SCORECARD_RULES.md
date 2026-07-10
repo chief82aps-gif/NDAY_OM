@@ -1,5 +1,7 @@
 # DSP Scorecard Rules
 
+> Discovery: Browse all governance docs in [Governance Index](README.md).
+
 ## Purpose
 Store weekly DSP scorecard metrics, track trends, and identify coaching priorities.
 

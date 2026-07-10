@@ -1,5 +1,7 @@
 # Work Summary Tool (WST) Rules
 
+> Discovery: Browse all governance docs in [Governance Index](README.md).
+
 ## Purpose
 Define ingest and audit rules for the weekly Work Summary Tool zip. These files are the operational truth used to validate invoices and performance.
 

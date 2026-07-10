@@ -1,5 +1,7 @@
 # POD Report Rules
 
+> Discovery: Browse all governance docs in [Governance Index](README.md).
+
 ## Purpose
 Track Photo on Delivery (POD) acceptance rates and identify drivers with bypassed or rejected photos.
 

@@ -1,5 +1,7 @@
 # Fleet Vehicle Ingest Rules & Van Assignment Governance
 
+> Discovery: Browse all governance docs in [Governance Index](README.md).
+
 ## 1. Fleet File Requirements
 
 ### 1.1 File Format

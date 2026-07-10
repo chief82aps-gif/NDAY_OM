@@ -1,5 +1,7 @@
 # Weekly Incentive Rules
 
+> Discovery: Browse all governance docs in [Governance Index](README.md).
+
 ## Purpose
 Store weekly incentive invoice values driven by DSP scorecard rating and total packages delivered.
 

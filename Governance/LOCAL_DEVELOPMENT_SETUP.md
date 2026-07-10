@@ -1,5 +1,7 @@
 # Local Development Setup - PostgreSQL Testing (Offline)
 
+> Discovery: Browse all governance docs in [Governance Index](README.md).
+
 **Purpose:** Develop and test database layer without affecting live website  
 **Date:** February 23, 2026  
 **Status:** Ready to implement

@@ -1,5 +1,7 @@
 # PostgreSQL Database Setup Guide
 
+> Discovery: Browse all governance docs in [Governance Index](README.md).
+
 **Date:** February 23, 2026  
 **Status:** Ready for Implementation
 

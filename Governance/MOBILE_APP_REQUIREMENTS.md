@@ -1,5 +1,7 @@
 # Mobile App Development Requirements
 
+> Discovery: Browse all governance docs in [Governance Index](README.md).
+
 **Document Purpose:** Comprehensive guide for building NDAY driver mobile applications  
 **Date Created:** February 23, 2026  
 **Status:** Planning & Architecture Phase

@@ -268,37 +268,6 @@ def ingest_cortex_bytes(
 # DOP xlsx ingest
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Column name hints keyed by the field we want to extract.
-_DOP_HINTS: Dict[str, List[str]] = {
-    "route_code":      ["route code", "route"],
-    "wave":            ["wave time", "wave"],
-    "station":         ["staging location", "stage location", "stage", "station"],
-    "packages":        ["num packages", "planned packages", "packages", "pkg", "stops"],
-    "route_duration":  ["route duration", "duration", "route mins", "minutes"],
-    "service_type":    ["service type", "service"],
-    "dsp_code":        ["dsp code", "dsp"],
-    "driver_name":     ["delivery associate", "driver name", "driver", "da name"],
-}
-
-
-def _map_col(df_cols: List[str], hints: List[str]) -> Optional[str]:
-    for hint in hints:
-        for col in df_cols:
-            if hint in col.lower():
-                return col
-    return None
-
-
-def _safe_int(v) -> Optional[int]:
-    try:
-        s = str(v).strip().lower()
-        if s in ("nan", "", "none", "n/a"):
-            return None
-        return int(float(s))
-    except Exception:
-        return None
-
-
 def _safe_str(v) -> str:
     s = str(v).strip() if v is not None else ""
     return "" if s.lower() in ("nan", "none", "n/a") else s
@@ -307,83 +276,63 @@ def _safe_str(v) -> str:
 def ingest_dop_bytes(
     content: bytes, filename: str, for_date: date, db: Session
 ) -> Tuple[int, str]:
-    """Parse DOP xlsx bytes and upsert into dop_routes for for_date."""
+    """Parse DOP Excel/CSV bytes and upsert into dop_routes for for_date.
+
+    Uses the same shared, strict parser (api.src.ingest.parse_dop_excel) as
+    the manual-upload and Slack-dispatch ingestion paths, so all three agree
+    on column detection and never write a row with an unvalidated duration.
+    The tempfile keeps the real extension so .csv vs .xlsx detection works.
+    """
+    from api.src.ingest import parse_dop_excel
+
+    ext = os.path.splitext(filename)[1].lower() or ".xlsx"
+    tmp_path = None
     try:
-        # Try the orchestrator first (knows exact Amazon DOP column names)
-        try:
-            from api.src.orchestrator import orchestrator
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
 
-            with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
-                tmp.write(content)
-                tmp_path = tmp.name
+        records, errors = parse_dop_excel(tmp_path)
 
-            orchestrator.ingest_dop(tmp_path)
-            os.unlink(tmp_path)
+        if errors:
+            logger.warning(
+                "ingest_dop_bytes: %d parse issue(s) for %s: %s",
+                len(errors), filename, "; ".join(errors[:5]),
+            )
 
-            db.query(DOP).filter(
-                DOP.schedule_date == for_date,
-                DOP.source_file == filename,
-            ).delete(synchronize_session=False)
-
-            for record in orchestrator.status.dop_records:
-                db.add(DOP(
-                    schedule_date=for_date,
-                    station=record.staging_location,
-                    dsp_code=record.dsp,
-                    route_code=record.route_code,
-                    wave=record.wave,
-                    planned_packages=record.num_packages,
-                    route_duration=getattr(record, "route_duration", None),
-                    service_type=record.service_type,
-                    source_file=filename,
-                ))
-            db.commit()
-            return len(orchestrator.status.dop_records), ""
-
-        except Exception:
-            pass  # fall through to pandas fallback
-
-        # Pandas fallback with flexible column mapping
-        df = pd.read_excel(io.BytesIO(content), dtype=str)
-        df.columns = [str(c).strip() for c in df.columns]
-        col_names = list(df.columns)
-
-        col_map = {k: _map_col(col_names, hints) for k, hints in _DOP_HINTS.items()}
-
-        route_col = col_map.get("route_code")
-        if not route_col:
-            return 0, "Could not find route code column in DOP file."
+        if not records:
+            return 0, "; ".join(errors) if errors else "No DOP rows parsed from file."
 
         db.query(DOP).filter(
             DOP.schedule_date == for_date,
             DOP.source_file == filename,
         ).delete(synchronize_session=False)
 
-        count = 0
-        for _, row in df.iterrows():
-            rc = _safe_str(row.get(route_col, ""))
-            if not rc:
-                continue
+        for record in records:
             db.add(DOP(
                 schedule_date=for_date,
-                station=_safe_str(row.get(col_map.get("station") or "", "")) or None,
-                dsp_code=_safe_str(row.get(col_map.get("dsp_code") or "", "")) or None,
-                route_code=rc,
-                wave=_safe_str(row.get(col_map.get("wave") or "", "")) or None,
-                planned_packages=_safe_int(row.get(col_map.get("packages") or "")),
-                route_duration=_safe_int(row.get(col_map.get("route_duration") or "")),
-                service_type=_safe_str(row.get(col_map.get("service_type") or "", "")) or None,
-                driver_name=_safe_str(row.get(col_map.get("driver_name") or "", "")) or None,
+                station=record.staging_location,
+                dsp_code=record.dsp,
+                route_code=record.route_code,
+                wave=record.wave,
+                planned_packages=record.num_packages,
+                route_duration=record.route_duration,
+                service_type=record.service_type,
                 source_file=filename,
             ))
-            count += 1
-
         db.commit()
-        return count, ""
+        return len(records), ""
 
     except Exception as exc:
         db.rollback()
+        logger.warning("ingest_dop_bytes: failed for %s: %s", filename, exc)
         return 0, str(exc)
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────

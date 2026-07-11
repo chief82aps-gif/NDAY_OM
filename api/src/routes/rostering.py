@@ -1129,7 +1129,7 @@ def send_day_of_dms(shift_date: date, db: Session) -> dict:
 
     Queries DailyRouteAssignment for shift_date where dm_sent=False.
     Each DM is Block Kit with route, van, staging, wave, showtime, expected return,
-    stop count, wave lead, and the arrival confirmation button.
+    wave lead, and the arrival confirmation button.
 
     Marks dm_sent=True on each record so daily_notify.send_all_dms() won't double-send.
     Gated by ROSTERING_ACTIVE=true.
@@ -1184,9 +1184,6 @@ def send_day_of_dms(shift_date: date, db: Session) -> dict:
             fields.append({"type": "mrkdwn", "text": f"*Wave:*\n{a.wave}"})
         if return_time:
             fields.append({"type": "mrkdwn", "text": f"*Est. Return:*\n{return_time}"})
-        stops_val = a.stops or a.packages
-        if stops_val:
-            fields.append({"type": "mrkdwn", "text": f"*Stops:*\n{stops_val}"})
         fields.append({"type": "mrkdwn", "text": f"*Wave Lead:*\n{wave_lead_name}"})
 
         arrival_value = json.dumps({

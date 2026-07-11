@@ -308,6 +308,13 @@ def backfill_dop_duration(date_str: str):
                 if rc and dur is not None:
                     duration_by_route[rc] = dur
 
+        # Fall back to the DOP rows themselves — covers the case where DOP
+        # was fixed/re-ingested after DailyRouteAssignment was built, so no
+        # archive is needed at all; the correct value already lives on DOP.
+        for row in dop_rows:
+            if row.route_code and row.route_duration is not None and row.route_code not in duration_by_route:
+                duration_by_route[row.route_code] = row.route_duration
+
         updated_dop = 0
         for row in dop_rows:
             if row.route_duration is None and row.route_code in duration_by_route:

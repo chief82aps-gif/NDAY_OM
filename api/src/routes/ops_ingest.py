@@ -326,18 +326,11 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
                 ))
             db.commit()
 
-            # Trigger day-of DMs now that route assignments are populated.
-            # Each call gets its own try/except — a DM failure must not
-            # silently block the assignment matrix (and vice versa).
-            from api.src.routes.rostering import send_day_of_dms, post_assignment_matrix
-            try:
-                send_day_of_dms(upload_date, db)
-            except Exception:
-                logger.exception("Day-of DM trigger after Cortex ingest failed (upload_date=%s)", upload_date)
-            try:
-                post_assignment_matrix(upload_date, db)
-            except Exception:
-                logger.exception("Assignment-matrix trigger after Cortex ingest failed (upload_date=%s)", upload_date)
+            # Ingesting a file only updates data now — it does not post
+            # anything. Posting the assignment matrix or sending driver DMs
+            # is a separate, explicit action (see POST
+            # /rostering/assignment-matrix/{date}?force=true and
+            # POST /rostering/day-of-dms/{date}).
 
             return {"status": "ingested", "records": len(orchestrator.status.cortex_records)}
         finally:

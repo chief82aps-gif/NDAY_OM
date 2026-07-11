@@ -73,6 +73,12 @@ NURSERY_ROUTE_PREFIXES: set[str] = set()   # e.g. {"NUR", "GRD"} — populated l
 # Feature gate — set ROSTERING_ACTIVE=true on Render to enable live messages
 _ACTIVE = os.getenv("ROSTERING_ACTIVE", "false").lower() == "true"
 
+# Separate gate for driver-facing DMs — the assignment matrix (_ACTIVE above)
+# stays live independently of this. Defaults to false: driver DMs must not
+# go out until the rostering pipeline has been fully tested end-to-end.
+# Set DRIVER_DM_ACTIVE=true on Render to enable.
+_DM_ACTIVE = os.getenv("DRIVER_DM_ACTIVE", "false").lower() == "true"
+
 # Standing rank for quality tiers
 _STANDING_RANK = {"Platinum": 4, "Gold": 3, "Silver": 2, "Bronze": 1}
 
@@ -363,9 +369,11 @@ def send_driver_shift_dms(shift_date: date, db: Session) -> dict:
     Send pre-shift DMs to all drivers scheduled for shift_date.
     Each DM includes showtime, wave lead, and an arrival confirmation button.
     Safe to call multiple times — skips drivers already DM'd.
+    Gated by DRIVER_DM_ACTIVE=true (independent of ROSTERING_ACTIVE, which
+    gates the assignment matrix and stays live on its own schedule).
     """
-    if not _ACTIVE:
-        return {"status": "inactive", "note": "Set ROSTERING_ACTIVE=true on Render to enable"}
+    if not _DM_ACTIVE:
+        return {"status": "inactive", "note": "Set DRIVER_DM_ACTIVE=true on Render to enable driver DMs"}
 
     scheduled = (
         db.query(DriverScheduleEntry)
@@ -1132,10 +1140,11 @@ def send_day_of_dms(shift_date: date, db: Session) -> dict:
     wave lead, and the arrival confirmation button.
 
     Marks dm_sent=True on each record so daily_notify.send_all_dms() won't double-send.
-    Gated by ROSTERING_ACTIVE=true.
+    Gated by DRIVER_DM_ACTIVE=true (independent of ROSTERING_ACTIVE, which
+    gates the assignment matrix and stays live on its own schedule).
     """
-    if not _ACTIVE:
-        return {"status": "inactive", "note": "Set ROSTERING_ACTIVE=true on Render to enable"}
+    if not _DM_ACTIVE:
+        return {"status": "inactive", "note": "Set DRIVER_DM_ACTIVE=true on Render to enable driver DMs"}
 
     assignments = (
         db.query(DailyRouteAssignment)
@@ -1650,9 +1659,10 @@ def send_eod_checklist_dms(shift_date: date, db: Session) -> dict:
     Send EOD completion DMs to all drivers who finished their shift today.
     Includes an 'EOD Complete' button that drivers tap when they've done the
     end-of-day van checklist and submitted their delivery report.
-    Gated by ROSTERING_ACTIVE=true.
+    Gated by DRIVER_DM_ACTIVE=true (independent of ROSTERING_ACTIVE, which
+    gates the assignment matrix and stays live on its own schedule).
     """
-    if not _ACTIVE:
+    if not _DM_ACTIVE:
         return {"status": "inactive"}
 
     assignments = (

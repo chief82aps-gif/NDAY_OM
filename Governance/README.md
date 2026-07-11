@@ -29,6 +29,7 @@ Use this index to quickly locate governing standards, ingest rules, audit rules,
 
 - [Van Assignment Rules](VAN_INGEST_RULES.md) — GROUNDED skip, electric constraint, CDV14→16→XL fallback, 7-day affinity, capacity thresholds
 - [Driver Quality Rankings](DSP_SCORECARD_RULES.md) — Platinum/Gold/Silver/Bronze standing; used for assignment priority
+- [Rostering & Driver DM Rules](ROSTERING_DM_RULES.md) — **Driver DMs and the assignment matrix stay OFF (`ROSTERING_ACTIVE=false`) until the pipeline is fully tested end-to-end**
 - **Callout Rule (implemented):** Called-out drivers drop below all available drivers in the assignment queue; only assigned when non-callout pool is exhausted (`is_callout_coverage=True`)
 
 ---

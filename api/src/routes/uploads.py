@@ -205,6 +205,53 @@ def upload_dop(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Failed to upload DOP: {str(e)}")
 
 
+@router.get("/dop/debug")
+def debug_dop_state(date_str: str):
+    """Read-only diagnostic: today's DOP rows (source_file, route_code,
+    route_duration) plus the most recent upload_retention_records for
+    upload_type=dop, so we can tell which ingestion path actually wrote them."""
+    try:
+        target = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date_str — use YYYY-MM-DD.")
+
+    db = SessionLocal()
+    try:
+        dop_rows = db.query(DOP).filter(DOP.schedule_date == target).all()
+        archives = (
+            db.query(UploadRetentionRecord)
+            .filter(UploadRetentionRecord.upload_type == "dop")
+            .order_by(UploadRetentionRecord.uploaded_at.desc())
+            .limit(10)
+            .all()
+        )
+        return {
+            "date": date_str,
+            "dop_row_count": len(dop_rows),
+            "dop_sample": [
+                {
+                    "route_code": r.route_code,
+                    "source_file": r.source_file,
+                    "route_duration": r.route_duration,
+                    "planned_packages": r.planned_packages,
+                }
+                for r in dop_rows[:10]
+            ],
+            "dop_source_files": sorted({r.source_file for r in dop_rows if r.source_file}),
+            "recent_dop_archives": [
+                {
+                    "source_file": a.source_file,
+                    "uploaded_at": a.uploaded_at.isoformat() if a.uploaded_at else None,
+                    "record_count": a.record_count,
+                    "sample_payload_keys": list(a.payload[0].keys()) if a.payload else None,
+                }
+                for a in archives
+            ],
+        }
+    finally:
+        db.close()
+
+
 @router.post("/dop/backfill-duration")
 def backfill_dop_duration(date_str: str):
     """

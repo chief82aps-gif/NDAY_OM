@@ -1,14 +1,16 @@
 """
-Manager reminder DMs — nags #nday-mgt members individually when a
-morning/afternoon/evening file hasn't landed in #nday-operations-management yet.
+Manager reminder DMs — nags #nday-mgt members individually when a required
+file hasn't landed in its monitored channel yet.
 
-Four reminders, all DM-only to every member of #nday-mgt (never posted to
+Six reminders, all DM-only to every member of #nday-mgt (never posted to
 the channel itself, never sent to drivers):
 
-  1. Cortex Routes file      — threshold 9:00 AM PT,  every 5 min until posted
-  2. Fleet / Vehicle Data    — threshold 9:00 AM PT,  every 5 min until posted
-  3. Okami capacity forecast — threshold 3:30 PM PT,  every 5 min until posted
-  4. Driver schedule (post-rostering) — threshold 7:30 PM PT, every 5 min until posted
+  1. DOP file                — threshold 9:00 AM PT,  every 5 min until posted (#dlv3-nday-info)
+  2. Route Sheets file       — threshold 9:00 AM PT,  every 5 min until posted (#dlv3-nday-info)
+  3. Cortex Routes file      — threshold 9:00 AM PT,  every 5 min until posted (#nday-operations-management)
+  4. Fleet / Vehicle Data    — threshold 9:00 AM PT,  every 5 min until posted (#nday-operations-management)
+  5. Okami capacity forecast — threshold 3:30 PM PT,  every 5 min until posted (#nday-operations-management)
+  6. Driver schedule (post-rostering) — threshold 7:30 PM PT, every 5 min until posted (#nday-operations-management)
 
 Each stops nagging for the day once a matching OpsIngestJob row is detected,
 and resets automatically at midnight Pacific (state keyed by date).
@@ -38,10 +40,12 @@ REMINDER_INTERVAL_SECONDS = 5 * 60
 
 # window = (start_hour, start_minute, end_hour, end_minute) in Pacific time
 _REMINDERS = {
-    "cortex":   {"detected_type": "cortex",         "label": "Cortex Routes file",        "window": (9, 0, 21, 0)},
-    "fleet":    {"detected_type": "fleet",          "label": "Fleet / Vehicle Data file",  "window": (9, 0, 21, 0)},
-    "okami":    {"detected_type": "okami_capacity", "label": "Okami capacity forecast",    "window": (15, 30, 21, 0)},
-    "schedule": {"detected_type": "driver_schedule","label": "Driver schedule",            "window": (19, 30, 23, 59)},
+    "dop":          {"detected_type": "dop",          "label": "DOP file",                   "window": (9, 0, 21, 0)},
+    "route_sheets": {"detected_type": "route_sheets", "label": "Route Sheets file",           "window": (9, 0, 21, 0)},
+    "cortex":       {"detected_type": "cortex",       "label": "Cortex Routes file",          "window": (9, 0, 21, 0)},
+    "fleet":        {"detected_type": "fleet",        "label": "Fleet / Vehicle Data file",   "window": (9, 0, 21, 0)},
+    "okami":        {"detected_type": "okami_capacity","label": "Okami capacity forecast",    "window": (15, 30, 21, 0)},
+    "schedule":     {"detected_type": "driver_schedule","label": "Driver schedule",           "window": (19, 30, 23, 59)},
 }
 
 # in-memory per-key state — resets on deploy/restart, same convention as

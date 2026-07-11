@@ -41,6 +41,7 @@ from api.src.database import (
     WaveLeadNotification,
     CortexSnapshot,
     SlackIngestLog,
+    RtsDebrief,
 )
 
 logger = logging.getLogger(__name__)
@@ -131,6 +132,10 @@ def _latest_quality_map(db: Session) -> dict[str, dict]:
     }
 
 
+def _standing_emoji(st: str) -> str:
+    return {"Platinum": "💎", "Gold": "🥇", "Silver": "🥈", "Bronze": "🥉"}.get(st, "❔")
+
+
 def _called_out_today(shift_date: date, db: Session) -> set[str]:
     """Return names of drivers who called out for shift_date."""
     rows = (
@@ -146,7 +151,7 @@ def _called_out_today(shift_date: date, db: Session) -> set[str]:
 
 # ─── ETA helper ──────────────────────────────────────────────────────────────
 
-def _calc_eta(snap: "CortexSnapshot", wave_str: Optional[str], shift_date: "date") -> Optional[str]:
+def _calc_eta_dt(snap: "CortexSnapshot", wave_str: Optional[str], shift_date: "date") -> Optional[datetime]:
     """
     Estimate when a driver will return to station based on their latest Cortex snapshot.
 
@@ -154,16 +159,11 @@ def _calc_eta(snap: "CortexSnapshot", wave_str: Optional[str], shift_date: "date
            time_remaining  = remaining / pace
            eta             = snapshot_at + time_remaining + 0.5h (return drive buffer)
 
-    Returns a Pacific-time string like "3:45 PM", "Done", or None if data is insufficient.
+    Returns a naive-UTC datetime, or None if the route is already done or data is
+    insufficient (caller distinguishes "done" via packages_remaining/pct_complete).
     """
-    from zoneinfo import ZoneInfo as _ZI
-    _PACIFIC = _ZI("America/Los_Angeles")
-    _UTC = _ZI("UTC")
-
     if not snap:
         return None
-    if (snap.packages_remaining or 0) == 0 and (snap.pct_complete or 0) >= 99:
-        return "Done"
 
     delivered = snap.packages_delivered
     remaining = snap.packages_remaining
@@ -171,6 +171,10 @@ def _calc_eta(snap: "CortexSnapshot", wave_str: Optional[str], shift_date: "date
 
     if not delivered or not remaining or not snap_at or not wave_str:
         return None
+
+    from zoneinfo import ZoneInfo as _ZI
+    _PACIFIC = _ZI("America/Los_Angeles")
+    _UTC = _ZI("UTC")
 
     # Parse wave time into a naive UTC datetime on shift_date
     wave_utc: Optional[datetime] = None
@@ -198,7 +202,23 @@ def _calc_eta(snap: "CortexSnapshot", wave_str: Optional[str], shift_date: "date
         return None
 
     hours_left = remaining / pace           # hours until finished
-    eta_utc_naive = snap_at + timedelta(hours=hours_left + 0.5)   # +30 min return buffer
+    return snap_at + timedelta(hours=hours_left + 0.5)   # +30 min return buffer
+
+
+def _calc_eta(snap: "CortexSnapshot", wave_str: Optional[str], shift_date: "date") -> Optional[str]:
+    """Pacific-time label for the ETA, e.g. "3:45 PM", "Done", or None. See _calc_eta_dt."""
+    from zoneinfo import ZoneInfo as _ZI
+    _PACIFIC = _ZI("America/Los_Angeles")
+    _UTC = _ZI("UTC")
+
+    if not snap:
+        return None
+    if (snap.packages_remaining or 0) == 0 and (snap.pct_complete or 0) >= 99:
+        return "Done"
+
+    eta_utc_naive = _calc_eta_dt(snap, wave_str, shift_date)
+    if eta_utc_naive is None:
+        return None
 
     eta_pt = eta_utc_naive.replace(tzinfo=_UTC).astimezone(_PACIFIC)
     return eta_pt.strftime("%-I:%M %p")
@@ -496,9 +516,6 @@ def post_mgt_summary(shift_date: date, db: Session, grounded_vans: Optional[list
 
     risks: list[str] = []
 
-    def _standing_emoji(st: str) -> str:
-        return {"Platinum": "💎", "Gold": "🥇", "Silver": "🥈", "Bronze": "🥉"}.get(st, "❔")
-
     def _driver_line(s: dict) -> str:
         em = _standing_emoji(s["standing"])
         parts = [f"{em} {s['driver_name']} ({s['standing']})"]
@@ -676,6 +693,8 @@ def post_assignment_matrix(shift_date: date, db: Session, force: bool = False) -
     if not client:
         return {"status": "no_slack_token"}
 
+    quality_map = _latest_quality_map(db)
+
     date_str = shift_date.strftime("%A, %B %-d")
 
     blocks = [
@@ -685,7 +704,7 @@ def post_assignment_matrix(shift_date: date, db: Session, force: bool = False) -
         },
     ]
 
-    col_header = f"{'Driver':<22} {'Route':<10} {'Van':<10} {'Stg Loc':<14} {'Return'}"
+    col_header = f"{'Driver':<22} {'Route':<10} {'Van':<10} {'Stg Loc':<14} {'Return':<9} {'Perf'}"
 
     def _flush(wave_label: str, rows: list[str]):
         if not rows:
@@ -709,10 +728,35 @@ def post_assignment_matrix(shift_date: date, db: Session, force: bool = False) -
         first_group = False
         name = _full_name(a.driver_name)
         return_time = _calc_return_time(a.wave or "", a.route_duration) or "—"
+        standing = quality_map.get(a.driver_name, {}).get("standing", "Unk")
         wave_rows.append(
-            f"{name:<22} {a.route_code or '—':<10} {a.van_number or '—':<10} {a.stage_location or '—':<14} {return_time}"
+            f"{name:<22} {a.route_code or '—':<10} {a.van_number or '—':<10} {a.stage_location or '—':<14} {return_time:<9} {standing}"
         )
     _flush(active_wave, wave_rows)
+
+    # ── Team-aggregate performance line ──────────────────────────────────
+    scored = [quality_map[a.driver_name]["score"] for a in assignments if a.driver_name in quality_map]
+    standings = [quality_map[a.driver_name]["standing"] for a in assignments if a.driver_name in quality_map]
+    no_data = len(assignments) - len(scored)
+    if scored:
+        avg_score = sum(scored) / len(scored)
+        counts: dict[str, int] = {}
+        for st in standings:
+            counts[st] = counts.get(st, 0) + 1
+        breakdown = " · ".join(
+            f"{_standing_emoji(st)} {ct} {st}"
+            for st, ct in sorted(counts.items(), key=lambda kv: -_STANDING_RANK.get(kv[0], 0))
+        )
+        team_line = f"*Team Performance:* Avg score {avg_score:.1f} · {breakdown}"
+        if no_data:
+            team_line += f" · ❔ {no_data} No Data"
+    else:
+        team_line = "*Team Performance:* No quality data available for today's roster"
+
+    blocks.append({
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": team_line},
+    })
 
     blocks.append({
         "type": "context",
@@ -1314,6 +1358,16 @@ def get_wave_status(shift_date: Optional[str] = None, db: Session = Depends(get_
         if r.arrival_confirmed
     }
 
+    # RTS (Return to Station) debriefs — most recent per driver for this shift
+    rts_map: dict[str, RtsDebrief] = {}
+    for r in (
+        db.query(RtsDebrief)
+        .filter(RtsDebrief.shift_date == target)
+        .order_by(RtsDebrief.started_at)
+        .all()
+    ):
+        rts_map[r.driver_name] = r
+
     # Group by wave
     from collections import defaultdict
     waves_map: dict[str, list] = defaultdict(list)
@@ -1390,8 +1444,27 @@ def get_wave_status(shift_date: Optional[str] = None, db: Session = Depends(get_
             # ── Cortex ETA ─────────────────────────────────────────────────
             snap = cortex_map.get(a.route_code or "")
             eta_return = _calc_eta(snap, a.wave, target) if snap else None
+            eta_dt = _calc_eta_dt(snap, a.wave, target) if snap and eta_return not in (None, "Done") else None
             pct_complete = float(snap.pct_complete) if snap and snap.pct_complete is not None else None
             pkgs_remaining = snap.packages_remaining if snap else None
+
+            # ── RTS (Return to Station) ─────────────────────────────────────
+            rts_rec = rts_map.get(a.driver_name)
+            if rts_rec is None:
+                rts_status = "not_started"
+            elif rts_rec.completed_at is None:
+                rts_status = "in_progress"
+            else:
+                rts_status = "completed"
+
+            rts_out = {
+                "status": rts_status,
+                "started_at": rts_rec.started_at.isoformat() if rts_rec and rts_rec.started_at else None,
+                "completed_at": rts_rec.completed_at.isoformat() if rts_rec and rts_rec.completed_at else None,
+                "expected_return_time": rts_rec.expected_return_time if rts_rec else None,
+                "routed_to_rescue": bool(rts_rec.routed_to_rescue) if rts_rec else False,
+                "reattempt_assigned_count": rts_rec.reattempt_assigned_count if rts_rec else None,
+            }
 
             drivers_out.append({
                 "driver_name": a.driver_name,
@@ -1404,8 +1477,10 @@ def get_wave_status(shift_date: Optional[str] = None, db: Session = Depends(get_
                 "arrived_at": arr_at.isoformat() if arr_at else None,
                 "checklist": checklist,
                 "eta_return": eta_return,
+                "eta_return_at": eta_dt.isoformat() if eta_dt else None,
                 "pct_complete": pct_complete,
                 "packages_remaining": pkgs_remaining,
+                "rts": rts_out,
             })
 
         total_all += len(wave_drivers)
@@ -1703,3 +1778,4 @@ def get_shift_dm_status(shift_date: str, db: Session = Depends(get_db)):
             for r in records
         ],
     }
+

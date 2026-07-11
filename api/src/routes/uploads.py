@@ -172,6 +172,7 @@ def upload_dop(file: UploadFile = File(...)):
                     route_code=record.route_code,
                     wave=record.wave,
                     planned_packages=record.num_packages,
+                    route_duration=record.route_duration,
                     commercial_pct=None,
                     zone=None,
                     service_type=record.service_type,
@@ -202,6 +203,69 @@ def upload_dop(file: UploadFile = File(...)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to upload DOP: {str(e)}")
+
+
+@router.post("/dop/backfill-duration")
+def backfill_dop_duration(date_str: str):
+    """
+    One-time repair for DOP rows saved before route_duration was copied onto
+    the DOP/DailyRouteAssignment tables (see upload_dop). Re-reads the
+    archived upload_retention_records payload for each DOP row's source_file
+    on the given date and fills in route_duration wherever it's still null.
+    """
+    from api.src.database import DailyRouteAssignment
+
+    try:
+        target = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date_str — use YYYY-MM-DD.")
+
+    db = SessionLocal()
+    try:
+        dop_rows = db.query(DOP).filter(DOP.schedule_date == target).all()
+        if not dop_rows:
+            return {"date": date_str, "dop_rows": 0, "updated": 0, "detail": "No DOP rows for this date."}
+
+        source_files = {r.source_file for r in dop_rows if r.source_file}
+        duration_by_route: dict[str, int] = {}
+        for sf in source_files:
+            archive = (
+                db.query(UploadRetentionRecord)
+                .filter(UploadRetentionRecord.upload_type == "dop", UploadRetentionRecord.source_file == sf)
+                .order_by(UploadRetentionRecord.uploaded_at.desc())
+                .first()
+            )
+            if not archive or not archive.payload:
+                continue
+            for rec in archive.payload:
+                rc = rec.get("route_code")
+                dur = rec.get("route_duration")
+                if rc and dur is not None:
+                    duration_by_route[rc] = dur
+
+        updated_dop = 0
+        for row in dop_rows:
+            if row.route_duration is None and row.route_code in duration_by_route:
+                row.route_duration = duration_by_route[row.route_code]
+                updated_dop += 1
+
+        updated_assignments = 0
+        assignments = db.query(DailyRouteAssignment).filter(DailyRouteAssignment.assignment_date == target).all()
+        for a in assignments:
+            if a.route_duration is None and a.route_code in duration_by_route:
+                a.route_duration = duration_by_route[a.route_code]
+                updated_assignments += 1
+
+        db.commit()
+        return {
+            "date": date_str,
+            "dop_rows": len(dop_rows),
+            "durations_found": len(duration_by_route),
+            "dop_updated": updated_dop,
+            "assignments_updated": updated_assignments,
+        }
+    finally:
+        db.close()
 
 
 @router.post("/fleet")

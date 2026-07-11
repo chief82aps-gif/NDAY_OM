@@ -5,15 +5,22 @@ file hasn't landed in its monitored channel yet.
 Six reminders, all DM-only to every member of #nday-mgt (never posted to
 the channel itself, never sent to drivers):
 
-  1. DOP file                — threshold 9:00 AM PT,  every 5 min until posted (#dlv3-nday-info)
-  2. Route Sheets file       — threshold 9:00 AM PT,  every 5 min until posted (#dlv3-nday-info)
-  3. Cortex Routes file      — threshold 9:00 AM PT,  every 5 min until posted (#nday-operations-management)
-  4. Fleet / Vehicle Data    — threshold 9:00 AM PT,  every 5 min until posted (#nday-operations-management)
-  5. Okami capacity forecast — threshold 3:30 PM PT,  every 5 min until posted (#nday-operations-management)
-  6. Driver schedule (post-rostering) — threshold 7:30 PM PT, every 5 min until posted (#nday-operations-management)
+  1. DOP file                — window 9:00-10:00 AM PT, every 5 min until posted (#dlv3-nday-info)
+  2. Route Sheets file       — window 9:00-10:00 AM PT, every 5 min until posted (#dlv3-nday-info)
+  3. Cortex Routes file      — window 9:00-10:00 AM PT, every 5 min until posted (#nday-operations-management)
+  4. Fleet / Vehicle Data    — window 9:00-10:00 AM PT, every 5 min until posted (#nday-operations-management)
+  5. Okami capacity forecast — window 3:30-9:00 PM PT,  every 5 min until posted (#nday-operations-management)
+  6. Driver schedule (post-rostering) — window 5:00-8:00 PM PT, every 5 min until posted (#nday-operations-management)
 
-Each stops nagging for the day once a matching OpsIngestJob row is detected,
-and resets automatically at midnight Pacific (state keyed by date).
+Windows are all against our own server clock in Pacific local time (never
+against a Slack message timestamp, which we don't control on the Amazon
+side) and reflect when each file is actually expected to land, not just
+an earliest-possible threshold. DOP/Route Sheets normally arrive before
+9:00 AM (never before 7:00 AM); Fleet/Cortex ingest and Rostering follow
+their own expected windows below. Each reminder stops nagging for the
+day once a matching OpsIngestJob row is detected, or once its window
+closes — and resets automatically at midnight Pacific (state keyed by
+date).
 
 Endpoints:
   POST /mgt-reminders/check   Manual trigger (same call the background loop makes)
@@ -23,6 +30,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timezone
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends
@@ -38,14 +46,15 @@ PT = ZoneInfo("America/Los_Angeles")
 
 REMINDER_INTERVAL_SECONDS = 5 * 60
 
-# window = (start_hour, start_minute, end_hour, end_minute) in Pacific time
+# window = (start_hour, start_minute, end_hour, end_minute) in Pacific time —
+# checked against our own server clock, never a Slack message timestamp.
 _REMINDERS = {
-    "dop":          {"detected_type": "dop",          "label": "DOP file",                   "window": (9, 0, 21, 0)},
-    "route_sheets": {"detected_type": "route_sheets", "label": "Route Sheets file",           "window": (9, 0, 21, 0)},
-    "cortex":       {"detected_type": "cortex",       "label": "Cortex Routes file",          "window": (9, 0, 21, 0)},
-    "fleet":        {"detected_type": "fleet",        "label": "Fleet / Vehicle Data file",   "window": (9, 0, 21, 0)},
+    "dop":          {"detected_type": "dop",          "label": "DOP file",                   "window": (9, 0, 10, 0)},
+    "route_sheets": {"detected_type": "route_sheets", "label": "Route Sheets file",           "window": (9, 0, 10, 0)},
+    "cortex":       {"detected_type": "cortex",       "label": "Cortex Routes file",          "window": (9, 0, 10, 0)},
+    "fleet":        {"detected_type": "fleet",        "label": "Fleet / Vehicle Data file",   "window": (9, 0, 10, 0)},
     "okami":        {"detected_type": "okami_capacity","label": "Okami capacity forecast",    "window": (15, 30, 21, 0)},
-    "schedule":     {"detected_type": "driver_schedule","label": "Driver schedule",           "window": (19, 30, 23, 59)},
+    "schedule":     {"detected_type": "driver_schedule","label": "Driver schedule",           "window": (17, 0, 20, 0)},
 }
 
 # in-memory per-key state — resets on deploy/restart, same convention as
@@ -61,8 +70,9 @@ def _client():
     return WebClient(token=token)
 
 
-def _mgt_member_ids(client) -> list[str]:
-    """All human members of #nday-mgt (excludes the bot's own user id)."""
+def _mgt_member_ids(client) -> tuple[list[str], Optional[str]]:
+    """All human members of #nday-mgt (excludes the bot's own user id).
+    Returns (member_ids, error) — error is None on success."""
     try:
         bot_id = client.auth_test().get("user_id")
     except Exception as exc:
@@ -74,24 +84,17 @@ def _mgt_member_ids(client) -> list[str]:
         members = resp.get("members", [])
     except Exception as exc:
         logger.warning("mgt_reminders: conversations_members failed: %s", exc)
-        return []
+        return [], str(exc)
 
-    return [m for m in members if m != bot_id]
-
-
-def _dm_all(client, text: str) -> int:
-    sent = 0
-    for uid in _mgt_member_ids(client):
-        try:
-            client.chat_postMessage(channel=uid, text=text)
-            sent += 1
-        except Exception as exc:
-            logger.warning("mgt_reminders: DM to %s failed: %s", uid, exc)
-    return sent
+    return [m for m in members if m != bot_id], None
 
 
 def _file_detected_today(db: Session, detected_type: str, today) -> bool:
-    start_utc = datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
+    # Midnight *Pacific*, converted to UTC — not midnight UTC on the same
+    # calendar-day numbers, which is 7-8 hours too early and would count a
+    # file posted late the previous Pacific evening as "detected today".
+    start_local = datetime(today.year, today.month, today.day, tzinfo=PT)
+    start_utc = start_local.astimezone(timezone.utc)
     return (
         db.query(OpsIngestJob)
         .filter(OpsIngestJob.detected_type == detected_type)
@@ -101,54 +104,92 @@ def _file_detected_today(db: Session, detected_type: str, today) -> bool:
     )
 
 
-def _check_one(key: str, db: Session, client, now) -> None:
+def _check_one(key: str, db: Session, client, now) -> dict:
+    """Runs the check for one reminder key and returns a diagnostic dict
+    describing exactly what happened — used by both the silent background
+    loop and the manual /check endpoint (which surfaces it in the response)."""
     cfg = _REMINDERS[key]
     state = _state[key]
     today = now.date()
+
+    result: dict = {
+        "key": key, "label": cfg["label"],
+        "reason": None, "recipients": None, "sent": None, "error": None,
+    }
 
     start_h, start_m, end_h, end_m = cfg["window"]
     past_start = (now.hour, now.minute) >= (start_h, start_m)
     past_end = (now.hour, now.minute) >= (end_h, end_m)
 
     if not past_start or past_end:
-        return
+        result["reason"] = "outside_window"
+        return result
 
     if state["resolved_date"] == today:
-        return
+        result["reason"] = "already_resolved_this_process"
+        return result
 
     if _file_detected_today(db, cfg["detected_type"], today):
         state["resolved_date"] = today
-        return
+        result["reason"] = "file_detected_today"
+        return result
 
     last = state["last_sent_at"]
     if last and (now - last).total_seconds() < REMINDER_INTERVAL_SECONDS:
-        return
+        result["reason"] = "throttled"
+        result["seconds_since_last_send"] = round((now - last).total_seconds())
+        return result
 
-    sent = _dm_all(
-        client,
-        f":alarm_clock: *{cfg['label']} reminder* — this hasn't been posted to "
-        f"#nday-operations-management yet today. Please post it as soon as it's available.",
-    )
+    recipients, member_error = _mgt_member_ids(client)
+    result["recipients"] = len(recipients)
+    if member_error:
+        result["error"] = f"member lookup failed: {member_error}"
+        result["reason"] = "member_lookup_failed"
+        state["last_sent_at"] = now
+        return result
+
+    sent = 0
+    send_errors: list[str] = []
+    for uid in recipients:
+        try:
+            client.chat_postMessage(
+                channel=uid,
+                text=(
+                    f":alarm_clock: *{cfg['label']} reminder* — this hasn't been posted "
+                    f"yet today. Please post it as soon as it's available."
+                ),
+            )
+            sent += 1
+        except Exception as exc:
+            send_errors.append(f"{uid}: {exc}")
+            logger.warning("mgt_reminders: DM to %s failed: %s", uid, exc)
+
     state["last_sent_at"] = now
+    result["sent"] = sent
+    result["reason"] = "sent"
+    if send_errors:
+        result["error"] = "; ".join(send_errors[:5])
     if sent:
         logger.info("mgt_reminders: sent '%s' reminder to %d #nday-mgt members", key, sent)
+    return result
 
 
-def run_mgt_reminders_check() -> None:
-    """Called every 60s from the background loop in main.py."""
+def run_mgt_reminders_check() -> list[dict]:
+    """Called every 60s from the background loop in main.py. Returns a
+    diagnostic dict per reminder key (ignored by the loop, surfaced by
+    the manual /check endpoint)."""
     client = _client()
     if not client:
-        return
+        return [{"key": k, "reason": "no_slack_token"} for k in _REMINDERS]
     now = datetime.now(PT)
     db = SessionLocal()
     try:
-        for key in _REMINDERS:
-            _check_one(key, db, client, now)
+        return [_check_one(key, db, client, now) for key in _REMINDERS]
     finally:
         db.close()
 
 
 @router.post("/check")
 def manual_check():
-    run_mgt_reminders_check()
-    return {"status": "checked"}
+    results = run_mgt_reminders_check()
+    return {"status": "checked", "results": results}

@@ -215,6 +215,8 @@ def debug_dop_state(date_str: str):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date_str — use YYYY-MM-DD.")
 
+    from api.src.database import SlackIngestLog
+
     db = SessionLocal()
     try:
         dop_rows = db.query(DOP).filter(DOP.schedule_date == target).all()
@@ -223,6 +225,12 @@ def debug_dop_state(date_str: str):
             .filter(UploadRetentionRecord.upload_type == "dop")
             .order_by(UploadRetentionRecord.uploaded_at.desc())
             .limit(10)
+            .all()
+        )
+        ingest_logs = (
+            db.query(SlackIngestLog)
+            .filter(SlackIngestLog.file_type == "dop", SlackIngestLog.ingest_date == target)
+            .order_by(SlackIngestLog.processed_at.desc())
             .all()
         )
         return {
@@ -246,6 +254,16 @@ def debug_dop_state(date_str: str):
                     "sample_payload_keys": list(a.payload[0].keys()) if a.payload else None,
                 }
                 for a in archives
+            ],
+            "dop_ingest_logs": [
+                {
+                    "filename": log.filename,
+                    "status": log.status,
+                    "error": log.error,
+                    "records_processed": log.records_processed,
+                    "processed_at": log.processed_at.isoformat() if log.processed_at else None,
+                }
+                for log in ingest_logs
             ],
         }
     finally:

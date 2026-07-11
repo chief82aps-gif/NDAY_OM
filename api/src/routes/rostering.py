@@ -633,7 +633,7 @@ def _full_name(driver_name: str) -> str:
     return driver_name.strip()
 
 
-def post_assignment_matrix(shift_date: date, db: Session) -> dict:
+def post_assignment_matrix(shift_date: date, db: Session, force: bool = False) -> dict:
     """
     Post the day-of assignment matrix to #nday-mgt: every driver's route, van,
     and estimated return time — the same data sent in each driver's DM —
@@ -647,8 +647,12 @@ def post_assignment_matrix(shift_date: date, db: Session) -> dict:
         return {"status": "inactive", "note": "Set ROSTERING_ACTIVE=true on Render to enable"}
 
     fake_id = f"assignment_matrix_{shift_date.isoformat()}"
-    if db.query(SlackIngestLog).filter(SlackIngestLog.slack_file_id == fake_id).first():
-        return {"status": "already_posted", "date": shift_date.isoformat()}
+    existing_log = db.query(SlackIngestLog).filter(SlackIngestLog.slack_file_id == fake_id).first()
+    if existing_log:
+        if not force:
+            return {"status": "already_posted", "date": shift_date.isoformat()}
+        db.delete(existing_log)
+        db.commit()
 
     assignments = (
         db.query(DailyRouteAssignment)
@@ -1471,13 +1475,14 @@ def trigger_mgt_summary(shift_date: str, db: Session = Depends(get_db)):
 
 
 @router.post("/assignment-matrix/{shift_date}")
-def trigger_assignment_matrix(shift_date: str, db: Session = Depends(get_db)):
-    """Post the #nday-mgt day-of assignment matrix (driver/route/van/est. return) for shift_date."""
+def trigger_assignment_matrix(shift_date: str, force: bool = False, db: Session = Depends(get_db)):
+    """Post the #nday-mgt day-of assignment matrix (driver/route/van/est. return) for shift_date.
+    Pass ?force=true to re-post even if already posted for this date (e.g. after a format change)."""
     try:
         target = date.fromisoformat(shift_date)
     except ValueError:
         raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
-    return post_assignment_matrix(target, db)
+    return post_assignment_matrix(target, db, force=force)
 
 
 @router.get("/suggested/{shift_date}")

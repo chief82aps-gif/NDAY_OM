@@ -161,7 +161,7 @@ def _classify(filename: str, message: str) -> str:
         return "wst_zip"
 
     if ext == ".csv":
-        if any(k in combined for k in ("vehicledata", "vehicle data", "vehicle_data", "fleet", "daily fleet")):
+        if any(k in combined for k in ("vehicledata", "vehiclesdata", "vehicle data", "vehicles data", "vehicle_data", "fleet", "daily fleet")):
             return "fleet"
         if any(k in combined for k in ("quality", "trailing", "overview", "scorecard")):
             return "quality_csv"
@@ -176,7 +176,7 @@ def _classify(filename: str, message: str) -> str:
             return "cortex"
         if any(k in combined for k in ("dop", "dispatch ops", "dispatch_ops")):
             return "dop"
-        if any(k in combined for k in ("vehicledata", "vehicle data", "vehicle_data", "fleet", "daily fleet")):
+        if any(k in combined for k in ("vehicledata", "vehiclesdata", "vehicle data", "vehicles data", "vehicle_data", "fleet", "daily fleet")):
             return "fleet"
         if any(k in combined for k in ("schedule", "shift", "availability", "rostered work")):
             return "driver_schedule"

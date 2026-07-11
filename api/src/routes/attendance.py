@@ -22,7 +22,7 @@ from decimal import Decimal
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -1035,6 +1035,82 @@ def set_driver_pin(
     entry.ssn_last4 = body.ssn_last4
     db.commit()
     return {"status": "ok", "driver_name": entry.payroll_name}
+
+
+def _name_tokens(name: str) -> frozenset[str]:
+    return frozenset(re.sub(r"[^a-z\s]", "", name.lower()).split())
+
+
+@router.post("/roster/import-ssn-last4")
+def import_ssn_last4(
+    file: UploadFile = File(...),
+    dry_run: bool = True,
+    db: Session = Depends(get_db),
+):
+    """
+    Bulk-import real SSN-last-4 PINs from an ADP export (columns: Associate ID,
+    Legal First Name, Legal Last Name, Legal Middle Name, Salutation, last 4).
+
+    Matches each row to driver_roster by first+last name token overlap. Only
+    overwrites entries currently on the default placeholder PIN ("1234") or
+    blank — never clobbers a PIN a driver has already personalized via
+    self-service change.
+
+    dry_run=true (default) reports match counts without writing anything;
+    call again with dry_run=false to commit.
+    """
+    import pandas as pd
+    from io import BytesIO
+
+    content = file.file.read()
+    df = pd.read_excel(BytesIO(content))
+
+    roster = db.query(DriverRosterEntry).filter(DriverRosterEntry.is_active == True).all()
+    roster_tokens = [(_name_tokens(r.payroll_name), r) for r in roster]
+
+    matched = updated = skipped_custom_pin = 0
+    unmatched: list[str] = []
+
+    for _, row in df.iterrows():
+        first = str(row.get("Legal First Name") or "").strip()
+        last = str(row.get("Legal Last Name") or "").strip()
+        raw_last4 = str(row.get("last 4") or "").strip()
+        last4 = raw_last4.zfill(4) if raw_last4.isdigit() else ""
+        if not first or not last or not last4:
+            continue
+
+        target = _name_tokens(f"{first} {last}")
+        best: Optional[DriverRosterEntry] = None
+        best_score = 0
+        for tokens, entry in roster_tokens:
+            score = len(target & tokens)
+            if score > best_score:
+                best_score = score
+                best = entry
+
+        if best and best_score >= 2:
+            matched += 1
+            if best.ssn_last4 in (None, "", "1234"):
+                if not dry_run:
+                    best.ssn_last4 = last4
+                updated += 1
+            else:
+                skipped_custom_pin += 1
+        else:
+            unmatched.append(f"{first} {last}")
+
+    if not dry_run:
+        db.commit()
+
+    return {
+        "dry_run": dry_run,
+        "total_rows": len(df),
+        "matched": matched,
+        "updated": updated,
+        "skipped_custom_pin": skipped_custom_pin,
+        "unmatched_count": len(unmatched),
+        "unmatched_names": unmatched[:50],
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────

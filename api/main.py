@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.src.routes import uploads, auth, audit, enhanced_audit, weekly_audit, weekly_audit_upload, rescue
 from api.src.routes import daily_notify, quality, attendance, attendance_reports, ops_ingest, dvic, dsp_scorecard_weekly, eod_survey, route_assignment, slack_interactions, manager_accountability
-from api.src.routes import rostering, cortex_tracking, adp, rts
+from api.src.routes import rostering, cortex_tracking, adp, rts, mgt_reminders
 from api.src.routes.daily_notify import check_and_notify, check_ecp_and_prompt
 from api.src.routes.rostering import send_nightly_roster_reminder, send_wave_lead_pre_wave_dm, send_missing_drivers_summary
 from api.src.database import Base, engine, SessionLocal, ensure_dop_driver_name_column, ensure_ssn_last4_column, ensure_callout_signature_column, ensure_assignment_board_columns, _ensure_manager_signature_columns, _ensure_position_id_nullable, ensure_driver_shift_dm_checklist_columns, ensure_route_duration_columns
@@ -74,6 +74,18 @@ async def _dsp_scorecard_reminder_loop():
             await asyncio.to_thread(dsp_scorecard_weekly.run_dsp_scorecard_reminder)
         except Exception as exc:
             logger.warning("DSP scorecard reminder loop error: %s", exc)
+        await asyncio.sleep(60)
+
+
+async def _mgt_reminders_loop():
+    """Every 60 s — delegates to mgt_reminders.run_mgt_reminders_check(), which
+    DMs every #nday-mgt member when Cortex (9 AM), Fleet (9 AM), Okami capacity
+    forecast (3:30 PM), or the driver schedule (7:30 PM) hasn't posted yet."""
+    while True:
+        try:
+            await asyncio.to_thread(mgt_reminders.run_mgt_reminders_check)
+        except Exception as exc:
+            logger.warning("Mgt reminders loop error: %s", exc)
         await asyncio.sleep(60)
 
 
@@ -281,6 +293,7 @@ async def startup():
     asyncio.create_task(_nightly_roster_reminder_loop())
     asyncio.create_task(_grounded_van_watcher_loop())
     asyncio.create_task(_wave_lead_watcher_loop())
+    asyncio.create_task(_mgt_reminders_loop())
 
 cors_origins_env = os.getenv("CORS_ORIGINS", "").strip()
 if cors_origins_env:
@@ -329,6 +342,7 @@ app.include_router(rostering.router)
 app.include_router(cortex_tracking.router)
 app.include_router(adp.router)
 app.include_router(rts.router)
+app.include_router(mgt_reminders.router)
 
 @app.get("/")
 def root():

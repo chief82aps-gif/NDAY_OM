@@ -141,6 +141,7 @@ _TYPE_LABELS = {
     "cortex":            "Cortex Routes (Excel)",
     "dop":               "DOP / Dispatch (Excel)",
     "fleet":             "Vehicle Data / Daily Fleet File (Excel)",
+    "okami_capacity":    "Okami Capacity Forecast (Next-Day)",
     "driver_schedule":   "Driver Schedule (Excel)",
     "route_sheets":      "Route Sheets (PDF)",
     "wst_zip":           "WST Data (ZIP)",
@@ -164,6 +165,8 @@ def _classify(filename: str, message: str, channel_id: str = "") -> str:
         return "wst_zip"
 
     if ext == ".csv":
+        if any(k in combined for k in ("okami", "capacity forecast", "capacity_forecast", "next day capacity")):
+            return "okami_capacity"
         if any(k in combined for k in ("vehicledata", "vehiclesdata", "vehicle data", "vehicles data", "vehicle_data", "fleet", "daily fleet")):
             return "fleet"
         if any(k in combined for k in ("quality", "trailing", "overview", "scorecard")):
@@ -180,6 +183,8 @@ def _classify(filename: str, message: str, channel_id: str = "") -> str:
         return "unknown"
 
     if ext in (".xlsx", ".xls"):
+        if any(k in combined for k in ("okami", "capacity forecast", "capacity_forecast", "next day capacity")):
+            return "okami_capacity"
         if any(k in combined for k in ("dvic", "pre_trip", "pre-trip", "under90", "under 90", "pretrip")):
             return "dvic"
         if any(k in combined for k in ("cortex", "routes_dlv", "dlv3", "dlv2")):
@@ -195,6 +200,8 @@ def _classify(filename: str, message: str, channel_id: str = "") -> str:
         return "unknown"
 
     if ext == ".pdf":
+        if any(k in combined for k in ("okami", "capacity forecast", "capacity_forecast", "next day capacity")):
+            return "okami_capacity"
         if any(k in combined for k in ("variable invoice", "variable_invoice")):
             return "variable_invoice"
         if any(k in combined for k in ("fleet invoice", "fleet_invoice")):

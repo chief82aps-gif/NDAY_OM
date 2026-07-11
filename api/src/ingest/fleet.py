@@ -4,7 +4,7 @@ import logging
 from typing import List, Tuple
 from api.src.models import Vehicle
 from api.src.normalization import normalize_service_type
-from api.src.column_mapping import build_column_map
+from api.src.column_mapping import build_column_map, read_tabular_file
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +42,8 @@ def parse_fleet_excel(file_path: str) -> Tuple[List[Vehicle], List[str]]:
     records = []
 
     try:
-        if file_path.lower().endswith('.csv'):
-            df = pd.read_csv(file_path, header=None)
-            logger.info(f"Fleet: Loaded CSV file with shape {df.shape}")
-        else:
-            df = pd.read_excel(file_path, sheet_name=0, header=None)
-            logger.info(f"Fleet: Loaded Excel file with shape {df.shape}")
+        df = read_tabular_file(file_path, header=None)
+        logger.info(f"Fleet: Loaded file with shape {df.shape}")
 
         if df.shape[0] < 1 or df.shape[1] < 4:
             error_msg = "Fleet file has insufficient columns or rows. Expected at least 4 columns."

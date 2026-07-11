@@ -3,7 +3,7 @@ import pandas as pd
 from typing import List, Tuple
 from api.src.models import RouteDOP
 from api.src.normalization import normalize_route_code, normalize_service_type, validate_route_code
-from api.src.column_mapping import build_column_map
+from api.src.column_mapping import build_column_map, read_tabular_file
 
 
 DOP_COLUMN_ALIASES = {
@@ -48,10 +48,7 @@ def parse_dop_excel(file_path: str) -> Tuple[List[RouteDOP], List[str]]:
     records = []
 
     try:
-        if file_path.lower().endswith('.csv'):
-            df = pd.read_csv(file_path, header=None)
-        else:
-            df = pd.read_excel(file_path, sheet_name=0, header=None)
+        df = read_tabular_file(file_path, header=None)
 
         if df.shape[0] < 1 or df.shape[1] < 7:
             errors.append("DOP file has insufficient columns or rows. Expected at least 7 columns.")

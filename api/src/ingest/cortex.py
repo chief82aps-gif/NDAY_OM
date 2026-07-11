@@ -2,7 +2,7 @@
 import pandas as pd
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
-from api.src.column_mapping import build_column_map
+from api.src.column_mapping import build_column_map, read_tabular_file
 
 
 CORTEX_COLUMN_ALIASES = {
@@ -49,10 +49,7 @@ def parse_cortex_excel(file_path: str) -> Tuple[List[CortexRoute], List[str]]:
     records = []
 
     try:
-        if file_path.lower().endswith('.csv'):
-            df = pd.read_csv(file_path, header=None)
-        else:
-            df = pd.read_excel(file_path, sheet_name=0, header=None)
+        df = read_tabular_file(file_path, header=None)
 
         if df.shape[0] < 1 or df.shape[1] < 6:
             errors.append("Cortex file has insufficient columns or rows. Expected at least 6 columns.")

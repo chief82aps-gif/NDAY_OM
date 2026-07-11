@@ -5,6 +5,25 @@ import re
 import pandas as pd
 
 
+def read_tabular_file(file_path: str, header=None) -> pd.DataFrame:
+    """Read a DOP/Fleet/Cortex file as a DataFrame, detecting the real
+    format from its content rather than its filename extension.
+
+    Files arrive from Slack/Amazon with names and extensions we don't
+    control — a ".csv" can contain real xlsx binary and vice versa — so
+    the extension can't be trusted to pick the parser.
+    """
+    with open(file_path, "rb") as f:
+        head = f.read(8)
+
+    is_xlsx = head.startswith(b"PK\x03\x04") or head.startswith(b"PK\x05\x06")
+    is_xls = head.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1")
+
+    if is_xlsx or is_xls:
+        return pd.read_excel(file_path, sheet_name=0, header=header)
+    return pd.read_csv(file_path, header=header)
+
+
 def _normalize_text(value) -> str:
     """Normalize a header cell for loose matching."""
     if value is None:

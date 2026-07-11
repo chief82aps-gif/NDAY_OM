@@ -31,6 +31,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ops-ingest", tags=["ops-ingest"])
 
 OPS_CHANNEL = os.getenv("OPS_CHANNEL_ID", "C0BE4ALL1EX")  # #nday-operations-management
+DLV3_INFO_CHANNEL = os.getenv("DLV3_INFO_CHANNEL_ID", "C0AF48TPAMV")  # #dlv3-nday-info (DOP + route sheets)
+SCAN_CHANNELS = [OPS_CHANNEL, DLV3_INFO_CHANNEL]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -151,11 +153,12 @@ _TYPE_LABELS = {
 }
 
 
-def _classify(filename: str, message: str) -> str:
+def _classify(filename: str, message: str, channel_id: str = "") -> str:
     name = (filename or "").lower()
     msg = (message or "").lower()
     combined = name + " " + msg
     ext = os.path.splitext(name)[1]
+    from_dlv3_info = channel_id == DLV3_INFO_CHANNEL
 
     if ext == ".zip":
         return "wst_zip"
@@ -167,6 +170,13 @@ def _classify(filename: str, message: str) -> str:
             return "quality_csv"
         if re.search(r"\bw\d{2}\b", combined):   # W27, W03, etc.
             return "quality_csv"
+        if any(k in combined for k in ("dop", "dispatch ops", "dispatch_ops")):
+            return "dop"
+        # #dlv3-nday-info only ever carries DOP + route sheet data, so an
+        # otherwise-unrecognized CSV dropped there (e.g. a generic "NDAY.csv")
+        # is DOP data by convention rather than a real "unknown" file.
+        if from_dlv3_info:
+            return "dop"
         return "unknown"
 
     if ext in (".xlsx", ".xls"):
@@ -180,6 +190,8 @@ def _classify(filename: str, message: str) -> str:
             return "fleet"
         if any(k in combined for k in ("schedule", "shift", "availability", "rostered work")):
             return "driver_schedule"
+        if from_dlv3_info:
+            return "dop"
         return "unknown"
 
     if ext == ".pdf":
@@ -195,6 +207,9 @@ def _classify(filename: str, message: str) -> str:
             return "pod_report"
         if any(k in combined for k in ("route sheet", "route_sheet")):
             return "route_sheets"
+        # #dlv3-nday-info's only PDF file type is the daily route sheet.
+        if from_dlv3_info:
+            return "route_sheets"
         return "unknown"
 
     return "unknown"
@@ -206,7 +221,7 @@ def _classify(filename: str, message: str) -> str:
 
 def scan_ops_channel(db: Session) -> list[str]:
     """
-    Scan #nday-operations-management for new file shares.
+    Scan #nday-operations-management and #dlv3-nday-info for new file shares.
     Creates OpsIngestJob rows for anything not yet seen.
     Returns list of new filenames detected.
     """
@@ -215,48 +230,49 @@ def scan_ops_channel(db: Session) -> list[str]:
         logger.warning("Ops ingest: SLACK_BOT_TOKEN not set — scan skipped.")
         return []
 
-    try:
-        resp = client.conversations_history(channel=OPS_CHANNEL, limit=100)
-    except Exception as exc:
-        logger.warning("Ops channel history failed: %s", exc)
-        return []
-
     known_ids: set[str] = {
         row[0] for row in db.query(OpsIngestJob.slack_file_id).all()
     }
 
     new_filenames: list[str] = []
-    for msg in resp.get("messages", []):
-        files = msg.get("files", [])
-        if not files:
+    for channel_id in SCAN_CHANNELS:
+        try:
+            resp = client.conversations_history(channel=channel_id, limit=100)
+        except Exception as exc:
+            logger.warning("Ops channel history failed for %s: %s", channel_id, exc)
             continue
 
-        msg_text: str = msg.get("text", "") or ""
-        msg_ts: str = msg.get("ts", "") or ""
-
-        for f in files:
-            fid: str = f.get("id", "")
-            if not fid or fid in known_ids:
+        for msg in resp.get("messages", []):
+            files = msg.get("files", [])
+            if not files:
                 continue
 
-            fname: str = f.get("name", "") or "unknown"
-            url: str = f.get("url_private_download") or f.get("url_private") or ""
-            dtype = _classify(fname, msg_text)
+            msg_text: str = msg.get("text", "") or ""
+            msg_ts: str = msg.get("ts", "") or ""
 
-            job = OpsIngestJob(
-                slack_file_id=fid,
-                slack_message_ts=msg_ts,
-                slack_message_text=msg_text[:1000] if msg_text else None,
-                file_name=fname,
-                file_url=url,
-                detected_type=dtype,
-                status="pending",
-                detected_at=datetime.now(timezone.utc),
-            )
-            db.add(job)
-            known_ids.add(fid)
-            new_filenames.append(fname)
-            logger.info("Ops ingest: queued %s as %s", fname, dtype)
+            for f in files:
+                fid: str = f.get("id", "")
+                if not fid or fid in known_ids:
+                    continue
+
+                fname: str = f.get("name", "") or "unknown"
+                url: str = f.get("url_private_download") or f.get("url_private") or ""
+                dtype = _classify(fname, msg_text, channel_id)
+
+                job = OpsIngestJob(
+                    slack_file_id=fid,
+                    slack_message_ts=msg_ts,
+                    slack_message_text=msg_text[:1000] if msg_text else None,
+                    file_name=fname,
+                    file_url=url,
+                    detected_type=dtype,
+                    status="pending",
+                    detected_at=datetime.now(timezone.utc),
+                )
+                db.add(job)
+                known_ids.add(fid)
+                new_filenames.append(fname)
+                logger.info("Ops ingest: queued %s as %s (from %s)", fname, dtype, channel_id)
 
     if new_filenames:
         db.commit()
@@ -344,6 +360,36 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
                 ))
             db.commit()
             return {"status": "ingested", "records": len(orchestrator.status.dop_records)}
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
+    # ── Route Sheets PDF ─────────────────────────────────────────────────────
+    if t == "route_sheets":
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        try:
+            from api.src.orchestrator import orchestrator
+            from api.src.database import RouteSheet
+            from api.src.routes.uploads import _archive_upload
+            orchestrator.ingest_route_sheets([tmp_path])
+            records = orchestrator.status.route_sheets
+            db.add(RouteSheet(
+                upload_date=datetime.utcnow().date(),
+                file_name=job.file_name,
+                file_size=len(content),
+                processing_status="processed",
+                total_routes=len(records),
+                total_assignments=0,
+                processed_at=datetime.utcnow(),
+            ))
+            _archive_upload(db, upload_type="route_sheets", source_file=job.file_name,
+                             payload=records, record_count=len(records))
+            db.commit()
+            return {"status": "ingested", "records": len(records)}
         finally:
             try:
                 os.unlink(tmp_path)
@@ -539,7 +585,7 @@ def list_jobs(status: Optional[str] = None, limit: int = 100, db: Session = Depe
 
 @router.post("/scan")
 def manual_scan(db: Session = Depends(get_db)):
-    """Trigger an immediate scan of #nday-operations-management for new files."""
+    """Trigger an immediate scan of #nday-operations-management and #dlv3-nday-info for new files."""
     new_files = scan_ops_channel(db)
     return {
         "status": "scanned",

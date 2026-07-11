@@ -59,6 +59,7 @@ interface SubmitResult {
   new_total_points: number;
   new_status: Status;
   next_threshold: { points: number; label: string; points_away: number };
+  roster_tight: boolean;
 }
 
 type Step = 'loading' | 'blocked' | 'identify' | 'set-pin' | 'status' | 'details' | 'review' | 'submitting' | 'done' | 'error';

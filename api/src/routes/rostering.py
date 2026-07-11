@@ -623,6 +623,16 @@ def _first_name(driver_name: str) -> str:
     return parts[0] if parts else driver_name.strip()
 
 
+def _full_name(driver_name: str) -> str:
+    """Normalize 'Last, First' or 'First Last' into 'First Last' for display."""
+    if not driver_name:
+        return ""
+    if "," in driver_name:
+        last, first = driver_name.split(",", 1)
+        return f"{first.strip()} {last.strip()}".strip()
+    return driver_name.strip()
+
+
 def post_assignment_matrix(shift_date: date, db: Session) -> dict:
     """
     Post the day-of assignment matrix to #nday-mgt: every driver's route, van,
@@ -671,11 +681,13 @@ def post_assignment_matrix(shift_date: date, db: Session) -> dict:
         },
     ]
 
+    col_header = f"{'Driver':<22} {'Route':<10} {'Van':<10} {'Stg Loc':<14} {'Return'}"
+
     def _flush(wave_label: str, rows: list[str]):
         if not rows:
             return
         header = f"Wave {wave_label}" if wave_label else "Wave Unassigned"
-        table = "\n".join(rows)
+        table = "\n".join([col_header, "-" * len(col_header)] + rows)
         blocks.append({
             "type": "section",
             "text": {"type": "mrkdwn", "text": f"*{header}*\n```{table}```"},
@@ -691,10 +703,10 @@ def post_assignment_matrix(shift_date: date, db: Session) -> dict:
             wave_rows = []
         active_wave = wave_label
         first_group = False
-        first = _first_name(a.driver_name)
+        name = _full_name(a.driver_name)
         return_time = _calc_return_time(a.wave or "", a.route_duration) or "—"
         wave_rows.append(
-            f"{first:<12} {a.route_code or '—':<10} {a.van_number or '—':<10} {return_time}"
+            f"{name:<22} {a.route_code or '—':<10} {a.van_number or '—':<10} {a.stage_location or '—':<14} {return_time}"
         )
     _flush(active_wave, wave_rows)
 

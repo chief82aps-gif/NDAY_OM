@@ -16,6 +16,7 @@ uses the manager-accountability queue directly (see dvic.py).
 from __future__ import annotations
 
 import logging
+import os
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -48,14 +49,16 @@ _DEFAULT_ROUTING = {
     "injury_report": ["dispatch", "ops_manager", "hr"],
 }
 
-# Known Slack IDs, reused from rostering.py — same three people. "dispatch",
-# "owner", and "hr" have no known Slack ID yet: left as an empty list (routing
-# skips an empty role rather than erroring) until set via PUT /document-config/roles.
+# "owner" and "hr" resolve to individual people, and this repo is public —
+# their Slack IDs must NOT be committed to source. Set these on Render:
+#   DOC_ROUTING_OWNER_SLACK_ID, DOC_ROUTING_HR_SLACK_ID,
+#   DOC_ROUTING_DISPATCH_CHANNEL_ID (falls back to NDAY_MGT_CHANNEL / #nday-mgt)
+# Left empty (routing skips an unset role) until those env vars are set.
 _DEFAULT_ROLE_DIRECTORY = {
     "ops_manager": ["U0BE493C5K9", "U0B36C9R8N4", "U0AJPQALDLL"],   # Spencer, Luis, Fabian
-    "dispatch": [],
-    "owner": [],
-    "hr": [],
+    "dispatch": [rid for rid in [os.getenv("DOC_ROUTING_DISPATCH_CHANNEL_ID") or os.getenv("NDAY_MGT_CHANNEL", "C0BCYAW7QP3")] if rid],
+    "owner": [rid for rid in [os.getenv("DOC_ROUTING_OWNER_SLACK_ID")] if rid],
+    "hr": [rid for rid in [os.getenv("DOC_ROUTING_HR_SLACK_ID")] if rid],
 }
 
 

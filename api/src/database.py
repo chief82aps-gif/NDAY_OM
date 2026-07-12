@@ -1946,6 +1946,106 @@ class DocumentRequirementRule(Base):
     )
 
 
+class RoleDirectory(Base):
+    """Maps an abstract role name (referenced by DocumentRoutingRule,
+    e.g. "dispatch", "ops_manager", "owner", "hr") to actual Slack
+    recipient IDs (user IDs for DMs, or a channel ID). Admin-editable via
+    document_routing.py — a role with an empty list is simply skipped
+    when routing, rather than erroring.
+    """
+    __tablename__ = "role_directory"
+
+    id = Column(Integer, primary_key=True)
+    role_name = Column(String(50), nullable=False, unique=True, index=True)
+    slack_ids = Column(JSON, nullable=False, default=list)   # list[str]
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class CrashReport(Base):
+    """Digital version of Amazon's 'DA Incident Packet v3.3' crash report form."""
+    __tablename__ = "crash_reports"
+
+    id = Column(Integer, primary_key=True)
+    report_number = Column(String(30), unique=True, nullable=False, index=True)
+    submitted_by = Column(String(150))
+    submitted_at = Column(DateTime)
+    status = Column(String(20), default="draft", index=True)   # draft | submitted
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Safety checklist
+    flashers_on = Column(Boolean, default=False)
+    vehicle_secured = Column(Boolean, default=False)
+    police_called = Column(Boolean, default=False)
+    medical_requested = Column(Boolean, default=False)
+    vehicle_not_moved = Column(Boolean, default=False)
+    hotline_called = Column(Boolean, default=False)
+    hotline_call_at = Column(DateTime)
+    dsp_owner_notified = Column(Boolean, default=False)
+    info_provided_to_leo = Column(Boolean, default=False)
+    photos_360_taken = Column(Boolean, default=False)
+    police_report_provided = Column(Boolean, default=False)
+
+    # General information
+    accident_date = Column(Date)
+    accident_time = Column(String(20))
+    accident_ampm = Column(String(2))
+    location_address = Column(String(255))
+    city_state_zip = Column(String(150))
+    driver_name = Column(String(150))
+    driver_license_number = Column(String(50))
+    driver_license_state = Column(String(10))
+    dsp_code = Column(String(20))
+
+    # Vehicle information
+    vehicle_year = Column(String(10))
+    vehicle_make_model = Column(String(100))
+    license_plate_state = Column(String(50))
+    equipment_number = Column(String(50))
+    vin = Column(String(50))
+    amzl_station_origin = Column(String(50))
+    destination_type = Column(String(20))   # delivery | amzl_station | vehicle_service
+
+    # Third party (only applicable if another vehicle was involved)
+    third_party_involved = Column(Boolean, default=False)
+    third_party_driver_name = Column(String(150))
+    third_party_driver_address = Column(String(255))
+    third_party_driver_phone = Column(String(30))
+    third_party_insurance = Column(String(150))
+    third_party_vehicle_year = Column(String(10))
+    third_party_vehicle_make_model = Column(String(100))
+    third_party_license_plate_state = Column(String(50))
+    third_party_license_no = Column(String(50))
+    third_party_license_state = Column(String(10))
+
+    # Narrative
+    accident_description = Column(Text)
+
+    # Conditions / other (all optional — police report typically covers these)
+    num_lanes = Column(Integer)
+    road_construction = Column(String(20))
+    road_attitude = Column(String(20))
+    traffic_conditions = Column(String(20))
+    light_conditions = Column(String(30))
+    road_conditions = Column(String(20))
+    weather_conditions = Column(String(20))
+    weather_other = Column(String(50))
+
+    # Additional information — only applicable if police were dispatched
+    police_department = Column(String(150))
+    officer_name = Column(String(150))
+    police_phone = Column(String(30))
+    police_report_no = Column(String(50))
+    citation_issued = Column(Boolean)
+
+    # Attachments
+    photo_urls = Column(JSON)          # list[str] — 360 scene photos
+    diagram_url = Column(String(500))  # photo of the hand-drawn (or digital) accident diagram
+
+    # Routing
+    routed_at = Column(DateTime)
+    routed_to = Column(JSON)           # list of role names actually notified
+
+
 class EodSurveyResponse(Base):
     """Driver end-of-day check-out survey. One row per driver per calendar day."""
     __tablename__ = "eod_survey_responses"

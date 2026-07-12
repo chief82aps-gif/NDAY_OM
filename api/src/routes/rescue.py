@@ -91,14 +91,10 @@ def _lookup_route(route_id: str, lookup_date: date, db: Session) -> dict:
     Phone is looked up from the driver roster by name match.
     Falls back to the most recent available Cortex date if today has no data."""
     def _cortex_query(target: date):
-        return (
-            db.query(Cortex)
-            .filter(
-                func.upper(Cortex.route_code) == route_id.upper(),
-                Cortex.assignment_date == target,
-            )
-            .order_by(Cortex.created_at.desc())
-            .first()
+        return next(
+            (c for c in get_latest_cortex_rows(db, target)
+             if (c.route_code or "").upper() == route_id.upper()),
+            None,
         )
 
     row = _cortex_query(lookup_date)

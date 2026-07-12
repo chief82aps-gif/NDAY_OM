@@ -585,14 +585,9 @@ def manual_assign(req: ManualAssignRequest, db: Session = Depends(get_db)):
     q = quality_map.get(req.transporter_id, {})
     is_coverage = req.transporter_id in callout_set
 
-    cr = (
-        db.query(Cortex)
-        .filter(
-            Cortex.assignment_date == target,
-            Cortex.route_code == req.route_code,
-        )
-        .order_by(Cortex.id.desc())
-        .first()
+    cr = next(
+        (c for c in get_latest_cortex_rows(db, target) if c.route_code == req.route_code),
+        None,
     )
     if not cr:
         # Accept assignment even without cortex record
@@ -606,11 +601,9 @@ def manual_assign(req: ManualAssignRequest, db: Session = Depends(get_db)):
     else:
         cr_data = cr
 
-    dop = (
-        db.query(DOP)
-        .filter(DOP.schedule_date == target, DOP.route_code == req.route_code)
-        .order_by(DOP.id.desc())
-        .first()
+    dop = next(
+        (d for d in get_latest_dop_rows(db, target) if d.route_code == req.route_code),
+        None,
     )
     row = _upsert_assignment(
         db, target, cr_data, dop, req.transporter_id, req.van_number, q,

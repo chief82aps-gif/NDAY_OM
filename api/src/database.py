@@ -970,35 +970,51 @@ class DOP(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-def get_latest_dop_rows(db, schedule_date):
-    """Return one DOP row per route_code for schedule_date — the most
-    recently ingested row wins (by id, which tracks created_at order).
-
-    Ingestion is append-only (multiple same-day uploads under different
-    filenames are common), so a naive `.filter(schedule_date==...).all()`
-    can return stale rows from an earlier upload alongside current ones.
-    """
-    latest_ids = (
-        db.query(func.max(DOP.id))
-        .filter(DOP.schedule_date == schedule_date)
-        .group_by(DOP.route_code)
-        .subquery()
+def _latest_source_file(db, model, date_column, date_value):
+    """Return the source_file of the most recently ingested row (highest id)
+    for the given date, or None if nothing has been ingested yet."""
+    return (
+        db.query(model.source_file)
+        .filter(date_column == date_value)
+        .order_by(model.id.desc())
+        .limit(1)
+        .scalar()
     )
-    return db.query(DOP).filter(DOP.id.in_(latest_ids)).all()
+
+
+def get_latest_dop_rows(db, schedule_date):
+    """Return all DOP rows from the most recently ingested source_file for
+    schedule_date — a full snapshot of the latest upload, not a per-route
+    merge across multiple same-day uploads.
+
+    Ingestion is append-only (Amazon's same-day corrections often arrive
+    under a different filename), so a naive `.filter(schedule_date==...).all()`
+    would mix rows from an earlier upload with the current one — and a
+    per-route "most recent row wins" merge would still incorrectly keep a
+    route that was dropped entirely from a later, corrected file. Scoping
+    to the single latest source_file avoids both.
+    """
+    latest_file = _latest_source_file(db, DOP, DOP.schedule_date, schedule_date)
+    if latest_file is None:
+        return []
+    return (
+        db.query(DOP)
+        .filter(DOP.schedule_date == schedule_date, DOP.source_file == latest_file)
+        .all()
+    )
 
 
 def get_latest_cortex_rows(db, assignment_date):
-    """Return one Cortex row per route_code for assignment_date — the most
-    recently ingested row wins (by id, which tracks created_at order).
-    See get_latest_dop_rows() for why this matters.
-    """
-    latest_ids = (
-        db.query(func.max(Cortex.id))
-        .filter(Cortex.assignment_date == assignment_date)
-        .group_by(Cortex.route_code)
-        .subquery()
+    """Return all Cortex rows from the most recently ingested source_file
+    for assignment_date. See get_latest_dop_rows() for why this matters."""
+    latest_file = _latest_source_file(db, Cortex, Cortex.assignment_date, assignment_date)
+    if latest_file is None:
+        return []
+    return (
+        db.query(Cortex)
+        .filter(Cortex.assignment_date == assignment_date, Cortex.source_file == latest_file)
+        .all()
     )
-    return db.query(Cortex).filter(Cortex.id.in_(latest_ids)).all()
 
 
 def purge_old_dop_cortex_rows(db, days=90):

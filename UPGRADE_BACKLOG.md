@@ -208,6 +208,7 @@ This section defines the timed operational rhythm that all system automations, n
 - 🔲 **Post-loadout staging scrum prompt** — after last van departure recorded, Slack prompt: confirm all carts/packages staged and taken
 - 🔲 **3:00 PM rescue plan reminder** — cron at 15:00 PT: Slack reminder to log rescue plans before cutoff
 - 🔲 **3:30 PM OKAMI reminder** — cron at 15:30 PT: Slack prompt to begin OKAMI scheduling; deadline 16:00
+- 🔲 **OKAMI input form** — dashboard form for ops to submit OKAMI scheduling data directly (fields/schema TBD with Jayson)
 - 🔲 **5:00 PM ECP reminder** — cron at 17:00 PT: Slack reminder ECP must complete by 19:00
 - 🔲 **End-of-day sign-out prompt** — after ECP confirmed, Slack DM + SMS to all rostered drivers: submit sign-out sheet
 - 🔲 **Monday payment prompt** — cron Monday morning: Slack reminder to process route payments

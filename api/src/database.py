@@ -439,6 +439,13 @@ class DriverRosterEntry(Base):
     slack_verified    = Column(Boolean, default=False)
     slack_verified_at = Column(DateTime)
 
+    # Profile provenance — this table is the interim source of truth, fed by
+    # schedule uploads, until a future HR module owns creation/termination.
+    source = Column(String(30), default="adp_import")   # adp_import | schedule_upload | hr_module
+    last_seen_on_schedule = Column(Date)                  # most recent schedule date this driver appeared on
+    flagged_inactive = Column(Boolean, default=False)     # not seen on any schedule in 30+ days — review, not auto-deactivated
+    flagged_inactive_at = Column(DateTime)
+
     __table_args__ = (
         Index('idx_roster_active_position', 'is_active', 'position_code'),
     )
@@ -1772,6 +1779,49 @@ def ensure_ssn_last4_column():
             conn.execute(text("UPDATE driver_roster SET ssn_last4 = '1234' WHERE ssn_last4 IS NULL"))
     except Exception:
         pass
+
+
+def ensure_driver_roster_tracking_columns():
+    """Add source/last_seen_on_schedule/flagged_inactive(_at) to driver_roster
+    for the schedule-driven driver profile module — added 2026-07-12."""
+    for col, typedef in [
+        ("source", "VARCHAR(30) DEFAULT 'adp_import'"),
+        ("last_seen_on_schedule", "DATE"),
+        ("flagged_inactive", "BOOLEAN DEFAULT FALSE"),
+        ("flagged_inactive_at", "TIMESTAMP"),
+    ]:
+        try:
+            with engine.begin() as conn:
+                if DATABASE_URL.startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE driver_roster ADD COLUMN {col} {typedef}"))
+                else:
+                    conn.execute(text(f"ALTER TABLE driver_roster ADD COLUMN IF NOT EXISTS {col} {typedef}"))
+        except Exception:
+            pass  # Column already exists
+
+
+def flag_stale_driver_profiles(db, days: int = 30) -> int:
+    """Flag (never deactivate) driver_roster rows not seen on any schedule
+    in `days` days. Only considers rows that have a last_seen_on_schedule
+    value at all, so ADP-only profiles never tracked via schedule uploads
+    aren't falsely flagged. Returns the number newly flagged."""
+    cutoff = datetime.utcnow().date() - timedelta(days=days)
+    rows = (
+        db.query(DriverRosterEntry)
+        .filter(
+            DriverRosterEntry.is_active == True,
+            DriverRosterEntry.flagged_inactive == False,
+            DriverRosterEntry.last_seen_on_schedule != None,
+            DriverRosterEntry.last_seen_on_schedule < cutoff,
+        )
+        .all()
+    )
+    for r in rows:
+        r.flagged_inactive = True
+        r.flagged_inactive_at = datetime.utcnow()
+    if rows:
+        db.commit()
+    return len(rows)
 
 
 def ensure_callout_signature_column():

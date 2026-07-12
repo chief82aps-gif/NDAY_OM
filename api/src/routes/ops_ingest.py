@@ -503,17 +503,43 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
                             logger.warning("Schedule annotation failed: %s", e)
                     # Upsert DriverRosterEntry for every unique driver in the
                     # schedule so the callout page PIN check can find them.
-                    from api.src.database import DriverRosterEntry as DRE
+                    # This table is the interim driver-profile source of truth
+                    # (see database.py's DriverRosterEntry docstring) until a
+                    # future HR module owns creation/termination — this ingest
+                    # only ever creates/updates, never deactivates or deletes.
+                    from api.src.database import DriverRosterEntry as DRE, flag_stale_driver_profiles
                     all_names = {n for dl in by_date.values() for n in dl}
-                    existing_names = {
-                        r.payroll_name
-                        for r in db.query(DRE.payroll_name)
-                            .filter(DRE.payroll_name.in_(list(all_names)))
-                            .all()
+                    last_seen_by_name: dict = {}
+                    for sched_date, drivers in by_date.items():
+                        for driver_name in drivers:
+                            if driver_name not in last_seen_by_name or sched_date > last_seen_by_name[driver_name]:
+                                last_seen_by_name[driver_name] = sched_date
+
+                    existing_rows = {
+                        r.payroll_name: r
+                        for r in db.query(DRE).filter(DRE.payroll_name.in_(list(all_names))).all()
                     }
-                    for name in all_names - existing_names:
-                        db.add(DRE(payroll_name=name, is_active=True, ssn_last4="1234"))
+                    for name in all_names:
+                        seen_date = last_seen_by_name.get(name)
+                        row = existing_rows.get(name)
+                        if row:
+                            if seen_date and (row.last_seen_on_schedule is None or seen_date > row.last_seen_on_schedule):
+                                row.last_seen_on_schedule = seen_date
+                            if row.flagged_inactive:
+                                row.flagged_inactive = False
+                                row.flagged_inactive_at = None
+                        else:
+                            db.add(DRE(
+                                payroll_name=name, is_active=True, ssn_last4="1234",
+                                source="schedule_upload", last_seen_on_schedule=seen_date,
+                            ))
                     db.commit()
+                    try:
+                        flagged = flag_stale_driver_profiles(db)
+                        if flagged:
+                            logger.info("Driver roster: flagged %d profile(s) not seen on a schedule in 30+ days.", flagged)
+                    except Exception as e:
+                        logger.warning("Stale-driver flagging failed: %s", e)
                     dates_saved = [d.isoformat() for d in all_dates]
             except Exception as e:
                 logger.warning("Schedule DB persist failed: %s", e)

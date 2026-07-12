@@ -312,7 +312,11 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
             orchestrator.ingest_cortex(tmp_path)
             ensure_cortex_driver_name_column()
             upload_date = _infer_file_date(job.file_name) or datetime.utcnow().date()
-            db.query(Cortex).filter(Cortex.source_file == job.file_name).delete(synchronize_session=False)
+            # Append-only: multiple same-day uploads can arrive under
+            # different filenames (corrections/re-drops), so we never
+            # delete by filename here. Readers use get_latest_cortex_rows()
+            # (api/src/database.py) to pick the most recently ingested row
+            # per route_code for the date.
             for rec in orchestrator.status.cortex_records:
                 db.add(Cortex(
                     assignment_date=upload_date,
@@ -351,7 +355,9 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
             from api.src.routes.uploads import _infer_file_date
             orchestrator.ingest_dop(tmp_path)
             upload_date = _infer_file_date(job.file_name) or datetime.utcnow().date()
-            db.query(DOP).filter(DOP.source_file == job.file_name).delete(synchronize_session=False)
+            # Append-only — see matching comment in the Cortex branch above.
+            # Readers use get_latest_dop_rows() to pick the most recently
+            # ingested row per route_code for the date.
             for rec in orchestrator.status.dop_records:
                 db.add(DOP(
                     schedule_date=upload_date,

@@ -39,6 +39,7 @@ from api.src.database import (
     get_db, SessionLocal,
     Cortex, DOP, Vehicle, DriverRosterEntry, DailyRouteAssignment,
     QualityMetricDriver, QualityMetricSnapshot, DriverCallout,
+    get_latest_dop_rows, get_latest_cortex_rows,
 )
 
 logger = logging.getLogger(__name__)
@@ -104,27 +105,21 @@ def _match_roster(name: str, roster: list[DriverRosterEntry]) -> Optional[Driver
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _load_cortex_for_date(target: date, db: Session) -> list[Cortex]:
-    rows = (
-        db.query(Cortex)
-        .filter(Cortex.assignment_date == target)
-        .order_by(Cortex.route_code)
-        .all()
-    )
+    """One row per route_code for target (most recently ingested wins —
+    see get_latest_cortex_rows()), falling back to the latest available
+    date if nothing was ingested for target yet."""
+    rows = sorted(get_latest_cortex_rows(db, target), key=lambda c: c.route_code or "")
     if not rows:
         # Try the latest available date as fallback (useful for testing)
         latest = db.query(func.max(Cortex.assignment_date)).scalar()
         if latest:
-            rows = (
-                db.query(Cortex)
-                .filter(Cortex.assignment_date == latest)
-                .order_by(Cortex.route_code)
-                .all()
-            )
+            rows = sorted(get_latest_cortex_rows(db, latest), key=lambda c: c.route_code or "")
     return rows
 
 def _load_dop_map(target: date, db: Session) -> dict[str, DOP]:
-    """Return {route_code: DOP} for the date (or nearest earlier date)."""
-    rows = db.query(DOP).filter(DOP.schedule_date == target).all()
+    """Return {route_code: DOP} for the date (or nearest earlier date).
+    One row per route_code — most recently ingested wins."""
+    rows = get_latest_dop_rows(db, target)
     if not rows:
         latest = (
             db.query(func.max(DOP.schedule_date))
@@ -132,7 +127,7 @@ def _load_dop_map(target: date, db: Session) -> dict[str, DOP]:
             .scalar()
         )
         if latest:
-            rows = db.query(DOP).filter(DOP.schedule_date == latest).all()
+            rows = get_latest_dop_rows(db, latest)
     return {r.route_code: r for r in rows}
 
 def _load_quality_map(db: Session) -> dict[str, dict]:
@@ -596,6 +591,7 @@ def manual_assign(req: ManualAssignRequest, db: Session = Depends(get_db)):
             Cortex.assignment_date == target,
             Cortex.route_code == req.route_code,
         )
+        .order_by(Cortex.id.desc())
         .first()
     )
     if not cr:
@@ -613,6 +609,7 @@ def manual_assign(req: ManualAssignRequest, db: Session = Depends(get_db)):
     dop = (
         db.query(DOP)
         .filter(DOP.schedule_date == target, DOP.route_code == req.route_code)
+        .order_by(DOP.id.desc())
         .first()
     )
     row = _upsert_assignment(

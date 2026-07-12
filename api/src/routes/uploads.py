@@ -163,7 +163,10 @@ def upload_dop(file: UploadFile = File(...)):
         db = SessionLocal()
         try:
             upload_date = _infer_file_date(file.filename) or datetime.utcnow().date()
-            db.query(DOP).filter(DOP.source_file == file.filename).delete(synchronize_session=False)
+            # Append-only — same-day uploads can arrive under different
+            # filenames (corrections/re-drops). Readers use
+            # get_latest_dop_rows() to pick the most recent row per
+            # route_code for the date instead of relying on delete-on-ingest.
             for record in orchestrator.status.dop_records:
                 db.add(DOP(
                     schedule_date=upload_date,
@@ -285,9 +288,11 @@ def backfill_dop_duration(date_str: str):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date_str — use YYYY-MM-DD.")
 
+    from api.src.database import get_latest_dop_rows
+
     db = SessionLocal()
     try:
-        dop_rows = db.query(DOP).filter(DOP.schedule_date == target).all()
+        dop_rows = get_latest_dop_rows(db, target)
         if not dop_rows:
             return {"date": date_str, "dop_rows": 0, "updated": 0, "detail": "No DOP rows for this date."}
 
@@ -336,6 +341,25 @@ def backfill_dop_duration(date_str: str):
             "dop_updated": updated_dop,
             "assignments_updated": updated_assignments,
         }
+    finally:
+        db.close()
+
+
+@router.post("/dop/purge-old")
+def purge_old_dop_cortex(days: int = 90):
+    """Delete DOP/Cortex rows older than `days` days (by created_at).
+
+    Ingestion is append-only (see get_latest_dop_rows/get_latest_cortex_rows
+    in api.src.database) so historical rows accumulate over time — call this
+    periodically to bound table growth. Safe to run anytime: only rows older
+    than the cutoff are removed, current-day data is never touched.
+    """
+    from api.src.database import purge_old_dop_cortex_rows
+
+    db = SessionLocal()
+    try:
+        result = purge_old_dop_cortex_rows(db, days=days)
+        return {"days": days, **result}
     finally:
         db.close()
 
@@ -427,7 +451,7 @@ def upload_cortex(file: UploadFile = File(...)):
         try:
             ensure_cortex_driver_name_column()
             upload_date = _infer_file_date(file.filename) or datetime.utcnow().date()
-            db.query(Cortex).filter(Cortex.source_file == file.filename).delete(synchronize_session=False)
+            # Append-only — see matching comment in upload_dop() above.
             for record in orchestrator.status.cortex_records:
                 db.add(Cortex(
                     assignment_date=upload_date,

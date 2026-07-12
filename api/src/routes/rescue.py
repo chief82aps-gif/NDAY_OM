@@ -11,7 +11,7 @@ from sqlalchemy import func, and_, or_
 
 from api.src.database import (
     get_db, RescueEvent, RescueContribution, DriverRosterEntry,
-    Cortex, Assignment, Driver, Vehicle, User
+    Cortex, Assignment, Driver, Vehicle, User, get_latest_cortex_rows
 )
 
 logger = logging.getLogger(__name__)
@@ -481,22 +481,18 @@ def list_routes(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format")
 
-    rows = (
-        db.query(Cortex)
-        .filter(Cortex.assignment_date == target)
-        .order_by(Cortex.wave, Cortex.route_code)
-        .all()
+    rows = sorted(
+        get_latest_cortex_rows(db, target),
+        key=lambda r: (r.wave or "", r.route_code or ""),
     )
 
     # Fall back to most recent date if nothing found for the requested date
     if not rows and not route_date:
         latest = db.query(func.max(Cortex.assignment_date)).scalar()
         if latest:
-            rows = (
-                db.query(Cortex)
-                .filter(Cortex.assignment_date == latest)
-                .order_by(Cortex.wave, Cortex.route_code)
-                .all()
+            rows = sorted(
+                get_latest_cortex_rows(db, latest),
+                key=lambda r: (r.wave or "", r.route_code or ""),
             )
     return [
         {

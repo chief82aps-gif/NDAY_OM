@@ -8,7 +8,7 @@ SQLAlchemy ORM Models for NDAY Route Manager
 Maps Python classes to PostgreSQL database tables.
 """
 
-from datetime import datetime, date, time
+from datetime import datetime, date, time, timedelta
 from sqlalchemy import (
     create_engine, Column, Integer, String, Boolean, DateTime, Date, Time,
     DECIMAL, ForeignKey, Text, TIMESTAMP, JSON, Index, func, text, Float
@@ -968,6 +968,50 @@ class DOP(Base):
     driver_name = Column(String(255))   # populated when DOP file includes driver assignments
     source_file = Column(String(255))
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+def get_latest_dop_rows(db, schedule_date):
+    """Return one DOP row per route_code for schedule_date — the most
+    recently ingested row wins (by id, which tracks created_at order).
+
+    Ingestion is append-only (multiple same-day uploads under different
+    filenames are common), so a naive `.filter(schedule_date==...).all()`
+    can return stale rows from an earlier upload alongside current ones.
+    """
+    latest_ids = (
+        db.query(func.max(DOP.id))
+        .filter(DOP.schedule_date == schedule_date)
+        .group_by(DOP.route_code)
+        .subquery()
+    )
+    return db.query(DOP).filter(DOP.id.in_(latest_ids)).all()
+
+
+def get_latest_cortex_rows(db, assignment_date):
+    """Return one Cortex row per route_code for assignment_date — the most
+    recently ingested row wins (by id, which tracks created_at order).
+    See get_latest_dop_rows() for why this matters.
+    """
+    latest_ids = (
+        db.query(func.max(Cortex.id))
+        .filter(Cortex.assignment_date == assignment_date)
+        .group_by(Cortex.route_code)
+        .subquery()
+    )
+    return db.query(Cortex).filter(Cortex.id.in_(latest_ids)).all()
+
+
+def purge_old_dop_cortex_rows(db, days=90):
+    """Delete DOP/Cortex rows older than `days` days (by created_at).
+    Ingestion is append-only, so historical rows accumulate — call this
+    periodically (e.g. a scheduled admin task) to bound table growth.
+    Returns {"dop_deleted": n, "cortex_deleted": n}.
+    """
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    dop_deleted = db.query(DOP).filter(DOP.created_at < cutoff).delete(synchronize_session=False)
+    cortex_deleted = db.query(Cortex).filter(Cortex.created_at < cutoff).delete(synchronize_session=False)
+    db.commit()
+    return {"dop_deleted": dop_deleted, "cortex_deleted": cortex_deleted}
 
 
 class UploadRetentionRecord(Base):

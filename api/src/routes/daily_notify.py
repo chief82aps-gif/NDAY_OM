@@ -38,6 +38,8 @@ from api.src.database import (
     DOP,
     Cortex,
     DriverRosterEntry,
+    get_latest_dop_rows,
+    get_latest_cortex_rows,
 )
 
 logger = logging.getLogger(__name__)
@@ -239,9 +241,10 @@ def ingest_cortex_bytes(
         orchestrator.ingest_cortex(tmp_path)
         os.unlink(tmp_path)
 
-        db.query(Cortex).filter(Cortex.source_file == filename).delete(
-            synchronize_session=False
-        )
+        # Append-only — same-day uploads can arrive under different
+        # filenames (corrections/re-drops). Readers use
+        # get_latest_cortex_rows() to pick the most recent row per
+        # route_code for the date instead of relying on delete-on-ingest.
         for record in orchestrator.status.cortex_records:
             db.add(Cortex(
                 assignment_date=for_date,
@@ -303,11 +306,7 @@ def ingest_dop_bytes(
         if not records:
             return 0, "; ".join(errors) if errors else "No DOP rows parsed from file."
 
-        db.query(DOP).filter(
-            DOP.schedule_date == for_date,
-            DOP.source_file == filename,
-        ).delete(synchronize_session=False)
-
+        # Append-only — see matching comment in ingest_cortex_bytes() above.
         for record in records:
             db.add(DOP(
                 schedule_date=for_date,
@@ -437,19 +436,17 @@ def build_daily_assignments(
         a["driver_name"].lower(): a for a in pdf_data if a.get("driver_name")
     }
 
-    dop_rows = db.query(DOP).filter(DOP.schedule_date == for_date).all()
+    dop_rows = get_latest_dop_rows(db, for_date)
 
     # Cortex driver lookup: prefer today, fall back to most recent date
-    cortex_rows = db.query(Cortex).filter(Cortex.assignment_date == for_date).all()
+    cortex_rows = get_latest_cortex_rows(db, for_date)
     if not cortex_rows:
         latest = (
             db.query(func.max(Cortex.assignment_date))
             .scalar()
         )
         if latest:
-            cortex_rows = db.query(Cortex).filter(
-                Cortex.assignment_date == latest
-            ).all()
+            cortex_rows = get_latest_cortex_rows(db, latest)
 
     cortex_by_route = {
         (c.route_code or "").upper(): c.driver_name
@@ -1238,7 +1235,7 @@ def trigger_ops_prompt(date: Optional[str] = None, db: Session = Depends(get_db)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date — use YYYY-MM-DD.")
 
-    route_count = db.query(DOP).filter(DOP.schedule_date == for_date).count()
+    route_count = len(get_latest_dop_rows(db, for_date))
     sent = _ops_manager_prompt(for_date, route_count, db)
     return {"date": for_date.isoformat(), "route_count": route_count, "dms_sent": sent}
 

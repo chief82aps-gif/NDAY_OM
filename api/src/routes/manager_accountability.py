@@ -349,6 +349,62 @@ def pending_notices(db: Session = Depends(get_db)):
     ]
 
 
+@router.get("/discipline-tracker")
+def discipline_tracker(db: Session = Depends(get_db)):
+    """Unified pending-review dashboard for NDAY Management.
+
+    Combines every write-up type awaiting review/acknowledgment:
+      - ManagerAccountabilityEvent rows not yet acknowledged (unsigned
+        callouts, DVIC stage-4 formal write-ups, and any future writeup_type
+        — see the module docstring for how to add a new catalyst)
+      - DvicCounselingRecord rows still pending driver acknowledgment
+        (every stage 1-4, so early soft reminders are visible too, not
+        just formal stage-4 write-ups)
+    """
+    from api.src.database import DvicCounselingRecord
+
+    accountability_items = (
+        db.query(ManagerAccountabilityEvent)
+        .filter(ManagerAccountabilityEvent.acknowledged_at == None)
+        .order_by(ManagerAccountabilityEvent.shift_date.desc())
+        .all()
+    )
+    dvic_items = (
+        db.query(DvicCounselingRecord)
+        .filter(DvicCounselingRecord.ack_status == "pending")
+        .order_by(DvicCounselingRecord.stage.desc(), DvicCounselingRecord.last_actioned_at.desc())
+        .all()
+    )
+
+    items = [
+        {
+            "source": "manager_accountability",
+            "id": r.id,
+            "shift_date": r.shift_date.isoformat() if r.shift_date else None,
+            "manager_name": r.manager_name,
+            "writeup_type": r.writeup_type,
+            "source_detail": r.source_detail,
+            "dm_sent_at": r.dm_sent_at.isoformat() if r.dm_sent_at else None,
+        }
+        for r in accountability_items
+    ] + [
+        {
+            "source": "dvic",
+            "id": d.id,
+            "shift_date": d.last_actioned_at.date().isoformat() if d.last_actioned_at else None,
+            "manager_name": None,
+            "writeup_type": f"dvic_stage_{d.stage}",
+            "source_detail": (
+                f"{d.transporter_name} — {d.last_instance_count} DVIC under-90s in {d.last_week}, "
+                f"stage {d.stage}"
+            ),
+            "dm_sent_at": d.last_actioned_at.isoformat() if d.last_actioned_at else None,
+        }
+        for d in dvic_items
+    ]
+    return {"total_pending": len(items), "items": items}
+
+
 @router.get("/schedule")
 def get_schedule():
     """Return the current manager on-duty schedule."""

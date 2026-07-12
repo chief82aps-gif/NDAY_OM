@@ -379,6 +379,9 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
     elif action_id == "driver_eod_complete":
         _handle_eod_complete(payload, db)
 
+    elif action_id == "dvic_ack":
+        _handle_dvic_ack(payload, db)
+
     # Slack requires a 200 response within 3 seconds
     return {"ok": True}
 
@@ -554,3 +557,45 @@ def _handle_driver_arrived(payload: dict, db: Session) -> None:
                 )
     except Exception as exc:
         logger.warning("driver_arrived handler error: %s", exc)
+
+
+def _handle_dvic_ack(payload: dict, db: Session) -> None:
+    """Driver tapped 'Acknowledge' on a DVIC safety notice DM."""
+    try:
+        import json as _json
+        action = (payload.get("actions") or [{}])[0]
+        value = _json.loads(action.get("value", "{}"))
+        transporter_id = value.get("transporter_id", "")
+        week = value.get("week", "")
+
+        from api.src.routes.dvic import record_acknowledgment
+        result = record_acknowledgment(transporter_id, week, "Acknowledged via Slack", db)
+
+        channel_id = payload.get("channel", {}).get("id", "")
+        msg_ts = payload.get("message", {}).get("ts", "")
+        if channel_id and msg_ts:
+            token = os.getenv("SLACK_BOT_TOKEN")
+            if token:
+                from slack_sdk import WebClient as _WC
+                from datetime import datetime as _dt
+                name = result.get("transporter_name") or transporter_id
+                _WC(token=token).chat_update(
+                    channel=channel_id,
+                    ts=msg_ts,
+                    text="Acknowledged.",
+                    blocks=[
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": (
+                                    f"✅ *Acknowledged*\n"
+                                    f"*{name}* acknowledged this DVIC safety notice at "
+                                    f"{_dt.utcnow().strftime('%-I:%M %p')} UTC."
+                                ),
+                            },
+                        }
+                    ],
+                )
+    except Exception as exc:
+        logger.warning("dvic_ack handler error: %s", exc)

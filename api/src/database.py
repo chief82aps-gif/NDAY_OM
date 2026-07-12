@@ -1718,6 +1718,18 @@ def ensure_cortex_driver_name_column():
         pass
 
 
+def ensure_dvic_raw_fields_column():
+    """Ensure dvic_violations.raw_fields exists for historical environments."""
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE dvic_violations ADD COLUMN raw_fields JSON"))
+            else:
+                conn.execute(text("ALTER TABLE dvic_violations ADD COLUMN IF NOT EXISTS raw_fields JSON"))
+    except Exception:
+        pass  # Column already exists
+
+
 def ensure_dop_driver_name_column():
     """Ensure dop_routes.driver_name exists — added 2026-06-30."""
     try:
@@ -1846,6 +1858,7 @@ class DvicViolation(Base):
     start_time = Column(DateTime)
     end_time = Column(DateTime)
     duration_seconds = Column(Integer)
+    raw_fields = Column(JSON)   # any columns from the source file not mapped above, keyed by header
 
     snapshot = relationship("DvicSnapshot", back_populates="violations")
 
@@ -1865,6 +1878,71 @@ class DvicAcknowledgment(Base):
 
     __table_args__ = (
         Index("idx_dvic_ack_tid_week", "transporter_id", "week", unique=True),
+    )
+
+
+class DvicCounselingRecord(Base):
+    """Progressive-discipline stage tracker, one row per driver.
+
+    Advances one stage the first time a driver appears on a NEW week's DVIC
+    report — a driver whose name persists on subsequent reports (already
+    counseled) does not get re-actioned for the same week twice. instance
+    count from the triggering week is kept only to word the message
+    ("...completed 3 DVICs in under 90 seconds...") — it does not itself
+    determine the stage.
+    """
+    __tablename__ = "dvic_counseling_records"
+
+    id = Column(Integer, primary_key=True)
+    transporter_id = Column(String(50), nullable=False, unique=True, index=True)
+    transporter_name = Column(String(150))
+    stage = Column(Integer, default=0, nullable=False)   # 0=none yet; 1-4 current ladder stage
+    last_week = Column(String(20))                        # most recent week actioned (dedupe key)
+    last_instance_count = Column(Integer)
+    last_actioned_at = Column(DateTime)
+    ack_status = Column(String(20), default="pending")    # pending | acknowledged
+    acknowledged_at = Column(DateTime)
+    dm_channel = Column(String(50))                       # Slack DM channel id, for chat_update on ack
+    dm_ts = Column(String(50))                             # Slack message ts, for chat_update on ack
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class DocumentRoutingRule(Base):
+    """Which roles/recipients a given document type routes to.
+
+    e.g. document_type="crash_report" -> recipient_roles=["dispatch","ops_manager","owner"]
+    Admin-editable; consulted whenever a document-generating flow (crash
+    report, injury report, etc.) needs to know who to notify.
+    """
+    __tablename__ = "document_routing_rules"
+
+    id = Column(Integer, primary_key=True)
+    document_type = Column(String(50), nullable=False, unique=True, index=True)
+    recipient_roles = Column(JSON, nullable=False, default=list)   # list[str], e.g. ["dispatch","ops_manager","owner"]
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class DocumentRequirementRule(Base):
+    """Defines the fields/tasks a document type must have completed before
+    it's eligible for submission — e.g. crash_report requires a police
+    report number, photos, and a signature. Admin-editable; the frontend
+    wizard for a document type renders itself from this list and blocks
+    submission until every is_required field is filled.
+    """
+    __tablename__ = "document_requirement_rules"
+
+    id = Column(Integer, primary_key=True)
+    document_type = Column(String(50), nullable=False, index=True)
+    field_key = Column(String(100), nullable=False)         # e.g. "police_report_number"
+    field_label = Column(String(200), nullable=False)       # e.g. "Police Report Number"
+    field_type = Column(String(30), default="text")         # text | number | photo | signature | boolean | select | date
+    is_required = Column(Boolean, default=True)
+    display_order = Column(Integer, default=0)
+    options = Column(JSON)                                   # choices for "select" fields
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_doc_req_type_key", "document_type", "field_key", unique=True),
     )
 
 

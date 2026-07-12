@@ -49,6 +49,13 @@ def extract_week(filename: str) -> str:
     return "unknown"
 
 
+_KNOWN_HEADERS = {
+    "start_date", "dsp", "station", "transporter_id", "transporter_name",
+    "vin", "fleet_type", "inspection_type", "inspection_status",
+    "start_time", "end_time", "duration",
+}
+
+
 def parse_dvic_xlsx(content: bytes, filename: str) -> tuple[dict, list[dict]]:
     """
     Parse a DVIC Pre-Trip under-90s Excel file.
@@ -82,6 +89,15 @@ def parse_dvic_xlsx(content: bytes, filename: str) -> tuple[dict, list[dict]]:
         except (ValueError, TypeError):
             dur_int = None
 
+        # Governed by the file's own headers: anything the sheet includes
+        # beyond the known/mapped columns is kept verbatim rather than
+        # silently dropped, so future report variants don't lose data.
+        raw_fields = {}
+        for key, val in row.items():
+            if not key or key in _KNOWN_HEADERS or val is None:
+                continue
+            raw_fields[key] = val.isoformat() if isinstance(val, (datetime, date)) else str(val)
+
         violations.append({
             "start_date":        _parse_date(row.get("start_date")),
             "dsp":               str(row.get("dsp") or "").strip() or None,
@@ -95,6 +111,7 @@ def parse_dvic_xlsx(content: bytes, filename: str) -> tuple[dict, list[dict]]:
             "start_time":        _parse_datetime(row.get("start_time")),
             "end_time":          _parse_datetime(row.get("end_time")),
             "duration_seconds":  dur_int,
+            "raw_fields":        raw_fields or None,
         })
 
     week = extract_week(filename)

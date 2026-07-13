@@ -15,7 +15,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 
 # Import permissions for role validation
 from api.src.permissions import Role
@@ -1760,6 +1763,71 @@ def ensure_route_duration_columns():
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS route_duration INTEGER"))
         except Exception:
             pass  # Column already exists
+
+
+def dedupe_daily_route_assignments(db=None) -> int:
+    """Remove duplicate DailyRouteAssignment rows sharing the same
+    (assignment_date, route_code), keeping the lowest id. Returns count deleted.
+
+    Root cause (found 2026-07-13): build_daily_assignments() (daily_notify.py)
+    does an unprotected delete-then-insert with no DB constraint to stop a
+    concurrent second call (e.g. the automatic 8-10am background loop
+    racing a manual re-ingest) from inserting a second full batch. See
+    ensure_daily_route_assignment_unique_index() for the permanent fix.
+    """
+    close_after = False
+    if db is None:
+        db = SessionLocal()
+        close_after = True
+    try:
+        dupe_keys = (
+            db.query(DailyRouteAssignment.assignment_date, DailyRouteAssignment.route_code)
+            .filter(DailyRouteAssignment.route_code != None)
+            .group_by(DailyRouteAssignment.assignment_date, DailyRouteAssignment.route_code)
+            .having(func.count(DailyRouteAssignment.id) > 1)
+            .all()
+        )
+        deleted = 0
+        for adate, rcode in dupe_keys:
+            rows = (
+                db.query(DailyRouteAssignment)
+                .filter(
+                    DailyRouteAssignment.assignment_date == adate,
+                    DailyRouteAssignment.route_code == rcode,
+                )
+                .order_by(DailyRouteAssignment.id)
+                .all()
+            )
+            for extra in rows[1:]:
+                db.delete(extra)
+                deleted += 1
+        if deleted:
+            db.commit()
+        return deleted
+    finally:
+        if close_after:
+            db.close()
+
+
+def ensure_daily_route_assignment_unique_index():
+    """Prevent the 2026-07-13 duplicate-row bug from recurring: add a unique
+    index on (assignment_date, route_code). Must dedupe existing rows first
+    or index creation fails on the existing duplicates."""
+    dedupe_daily_route_assignments()
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_route_assignment_date_route "
+                    "ON daily_route_assignments(assignment_date, route_code)"
+                ))
+            else:
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_route_assignment_date_route "
+                    "ON daily_route_assignments(assignment_date, route_code) WHERE route_code IS NOT NULL"
+                ))
+    except Exception as exc:
+        logger.warning("Could not create daily_route_assignments unique index: %s", exc)
 
 
 def ensure_ssn_last4_column():

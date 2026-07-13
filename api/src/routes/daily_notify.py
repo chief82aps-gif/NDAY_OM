@@ -480,7 +480,18 @@ def build_daily_assignments(
         ))
         count += 1
 
-    db.commit()
+    try:
+        db.commit()
+    except Exception as exc:
+        # A concurrent call (e.g. the automatic background loop racing a
+        # manual re-ingest) can hit the unique (assignment_date, route_code)
+        # index added 2026-07-13 after the delete-then-insert here overlapped
+        # with another call and produced duplicate rows in production. Rather
+        # than crash the caller, roll back this batch — the other call's
+        # rows are already committed and correct.
+        db.rollback()
+        logger.warning("build_daily_assignments: commit failed for %s, likely a concurrent rebuild — rolled back: %s", for_date, exc)
+        return 0
     return count
 
 

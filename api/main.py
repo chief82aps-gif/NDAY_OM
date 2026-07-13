@@ -19,7 +19,7 @@ from api.src.routes import daily_notify, quality, attendance, attendance_reports
 from api.src.routes import rostering, cortex_tracking, adp, rts, mgt_reminders, document_routing, crash_report, drivers
 from api.src.routes.daily_notify import check_and_notify, check_ecp_and_prompt
 from api.src.routes.rostering import send_nightly_roster_reminder, send_wave_lead_pre_wave_dm, send_missing_drivers_summary
-from api.src.database import Base, engine, SessionLocal, ensure_dop_driver_name_column, ensure_ssn_last4_column, ensure_callout_signature_column, ensure_assignment_board_columns, _ensure_manager_signature_columns, _ensure_position_id_nullable, ensure_driver_shift_dm_checklist_columns, ensure_route_duration_columns, ensure_dvic_raw_fields_column, ensure_driver_roster_tracking_columns
+from api.src.database import Base, engine, SessionLocal, ensure_dop_driver_name_column, ensure_ssn_last4_column, ensure_callout_signature_column, ensure_assignment_board_columns, _ensure_manager_signature_columns, _ensure_position_id_nullable, ensure_driver_shift_dm_checklist_columns, ensure_route_duration_columns, ensure_dvic_raw_fields_column, ensure_driver_roster_tracking_columns, ensure_daily_route_assignment_unique_index
 from api.src.slack_notification_gate import apply_slack_send_gate
 
 logger = logging.getLogger(__name__)
@@ -288,6 +288,7 @@ async def startup():
     ensure_route_duration_columns()
     ensure_dvic_raw_fields_column()
     ensure_driver_roster_tracking_columns()
+    ensure_daily_route_assignment_unique_index()
     asyncio.create_task(_daily_notify_loop())
     asyncio.create_task(_ecp_watch_loop())
     asyncio.create_task(_ops_ingest_scan_loop())

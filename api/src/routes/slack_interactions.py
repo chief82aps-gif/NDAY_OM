@@ -60,8 +60,11 @@ def _issue_callout_token(driver_name: str, shift_date: str) -> str:
 def _verify_slack_signature(body: bytes, timestamp: str, signature: str) -> bool:
     signing_secret = os.getenv("SLACK_SIGNING_SECRET", "")
     if not signing_secret:
-        logger.warning("SLACK_SIGNING_SECRET not set — skipping verification (set it on Render)")
-        return True
+        # Fail CLOSED: a missing secret must reject the request, not wave
+        # every interactive payload through unverified. (Previously failed
+        # open here — fixed 2026-07-13.)
+        logger.error("SLACK_SIGNING_SECRET not set — rejecting interactive request (set it on Render)")
+        return False
     try:
         if abs(time.time() - int(timestamp)) > 300:
             return False

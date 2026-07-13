@@ -30,8 +30,8 @@
 
 | # | Task | Why Now |
 |---|---|---|
-| S1 | **Rotate SLACK_BOT_TOKEN** (xoxb-) on Render → OAuth & Permissions → Revoke → Reinstall | Exposed in chat history |
-| S2 | **Rotate SLACK_USER_TOKEN** (xoxp-) on Render | Exposed in chat history |
+| S1 | **Rotate SLACK_BOT_TOKEN** (xoxb-) on Render → OAuth & Permissions → Revoke → Reinstall | ✅ Done 2026-07-13 — was exposed in chat history |
+| S2 | **Rotate SLACK_USER_TOKEN** (xoxp-) on Render | ✅ Done 2026-07-13 — was exposed in chat history |
 | S3 | **Populate driver PINs** — enter actual SSN last-4 for all active drivers via Admin Panel | All 114 drivers default to `1234` — PIN auth is currently meaningless |
 
 ### 🟡 Route Assignment — Finish the Loop
@@ -370,11 +370,12 @@ This section defines the timed operational rhythm that all system automations, n
 - 🔲 Time-off requests
 - 🔲 Availability calendar management
 
-### 4.7 — Asana Integration (Hiring/Onboarding)
-- 🔲 Pull new hire candidates and onboarding status from Asana
-- 🔲 Auto-schedule new hires based on team load
-- 🔲 Push scheduling back to Asana as task assignments
-- **Dependencies:** Asana API key, project/section mapping
+### 4.7 — Hiring & Onboarding Automation (Asana integration)
+- 🔲 Full spec: `Governance/03_NDL_Hiring_Onboarding_Automation.md`
+- 🔲 Phase 1: Chrome extension captures Indeed candidates → Asana sync + candidate analytics (keyword tags, avg tenure)
+- 🔲 Phase 2: automated SMS/email contact cadence, Google Contacts push
+- 🔲 Phase 3: downstream stage automation (Flex invite → background check → drug test → training → ORE)
+- **Dependencies:** Asana API key (project/section mapping already live — "New Day Hiring" board), SMS/email provider for Phase 2
 
 ### 4.8 — Google Maps / Route Optimization
 - 🔲 Drive time calculations per route

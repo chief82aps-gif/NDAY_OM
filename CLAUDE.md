@@ -120,11 +120,23 @@ Full detail: `Governance/ROSTERING_DM_RULES.md`.
   `RoleDirectory` for the pattern (`DOC_ROUTING_OWNER_SLACK_ID` etc.).
   Existing Slack IDs already committed pre-date this policy — don't add more
   of the same mistake, and flag it if asked to touch that code.
-- **Unresolved, flagged security debt** (do not treat as fixed):
-  `SLACK_BOT_TOKEN`/`SLACK_USER_TOKEN` were exposed in chat history and
-  still need rotation; all ~114 drivers default to PIN `1234`
-  (`ssn_last4` callout-page auth) — PIN auth is currently meaningless until
-  real values are populated.
+- **Security debt status**: `SLACK_BOT_TOKEN` and `SLACK_USER_TOKEN` were
+  both exposed in chat history and have both been **rotated (2026-07-13)**
+  — resolved, verified live via a real read-only Slack call
+  (`POST /ops-ingest/scan`) after redeploy. All ~114 drivers still default
+  to PIN `1234` (`ssn_last4` callout-page auth) — PIN auth is currently
+  meaningless until real values are populated.
+- **`SLACK_NOTIFICATIONS_ACTIVE`** (env var, default `false`) — a hard,
+  system-wide kill switch on every outbound Slack send (`chat.postMessage`,
+  `chat.update`, `chat.postEphemeral`), implemented as a monkey-patch on
+  `slack_sdk.WebClient` in `api/main.py` rather than touching each
+  module's own Slack client (there are 24+ scattered `WebClient(...)`
+  call sites across 15 files — see the architecture note above). Read-only
+  Slack calls (file scanning, ingestion, channel history) are unaffected —
+  only sends are gated. This sits *above* `ROSTERING_ACTIVE` and
+  `DRIVER_DM_ACTIVE`: while it's off, nothing goes out regardless of what
+  those two flags say. Added 2026-07-13 because the system isn't in live
+  operation yet — do not set to `true` without the user's explicit go-ahead.
 - No credential/key files are currently tracked in git (verified
   2026-07-12) — keep it that way. `.env`, `.env.development`, `.env.local`,
   `*.db` must stay gitignored, never committed.

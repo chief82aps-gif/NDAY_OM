@@ -29,14 +29,14 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, date, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from api.src.database import get_db, SessionLocal, OpsIngestJob
+from api.src.database import get_db, SessionLocal, OpsIngestJob, get_reminder_state, set_reminder_state
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/mgt-reminders", tags=["mgt-reminders"])
@@ -57,9 +57,25 @@ _REMINDERS = {
     "schedule":     {"detected_type": "driver_schedule","label": "Driver schedule",           "window": (17, 0, 20, 0)},
 }
 
-# in-memory per-key state — resets on deploy/restart, same convention as
-# dvic.py / dsp_scorecard_weekly.py's reminder throttling
-_state: dict[str, dict] = {key: {"last_sent_at": None, "resolved_date": None} for key in _REMINDERS}
+# Persisted in the database (ReminderThrottleState), not in-memory — an
+# in-memory dict here resets on every process restart, which caused a
+# 2026-07-13 incident where redeploys repeatedly wiped the "already sent"
+# state and reminders spammed #nday-mgt on every restart's first tick.
+
+
+def _load_state(db: Session, key: str) -> dict:
+    raw = get_reminder_state(db, f"mgt_reminder_{key}")
+    return {
+        "last_sent_at": datetime.fromisoformat(raw["last_sent_at"]) if raw.get("last_sent_at") else None,
+        "resolved_date": date.fromisoformat(raw["resolved_date"]) if raw.get("resolved_date") else None,
+    }
+
+
+def _save_state(db: Session, key: str, state: dict) -> None:
+    set_reminder_state(db, f"mgt_reminder_{key}", {
+        "last_sent_at": state["last_sent_at"].isoformat() if state.get("last_sent_at") else None,
+        "resolved_date": state["resolved_date"].isoformat() if state.get("resolved_date") else None,
+    })
 
 
 def _client():
@@ -109,7 +125,7 @@ def _check_one(key: str, db: Session, client, now) -> dict:
     describing exactly what happened — used by both the silent background
     loop and the manual /check endpoint (which surfaces it in the response)."""
     cfg = _REMINDERS[key]
-    state = _state[key]
+    state = _load_state(db, key)
     today = now.date()
 
     result: dict = {
@@ -131,6 +147,7 @@ def _check_one(key: str, db: Session, client, now) -> dict:
 
     if _file_detected_today(db, cfg["detected_type"], today):
         state["resolved_date"] = today
+        _save_state(db, key, state)
         result["reason"] = "file_detected_today"
         return result
 
@@ -146,6 +163,7 @@ def _check_one(key: str, db: Session, client, now) -> dict:
         result["error"] = f"member lookup failed: {member_error}"
         result["reason"] = "member_lookup_failed"
         state["last_sent_at"] = now
+        _save_state(db, key, state)
         return result
 
     sent = 0
@@ -165,6 +183,7 @@ def _check_one(key: str, db: Session, client, now) -> dict:
             logger.warning("mgt_reminders: DM to %s failed: %s", uid, exc)
 
     state["last_sent_at"] = now
+    _save_state(db, key, state)
     result["sent"] = sent
     result["reason"] = "sent"
     if send_errors:

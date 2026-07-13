@@ -2240,6 +2240,44 @@ class EodSurveyResponse(Base):
     )
 
 
+class ReminderThrottleState(Base):
+    """Persisted throttle/dedup state for periodic Slack reminder loops.
+
+    Replaces in-memory module-level dicts (mgt_reminders.py's `_state`,
+    dvic.py's and dsp_scorecard_weekly.py's `_reminder_state`) — root cause
+    of a 2026-07-13 production incident: those dicts reset to empty on
+    every process restart, so a redeploy wiped the "already sent"/"resolved
+    today" memory and reminders re-fired in a tight spam loop the moment
+    the background loop's next tick ran. State must survive a restart to
+    throttle correctly; a JSON blob per reminder_key lets each caller keep
+    its own shape (serialize date/datetime fields to ISO strings itself).
+    """
+    __tablename__ = "reminder_throttle_state"
+
+    id = Column(Integer, primary_key=True)
+    reminder_key = Column(String(100), nullable=False, unique=True, index=True)
+    state = Column(JSON, nullable=False, default=dict)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+def get_reminder_state(db, reminder_key: str) -> dict:
+    row = db.query(ReminderThrottleState).filter(
+        ReminderThrottleState.reminder_key == reminder_key
+    ).first()
+    return dict(row.state) if row and row.state else {}
+
+
+def set_reminder_state(db, reminder_key: str, state: dict) -> None:
+    row = db.query(ReminderThrottleState).filter(
+        ReminderThrottleState.reminder_key == reminder_key
+    ).first()
+    if row:
+        row.state = state
+    else:
+        db.add(ReminderThrottleState(reminder_key=reminder_key, state=state))
+    db.commit()
+
+
 class OpsIngestJob(Base):
     """Tracks every file dropped in #nday-operations-management.
 

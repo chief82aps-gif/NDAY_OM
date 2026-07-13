@@ -28,11 +28,34 @@ router = APIRouter(prefix="/dsp-scorecard-weekly", tags=["dsp-scorecard-weekly"]
 # ─── constants ────────────────────────────────────────────────────────────────
 NDAY_MGT_CHANNEL = os.getenv("NDAY_MGT_CHANNEL", "C0BCYAW7QP3")
 
-_reminder_state: dict = {
-    "last_reminded_at": None,
-    "reminder_count": 0,
-    "resolved_week": None,
-}
+_REMINDER_KEY = "dsp_scorecard_weekly_reminder"
+
+
+def _load_reminder_state() -> dict:
+    from api.src.database import get_reminder_state
+    db = SessionLocal()
+    try:
+        raw = get_reminder_state(db, _REMINDER_KEY)
+    finally:
+        db.close()
+    return {
+        "last_reminded_at": datetime.fromisoformat(raw["last_reminded_at"]) if raw.get("last_reminded_at") else None,
+        "reminder_count": raw.get("reminder_count", 0),
+        "resolved_week": raw.get("resolved_week"),
+    }
+
+
+def _save_reminder_state(state: dict) -> None:
+    from api.src.database import set_reminder_state
+    db = SessionLocal()
+    try:
+        set_reminder_state(db, _REMINDER_KEY, {
+            "last_reminded_at": state["last_reminded_at"].isoformat() if state.get("last_reminded_at") else None,
+            "reminder_count": state.get("reminder_count", 0),
+            "resolved_week": state.get("resolved_week"),
+        })
+    finally:
+        db.close()
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
@@ -187,30 +210,34 @@ def run_dsp_scorecard_reminder() -> None:
     if now.hour >= 17:
         return
 
+    state = _load_reminder_state()
+
     # Throttle: only fire every 30 min
-    last = _reminder_state.get("last_reminded_at")
+    last = state.get("last_reminded_at")
     if last and (datetime.now() - last).total_seconds() < 1800:
         return
 
     # Check if this week's scorecard is already in the DB
     week = _current_week_label()
-    if _reminder_state.get("resolved_week") == week:
+    if state.get("resolved_week") == week:
         return
 
     db = SessionLocal()
     try:
         snap = db.query(DspScorecardWeeklySnapshot).filter_by(week=week).first()
         if snap:
-            _reminder_state["resolved_week"] = week
+            state["resolved_week"] = week
+            _save_reminder_state(state)
             return
     finally:
         db.close()
 
     # Fire reminder
     client = _slack_client()
-    count = _reminder_state["reminder_count"] + 1
-    _reminder_state["reminder_count"] = count
-    _reminder_state["last_reminded_at"] = datetime.now()
+    count = state["reminder_count"] + 1
+    state["reminder_count"] = count
+    state["last_reminded_at"] = datetime.now()
+    _save_reminder_state(state)
 
     if count == 1:
         msg = (

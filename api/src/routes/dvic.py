@@ -391,8 +391,42 @@ def _store_dvic(content: bytes, filename: str, slack_file_id: Optional[str], db:
 # 3 PM Daily Upload Reminder (called from main.py background loop)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Module-level state so we don't spam per loop iteration
-_reminder_state: dict = {"last_reminded_date": None, "reminder_count": 0, "resolved_date": None}
+# Persisted in the database (ReminderThrottleState), not in-memory — see
+# mgt_reminders.py's identical fix for why: an in-memory dict here resets on
+# every process restart, wiping the "already sent"/"resolved today" memory
+# and causing a spam loop on the next restart (found 2026-07-13).
+_REMINDER_KEY = "dvic_upload_reminder"
+
+
+def _load_reminder_state() -> dict:
+    from api.src.database import get_reminder_state
+    db = SessionLocal()
+    try:
+        raw = get_reminder_state(db, _REMINDER_KEY)
+    finally:
+        db.close()
+    return {
+        "last_reminded_date": date.fromisoformat(raw["last_reminded_date"]) if raw.get("last_reminded_date") else None,
+        "last_reminded_at": datetime.fromisoformat(raw["last_reminded_at"]) if raw.get("last_reminded_at") else None,
+        "reminder_count": raw.get("reminder_count", 0),
+        "resolved_date": date.fromisoformat(raw["resolved_date"]) if raw.get("resolved_date") else None,
+        "sent_final": date.fromisoformat(raw["sent_final"]) if raw.get("sent_final") else None,
+    }
+
+
+def _save_reminder_state(state: dict) -> None:
+    from api.src.database import set_reminder_state
+    db = SessionLocal()
+    try:
+        set_reminder_state(db, _REMINDER_KEY, {
+            "last_reminded_date": state["last_reminded_date"].isoformat() if state.get("last_reminded_date") else None,
+            "last_reminded_at": state["last_reminded_at"].isoformat() if state.get("last_reminded_at") else None,
+            "reminder_count": state.get("reminder_count", 0),
+            "resolved_date": state["resolved_date"].isoformat() if state.get("resolved_date") else None,
+            "sent_final": state["sent_final"].isoformat() if state.get("sent_final") else None,
+        })
+    finally:
+        db.close()
 
 
 def run_dvic_upload_reminder() -> None:
@@ -404,6 +438,7 @@ def run_dvic_upload_reminder() -> None:
     from zoneinfo import ZoneInfo
     now = datetime.now(ZoneInfo("America/Los_Angeles"))
     today = now.date()
+    _reminder_state = _load_reminder_state()
 
     # Only active 3 PM–6 PM Pacific
     if not (15 <= now.hour < 18):
@@ -411,6 +446,7 @@ def run_dvic_upload_reminder() -> None:
             # Hit 6 PM with no upload — send final notice once
             if _reminder_state["reminder_count"] > 0 and _reminder_state.get("sent_final") != today:
                 _reminder_state["sent_final"] = today
+                _save_reminder_state(_reminder_state)
                 _post(
                     NDAY_MGT_CHANNEL,
                     ":information_source: *DVIC Under-90 Report* — No file received from Amazon by 6:00 PM today. "
@@ -442,6 +478,7 @@ def run_dvic_upload_reminder() -> None:
             )
         _reminder_state["resolved_date"] = today
         _reminder_state["reminder_count"] = 0
+        _save_reminder_state(_reminder_state)
         return
 
     # Throttle to every 5 minutes
@@ -453,6 +490,7 @@ def run_dvic_upload_reminder() -> None:
     _reminder_state["reminder_count"] = count
     _reminder_state["last_reminded_date"] = today
     _reminder_state["last_reminded_at"] = now
+    _save_reminder_state(_reminder_state)
 
     if count == 1:
         msg = (

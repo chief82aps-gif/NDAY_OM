@@ -87,6 +87,24 @@ This is the single most expensive lesson this project has learned (2026-07).
   ingest — `POST /upload/dop/purge-old` (default 90 days) exists to bound
   table growth; nothing purges automatically.
 
+## Never store reminder/throttle "already sent" state in memory
+
+Real incident, 2026-07-13: `mgt_reminders.py`, `dvic.py`, and
+`dsp_scorecard_weekly.py` all tracked their "already sent this cycle" /
+"resolved today" dedup state in a plain module-level Python dict. That
+dict resets to empty on every process restart. Render restarts on every
+redeploy, and a burst of redeploys in a short window (each env-var
+toggle, each fix) repeatedly wiped the "sent 5 minutes ago" memory,
+letting the next background-loop tick fire again immediately — #nday-mgt
+got flooded with dozens of duplicate reminder DMs in minutes. Fixed by
+adding `ReminderThrottleState` (`api/src/database.py`) — a persisted
+key/JSON-blob table via `get_reminder_state()`/`set_reminder_state()` —
+and moving all three loops onto it. **Any new periodic Slack
+reminder/nag loop must persist its dedup/throttle state to the database,
+never a module-level dict or variable.** This is the same root problem
+as the `DailyRouteAssignment` duplication above — no durable state to
+prevent an uncoordinated repeat trigger — just a different symptom.
+
 ## Production safety gates — do not flip without explicit sign-off
 
 Full detail: `Governance/ROSTERING_DM_RULES.md`.

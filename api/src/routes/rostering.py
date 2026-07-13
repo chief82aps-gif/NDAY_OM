@@ -1131,6 +1131,97 @@ def _calc_return_time(wave_str: str, duration_minutes: Optional[int]) -> Optiona
     return (dt + timedelta(minutes=int(duration_minutes) - 30)).strftime("%-I:%M %p")
 
 
+def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str) -> tuple[str, list]:
+    """Build the (fallback_text, blocks) for one driver's day-of assignment
+    DM. Shared by send_day_of_dms() (the real, gated send) and the
+    /day-of-dms/test endpoint (an explicit preview send to a reviewer,
+    bypassing DRIVER_DM_ACTIVE) so the two can never drift apart in content.
+    Content spec: Governance/DRIVER_DM_CONTENT_RULES.md.
+    """
+    first_name = a.driver_name.split(",")[1].strip().split()[0] if "," in (a.driver_name or "") else (a.driver_name or "Driver").split()[0]
+
+    showtime = _calc_showtime(a.wave)
+    return_time = _calc_return_time(a.wave or "", a.route_duration)
+
+    fields = []
+    if a.route_code:
+        fields.append({"type": "mrkdwn", "text": f"*Route:*\n{a.route_code}"})
+    if a.van_number:
+        fields.append({"type": "mrkdwn", "text": f"*Van:*\n{a.van_number}"})
+    if a.stage_location:
+        fields.append({"type": "mrkdwn", "text": f"*Staging:*\n{a.stage_location}"})
+    if showtime:
+        fields.append({"type": "mrkdwn", "text": f"*Showtime:*\n{showtime}"})
+    if a.wave:
+        fields.append({"type": "mrkdwn", "text": f"*Wave:*\n{a.wave}"})
+    if return_time:
+        fields.append({"type": "mrkdwn", "text": f"*Est. Return:*\n{return_time}"})
+    fields.append({"type": "mrkdwn", "text": f"*Wave Lead:*\n{wave_lead_name}"})
+    # ACE Eligibility criteria aren't defined yet — reserved for a future
+    # coaching/eligibility module (see Governance/DRIVER_DM_CONTENT_RULES.md).
+    # Static "TBD" placeholder is intentional, not a bug.
+    fields.append({"type": "mrkdwn", "text": "*ACE Eligibility:*\nTBD"})
+
+    arrival_value = json.dumps({
+        "shift_date": a.assignment_date.isoformat(),
+        "driver_name": a.driver_name,
+    })
+
+    blocks = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": f"🚐 Your Assignment — {date_str}",
+                "emoji": True,
+            },
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"Good morning, {first_name}! Here's everything you need for today's shift:",
+            },
+        },
+        {
+            "type": "section",
+            "fields": fields,
+        },
+        {"type": "divider"},
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "_Drive safe and have a great shift! 💪 For questions before your wave, contact your wave lead on Zello._",
+            },
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {
+                        "type": "plain_text",
+                        "text": "✅  I Have Arrived for My Shift",
+                        "emoji": True,
+                    },
+                    "style": "primary",
+                    "action_id": "driver_arrived_shift",
+                    "value": arrival_value,
+                }
+            ],
+        },
+    ]
+
+    fallback_text = (
+        f"Good morning {first_name}! Your assignment for {date_str}: "
+        f"Route {a.route_code or '?'} | Van {a.van_number or '?'} | "
+        f"Staging {a.stage_location or '?'} | Showtime {showtime or '?'} | Wave {a.wave or '?'} | "
+        f"Wave Lead {wave_lead_name}"
+    )
+    return fallback_text, blocks
+
+
 def send_day_of_dms(shift_date: date, db: Session) -> dict:
     """
     Send morning-of route assignment DMs to all drivers with a confirmed assignment.
@@ -1176,88 +1267,7 @@ def send_day_of_dms(shift_date: date, db: Session) -> dict:
             # Still mark dm_sent so daily_notify plain-text fallback can pick it up
             continue
 
-        first_name = a.driver_name.split(",")[1].strip().split()[0] if "," in (a.driver_name or "") else (a.driver_name or "Driver").split()[0]
-
-        showtime = _calc_showtime(a.wave)
-        return_time = _calc_return_time(a.wave or "", a.route_duration)
-
-        # Build detail fields — only include rows we have data for
-        fields = []
-        if a.route_code:
-            fields.append({"type": "mrkdwn", "text": f"*Route:*\n{a.route_code}"})
-        if a.van_number:
-            fields.append({"type": "mrkdwn", "text": f"*Van:*\n{a.van_number}"})
-        if a.stage_location:
-            fields.append({"type": "mrkdwn", "text": f"*Staging:*\n{a.stage_location}"})
-        if showtime:
-            fields.append({"type": "mrkdwn", "text": f"*Showtime:*\n{showtime}"})
-        if a.wave:
-            fields.append({"type": "mrkdwn", "text": f"*Wave:*\n{a.wave}"})
-        if return_time:
-            fields.append({"type": "mrkdwn", "text": f"*Est. Return:*\n{return_time}"})
-        fields.append({"type": "mrkdwn", "text": f"*Wave Lead:*\n{wave_lead_name}"})
-        # ACE Eligibility criteria aren't defined yet — reserved for a future
-        # coaching/eligibility module (see Governance/DRIVER_DM_CONTENT_RULES.md).
-        # Static "TBD" placeholder is intentional, not a bug.
-        fields.append({"type": "mrkdwn", "text": "*ACE Eligibility:*\nTBD"})
-
-        arrival_value = json.dumps({
-            "shift_date": shift_date.isoformat(),
-            "driver_name": a.driver_name,
-        })
-
-        blocks = [
-            {
-                "type": "header",
-                "text": {
-                    "type": "plain_text",
-                    "text": f"🚐 Your Assignment — {date_str}",
-                    "emoji": True,
-                },
-            },
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f"Good morning, {first_name}! Here's everything you need for today's shift:",
-                },
-            },
-            {
-                "type": "section",
-                "fields": fields,
-            },
-            {"type": "divider"},
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": "_Drive safe and have a great shift! 💪 For questions before your wave, contact your wave lead on Zello._",
-                },
-            },
-            {
-                "type": "actions",
-                "elements": [
-                    {
-                        "type": "button",
-                        "text": {
-                            "type": "plain_text",
-                            "text": "✅  I Have Arrived for My Shift",
-                            "emoji": True,
-                        },
-                        "style": "primary",
-                        "action_id": "driver_arrived_shift",
-                        "value": arrival_value,
-                    }
-                ],
-            },
-        ]
-
-        fallback_text = (
-            f"Good morning {first_name}! Your assignment for {date_str}: "
-            f"Route {a.route_code or '?'} | Van {a.van_number or '?'} | "
-            f"Staging {a.stage_location or '?'} | Showtime {showtime or '?'} | Wave {a.wave or '?'} | "
-            f"Wave Lead {wave_lead_name}"
-        )
+        fallback_text, blocks = _build_driver_dm(a, wave_lead_name, date_str)
 
         dm_ts = None
         if client:
@@ -1291,6 +1301,58 @@ def send_day_of_dms(shift_date: date, db: Session) -> dict:
         "no_slack_id": no_slack,
         "total": len(assignments),
     }
+
+
+def send_test_driver_dm(shift_date: date, sample_driver_name: str, target_slack_id: str, db: Session) -> dict:
+    """Send ONE real driver's assignment DM content to an arbitrary reviewer
+    (e.g. a manager doing a pre-launch check) for visual/content review.
+
+    Deliberately bypasses DRIVER_DM_ACTIVE — the whole point is to preview
+    before that gate is ever flipped on. Does NOT mark dm_sent on the real
+    assignment, so the sampled driver still gets their real DM once DMs go
+    live for real. Still subject to SLACK_NOTIFICATIONS_ACTIVE (the
+    system-wide send gate) like every other Slack send in the app.
+    """
+    a = (
+        db.query(DailyRouteAssignment)
+        .filter(
+            DailyRouteAssignment.assignment_date == shift_date,
+            DailyRouteAssignment.driver_name == sample_driver_name,
+        )
+        .first()
+    )
+    if not a:
+        return {"status": "no_assignment", "date": shift_date.isoformat(), "sample_driver_name": sample_driver_name}
+
+    client = _slack_client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    wave_lead_name, _ = _wave_lead_name(shift_date)
+    date_str = shift_date.strftime("%A, %B %-d")
+    fallback_text, blocks = _build_driver_dm(a, wave_lead_name, date_str)
+
+    banner = {
+        "type": "context",
+        "elements": [{
+            "type": "mrkdwn",
+            "text": (
+                f"🧪 *TEST SEND* — preview of {sample_driver_name}'s DM content, sent to you for review. "
+                "Not a real assignment notification; the real driver has not been notified."
+            ),
+        }],
+    }
+
+    try:
+        client.chat_postMessage(
+            channel=target_slack_id,
+            text=f"[TEST] {fallback_text}",
+            blocks=[banner] + blocks,
+        )
+        return {"status": "sent", "target_slack_id": target_slack_id, "sample_driver_name": sample_driver_name, "date": shift_date.isoformat()}
+    except Exception as exc:
+        logger.warning("Test driver DM send failed: %s", exc)
+        return {"status": "failed", "error": str(exc)}
 
 
 # ─── API endpoints ───────────────────────────────────────────────────────────
@@ -1596,6 +1658,22 @@ def trigger_day_of_dms(shift_date: str, db: Session = Depends(get_db)):
     except ValueError:
         raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
     return send_day_of_dms(target, db)
+
+
+@router.post("/day-of-dms/{shift_date}/test")
+def trigger_test_driver_dm(
+    shift_date: str, sample_driver_name: str, target_slack_id: str,
+    db: Session = Depends(get_db),
+):
+    """Preview one real driver's DM content by sending it to a reviewer
+    (e.g. a manager) instead of the real driver. Bypasses DRIVER_DM_ACTIVE
+    on purpose — for pre-launch review before that gate is ever flipped on.
+    Does not mark the sampled assignment's dm_sent."""
+    try:
+        target = date.fromisoformat(shift_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
+    return send_test_driver_dm(target, sample_driver_name, target_slack_id, db)
 
 
 @router.post("/ack-schedule")

@@ -1136,8 +1136,10 @@ def send_day_of_dms(shift_date: date, db: Session) -> dict:
     Send morning-of route assignment DMs to all drivers with a confirmed assignment.
 
     Queries DailyRouteAssignment for shift_date where dm_sent=False.
-    Each DM is Block Kit with route, van, staging, wave, showtime, expected return,
-    wave lead, and the arrival confirmation button.
+    Each DM is Block Kit with route, van, staging, wave, showtime, expected
+    return, wave lead, ACE Eligibility (static "TBD" until that module
+    exists), and the arrival confirmation button. Full content spec/
+    rationale: Governance/DRIVER_DM_CONTENT_RULES.md.
 
     Marks dm_sent=True on each record so daily_notify.send_all_dms() won't double-send.
     Gated by DRIVER_DM_ACTIVE=true (independent of ROSTERING_ACTIVE, which
@@ -1194,6 +1196,10 @@ def send_day_of_dms(shift_date: date, db: Session) -> dict:
         if return_time:
             fields.append({"type": "mrkdwn", "text": f"*Est. Return:*\n{return_time}"})
         fields.append({"type": "mrkdwn", "text": f"*Wave Lead:*\n{wave_lead_name}"})
+        # ACE Eligibility criteria aren't defined yet — reserved for a future
+        # coaching/eligibility module (see Governance/DRIVER_DM_CONTENT_RULES.md).
+        # Static "TBD" placeholder is intentional, not a bug.
+        fields.append({"type": "mrkdwn", "text": "*ACE Eligibility:*\nTBD"})
 
         arrival_value = json.dumps({
             "shift_date": shift_date.isoformat(),

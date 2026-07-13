@@ -30,12 +30,14 @@ Use this index to quickly locate governing standards, ingest rules, audit rules,
 - [Van Assignment Rules](VAN_INGEST_RULES.md) — GROUNDED skip, electric constraint, CDV14→16→XL fallback, 7-day affinity, capacity thresholds
 - [Driver Quality Rankings](DSP_SCORECARD_RULES.md) — Platinum/Gold/Silver/Bronze standing; used for assignment priority
 - [Rostering & Driver DM Rules](ROSTERING_DM_RULES.md) — **Driver DMs and the assignment matrix stay OFF (`ROSTERING_ACTIVE=false`) until the pipeline is fully tested end-to-end**
+- [Daily Driver DM Content Rules](DRIVER_DM_CONTENT_RULES.md) — what fields the daily driver DM contains and why (successor to the printed handout card spec); ACE Eligibility is a static TBD placeholder pending a future module
 - **Callout Rule (implemented):** Called-out drivers drop below all available drivers in the assignment queue; only assigned when non-callout pool is exhausted (`is_callout_coverage=True`)
 
 ---
 
 ## Platform & System
 
+- [SRD Module Architecture v3](SRD_MODULE_ARCHITECTURE_v3.md) — **Start here for module boundaries.** Defines all 8 SRD modules' ownership/boundaries plus two new cross-cutting modules (Ingest, Scheduling/Cadence) with target table schemas and migration plans (2026-07-11)
 - [DSP Route Manager: Software Manual & System Blueprint](DSP_Route_Manager_Software_Manual.md) — Architecture overview; includes current implementation status section (updated 2026-07-03)
 - [Database Schema](DATABASE_SCHEMA.md) — Actual tables (2026-07-03) + original planned schema
 - [Database Setup Guide](DATABASE_SETUP.md)

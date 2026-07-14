@@ -69,7 +69,7 @@ Indeed gives no public API/webhook to this account. A server-side headless scrap
 The extension does **not** call the Asana API directly — it POSTs the scraped payload to a new NDAY_OM backend endpoint, which performs the Asana write using the existing (currently unwired) `AsanaClient`. Rationale: keeps the Asana token server-side, and this is the point where analytics (§6) get computed and persisted regardless of whether the recruiter later loses the browser tab/session.
 
 - Match/dedupe key: Indeed candidate ID (stable across list-page and detail-page syncs from the same candidate, so a later detail-page sync enriches the same Asana card rather than creating a duplicate).
-- **Asana field mapping** (confirmed against the live "Kenneth Brown" card):
+- **Asana field mapping** (confirmed against a live sample card during design):
   - Task title = candidate name, normalized to **"First Last"** with proper capitalization (Indeed's raw name casing/order is not guaranteed).
   - Task description (`notes`) = phone + email + Recruiting assistant summary.
   - Task section/column = derived from the ✓/? decision per §4.2.

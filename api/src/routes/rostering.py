@@ -791,26 +791,30 @@ def post_assignment_matrix(shift_date: date, db: Session, force: bool = False) -
         return {"status": "error", "detail": str(exc)}
 
 
-def _latest_dvic_map(db: Session) -> dict[str, "DvicCounselingRecord"]:
-    """{transporter_name: DvicCounselingRecord} for every driver with a
-    counseling record on file — exact-name-match convention, same
-    limitation as _latest_quality_map() (no fuzzy matching)."""
-    from api.src.database import DvicCounselingRecord
-    return {
-        r.transporter_name: r
-        for r in db.query(DvicCounselingRecord).all()
-        if r.transporter_name
-    }
+def _latest_dvic_map(db: Session) -> dict[str, dict]:
+    """{transporter_name: {"avg_seconds", "instances"}} from the most
+    recently ingested DVIC week only (per explicit request 2026-07-14:
+    "use the avg and the most recent previous dvic" — not the persistent
+    counseling stage). Exact-name-match convention, same limitation as
+    _latest_quality_map() (no fuzzy matching). Reuses dvic.py's own
+    per-driver aggregation so the two never compute this differently."""
+    from api.src.database import DvicSnapshot
+    from api.src.routes.dvic import _mgt_summary_rows
+    latest = db.query(DvicSnapshot).order_by(DvicSnapshot.week.desc()).first()
+    if not latest:
+        return {}
+    return {row["name"]: row for row in _mgt_summary_rows(latest.week, db)}
 
 
 def post_driver_summary_matrix(shift_date: date, db: Session, force: bool = False) -> dict:
     """
     Post a #nday-mgt table containing every field each driver's individual
     DM would show, plus Performance (quality standing, same source as the
-    route summary matrix's Perf column) and Safety (DVIC under-90-second
-    instance count + counseling stage) per explicit request 2026-07-14 —
-    content spec: Governance/DRIVER_DM_CONTENT_RULES.md), grouped by wave
-    with the wave lead noted per group.
+    route summary matrix's Perf column) and Safety (avg pre-trip inspection
+    time + instance count from the most recently ingested DVIC week — per
+    explicit request 2026-07-14: "use the avg and the most recent previous
+    dvic") — content spec: Governance/DRIVER_DM_CONTENT_RULES.md), grouped
+    by wave with the wave lead noted per group.
 
     Stand-in for the real per-driver DMs while driver Slack-linking is
     incomplete (see /drivers — 0 linked as of 2026-07-14) — management gets
@@ -897,8 +901,11 @@ def post_driver_summary_matrix(shift_date: date, db: Session, force: bool = Fals
         showtime = _calc_showtime(a.wave) or "—"
         return_time = _calc_return_time(a.wave or "", a.route_duration) or "—"
         standing = quality_map.get(a.driver_name, {}).get("standing", "Unk")
-        dvic_rec = dvic_map.get(a.driver_name)
-        safety_val = f"{dvic_rec.last_instance_count or 0}/Stg{dvic_rec.stage}" if dvic_rec and dvic_rec.stage >= 1 else "—"
+        dvic_row = dvic_map.get(a.driver_name)
+        if dvic_row and dvic_row.get("avg_seconds") is not None:
+            safety_val = f"{dvic_row['avg_seconds']:.0f}s/{dvic_row['instances']}x"
+        else:
+            safety_val = "—"
         wave_rows.append(
             f"{name:<22} {a.route_code or '—':<8} {a.van_number or '—':<9} {a.stage_location or '—':<12} "
             f"{showtime:<9} {return_time:<9} {standing:<8} {safety_val:<9} TBD"

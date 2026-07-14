@@ -94,9 +94,14 @@ DM itself does not show:
 
 - **Perf** — quality standing (Platinum/Gold/Silver/Bronze), same source
   as the route summary matrix's Perf column (`_latest_quality_map()`).
-- **Safety** — this week's DVIC under-90-second instance count + current
-  counseling stage (e.g. `2/Stg1`), from `DvicCounselingRecord`. Shows
-  `—` if the driver has no counseling record (stage 0/never counseled).
+- **Safety** — average pre-trip inspection time + instance count from the
+  **most recently ingested DVIC week only** (e.g. `71s/2x`), per explicit
+  request 2026-07-14: "use the avg and the most recent previous dvic."
+  Reuses `dvic.py`'s own `_mgt_summary_rows()` so this and the DVIC MGT
+  summary can never compute it differently. Deliberately **not** the
+  persistent counseling stage (`DvicCounselingRecord`) — that's a
+  different, longer-horizon signal; this column is this-week-only. Shows
+  `—` if the driver has no DVIC data for the latest week.
 
 Full column set: Driver, Route, Van, Staging, Showtime, Est. Return,
 Perf, Safety, ACE Eligibility (`TBD`). This is a management-visibility

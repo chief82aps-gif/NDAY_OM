@@ -86,14 +86,27 @@ per-driver DMs can't reach anyone until that's resolved (see
 `scripts/import_ssn_slack.py`, not yet run/wrapped as an endpoint).
 
 Until then, `post_driver_summary_matrix()` (`api/src/routes/rostering.py`,
-`POST /rostering/driver-summary-matrix/{shift_date}`) posts every field
-from this doc's "Current fields" table — Driver, Route, Van, Staging,
-Showtime, Est. Return, plus ACE Eligibility (`TBD`) — as one table to
-`#nday-mgt`, grouped by wave with the wave lead noted per group. This is
-a management-visibility stand-in, **not** a driver-facing send — it's
-gated by `ROSTERING_ACTIVE` (management-facing), not `DRIVER_DM_ACTIVE`,
-since nothing goes to an individual driver. Meant to run alongside
-`post_assignment_matrix()` (the route summary matrix) each morning.
+`POST /rostering/driver-summary-matrix/{shift_date}`) posts a table to
+`#nday-mgt`, grouped by wave with the wave lead noted per group. Per
+explicit request 2026-07-14, this table is **not** a 1:1 mirror of the
+driver DM — it's management-facing, so it also includes two fields the
+DM itself does not show:
+
+- **Perf** — quality standing (Platinum/Gold/Silver/Bronze), same source
+  as the route summary matrix's Perf column (`_latest_quality_map()`).
+- **Safety** — this week's DVIC under-90-second instance count + current
+  counseling stage (e.g. `2/Stg1`), from `DvicCounselingRecord`. Shows
+  `—` if the driver has no counseling record (stage 0/never counseled).
+
+Full column set: Driver, Route, Van, Staging, Showtime, Est. Return,
+Perf, Safety, ACE Eligibility (`TBD`). This is a management-visibility
+stand-in, **not** a driver-facing send — it's gated by `ROSTERING_ACTIVE`
+(management-facing), not `DRIVER_DM_ACTIVE`, since nothing goes to an
+individual driver. Meant to run alongside `post_assignment_matrix()`
+(the route summary matrix) each morning. If Perf/Safety are ever wanted
+in the *driver's own* DM too, that's a separate decision — don't assume
+parity between this table and the DM content above just because they
+share most fields.
 
 **Once driver Slack-linking is resolved and real per-driver DMs go live**,
 re-evaluate whether this stand-in should keep running — decide explicitly

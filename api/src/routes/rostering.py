@@ -791,12 +791,26 @@ def post_assignment_matrix(shift_date: date, db: Session, force: bool = False) -
         return {"status": "error", "detail": str(exc)}
 
 
+def _latest_dvic_map(db: Session) -> dict[str, "DvicCounselingRecord"]:
+    """{transporter_name: DvicCounselingRecord} for every driver with a
+    counseling record on file — exact-name-match convention, same
+    limitation as _latest_quality_map() (no fuzzy matching)."""
+    from api.src.database import DvicCounselingRecord
+    return {
+        r.transporter_name: r
+        for r in db.query(DvicCounselingRecord).all()
+        if r.transporter_name
+    }
+
+
 def post_driver_summary_matrix(shift_date: date, db: Session, force: bool = False) -> dict:
     """
     Post a #nday-mgt table containing every field each driver's individual
-    DM would show (Route, Van, Staging, Showtime, Wave, Est. Return, ACE
-    Eligibility — content spec: Governance/DRIVER_DM_CONTENT_RULES.md),
-    grouped by wave with the wave lead noted per group.
+    DM would show, plus Performance (quality standing, same source as the
+    route summary matrix's Perf column) and Safety (DVIC under-90-second
+    instance count + counseling stage) per explicit request 2026-07-14 —
+    content spec: Governance/DRIVER_DM_CONTENT_RULES.md), grouped by wave
+    with the wave lead noted per group.
 
     Stand-in for the real per-driver DMs while driver Slack-linking is
     incomplete (see /drivers — 0 linked as of 2026-07-14) — management gets
@@ -842,6 +856,8 @@ def post_driver_summary_matrix(shift_date: date, db: Session, force: bool = Fals
         return {"status": "no_slack_token"}
 
     date_str = shift_date.strftime("%A, %B %-d")
+    quality_map = _latest_quality_map(db)
+    dvic_map = _latest_dvic_map(db)
 
     blocks = [
         {
@@ -850,11 +866,11 @@ def post_driver_summary_matrix(shift_date: date, db: Session, force: bool = Fals
         },
         {
             "type": "context",
-            "elements": [{"type": "mrkdwn", "text": "_Every field each driver's individual DM shows. Sent here while driver Slack-linking is incomplete._"}],
+            "elements": [{"type": "mrkdwn", "text": "_Every field each driver's individual DM shows, plus performance + safety. Sent here while driver Slack-linking is incomplete._"}],
         },
     ]
 
-    col_header = f"{'Driver':<22} {'Route':<8} {'Van':<9} {'Staging':<12} {'Showtime':<9} {'Return':<9} {'ACE'}"
+    col_header = f"{'Driver':<22} {'Route':<8} {'Van':<9} {'Staging':<12} {'Showtime':<9} {'Return':<9} {'Perf':<8} {'Safety':<9} {'ACE'}"
 
     def _flush(wave_label: str, rows: list[str]):
         if not rows:
@@ -880,8 +896,12 @@ def post_driver_summary_matrix(shift_date: date, db: Session, force: bool = Fals
         name = _full_name(a.driver_name)
         showtime = _calc_showtime(a.wave) or "—"
         return_time = _calc_return_time(a.wave or "", a.route_duration) or "—"
+        standing = quality_map.get(a.driver_name, {}).get("standing", "Unk")
+        dvic_rec = dvic_map.get(a.driver_name)
+        safety_val = f"{dvic_rec.last_instance_count or 0}/Stg{dvic_rec.stage}" if dvic_rec and dvic_rec.stage >= 1 else "—"
         wave_rows.append(
-            f"{name:<22} {a.route_code or '—':<8} {a.van_number or '—':<9} {a.stage_location or '—':<12} {showtime:<9} {return_time:<9} TBD"
+            f"{name:<22} {a.route_code or '—':<8} {a.van_number or '—':<9} {a.stage_location or '—':<12} "
+            f"{showtime:<9} {return_time:<9} {standing:<8} {safety_val:<9} TBD"
         )
     _flush(active_wave, wave_rows)
 

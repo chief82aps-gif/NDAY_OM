@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/candidates", tags=["candidates"])
 
 ASANA_PROJECT_NAME = os.getenv("ASANA_HIRING_PROJECT_NAME", "New Day Hiring")
+ASANA_PROJECT_GID = os.getenv("ASANA_HIRING_PROJECT_GID")  # e.g. 1202834412268957 — preferred over name lookup
 GOOGLE_CONTACTS_GROUP = os.getenv("GOOGLE_CONTACTS_GROUP", "Candidates")
 
 SECTION_BY_DECISION = {
@@ -157,10 +158,16 @@ def _sync_to_asana(candidate: Candidate, decision: str) -> None:
         return  # reject -> do nothing in Asana
 
     asana = AsanaClient()
-    project = asana.get_project_by_name(ASANA_PROJECT_NAME)
-    if not project:
-        raise HTTPException(status_code=500, detail=f"Asana project '{ASANA_PROJECT_NAME}' not found")
-    project_gid = project["gid"]
+    if ASANA_PROJECT_GID:
+        project_gid = ASANA_PROJECT_GID
+    else:
+        # Fallback for portability, but GET /projects appears to page/filter
+        # in a way that doesn't reliably surface every project by name —
+        # prefer setting ASANA_HIRING_PROJECT_GID to skip this lookup.
+        project = asana.get_project_by_name(ASANA_PROJECT_NAME)
+        if not project:
+            raise HTTPException(status_code=500, detail=f"Asana project '{ASANA_PROJECT_NAME}' not found")
+        project_gid = project["gid"]
 
     section = asana.get_section_by_name(project_gid, target_section_name)
     if not section:

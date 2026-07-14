@@ -1,29 +1,17 @@
 /**
  * NDL Hiring Sync — content script.
  *
- * IMPORTANT: the selectors in the SELECTORS block below are a first-pass
- * best guess based on screenshots of the Indeed employer dashboard, not
- * live DOM inspection (this was built without direct access to Indeed's
- * page). They will very likely need a calibration pass against the real
- * page — open DevTools Console on the Indeed page after installing this,
- * click Sync, and report any "[NDL Sync] could not find..." warnings back
- * so the selectors can be corrected quickly.
+ * Calibrated 2026-07-14 against live Indeed employer dashboard DOM (via
+ * DevTools inspection during setup). The triage buttons are identified by
+ * data-testid="ApplicantSentiment-yes|maybe|no" with selection state on
+ * data-is-selected / aria-pressed — these are stable attributes, not
+ * hashed CSS class names, so this should hold up across minor Indeed
+ * front-end rebuilds. Row/name/experience extraction still walks the DOM
+ * heuristically (Indeed doesn't expose a stable "row" test-id), so those
+ * are the more likely spots to need a future tweak.
  */
 
-const SELECTORS = {
-  // A single candidate row on the list/board view.
-  listRow: '[data-testid*="candidate-card"], [data-testid*="candidate-row"], li[class*="candidate"]',
-  // The three triage buttons (✓ / ? / ✗) — matched by aria-label keywords, not exact class names.
-  decisionButtons: 'button[aria-label], button[aria-pressed]',
-  candidateNameInRow: 'a, [data-testid*="name"], h2, h3',
-  candidateLink: 'a[href]',
-  // Detail page markers.
-  screenerSectionHeading: 'h2, h3, [role="heading"]',
-  screenerQAPair: '[data-testid*="screener"], section',
-  workExperienceItem: '[data-testid*="experience"] li, [data-testid*="work-history"] li',
-  recruitingSummary: '[data-testid*="recruiting-assistant"], [data-testid*="summary"]',
-  matchScore: '[data-testid*="score"]',
-};
+const SENTIMENT_ATTR_PREFIX = "ApplicantSentiment-";
 
 function getStoredConfig() {
   return new Promise((resolve) => {
@@ -37,55 +25,101 @@ function getStoredConfig() {
 }
 
 function isDetailPage() {
-  const headings = Array.from(document.querySelectorAll(SELECTORS.screenerSectionHeading));
-  return headings.some((h) => /screener questions/i.test(h.textContent || ""));
+  return !!document.getElementById("candidateProfileContainer");
 }
 
-function isListPage() {
-  return document.querySelectorAll(SELECTORS.listRow).length > 1;
-}
-
-function readDecision(container) {
-  const buttons = Array.from(container.querySelectorAll(SELECTORS.decisionButtons));
+/** Group every triage button on the page by its immediate shared parent —
+ * that parent is one "decision group" (the ✓ / ? / ✗ trio for one candidate),
+ * whether there's one on a detail page or a dozen on a list page. */
+function getDecisionGroups() {
+  const buttons = Array.from(
+    document.querySelectorAll(`[data-testid^="${SENTIMENT_ATTR_PREFIX}"]`)
+  );
+  const groups = new Map();
   for (const btn of buttons) {
-    const pressed = btn.getAttribute("aria-pressed") === "true" || btn.classList.contains("selected");
-    if (!pressed) continue;
-    const label = (btn.getAttribute("aria-label") || btn.textContent || "").toLowerCase();
-    if (/reject|not a fit|no\b/.test(label)) return "reject";
-    if (/undecided|maybe|unsure/.test(label)) return "undecided";
-    if (/shortlist|accept|advance|yes\b/.test(label)) return "accept";
+    const parent = btn.parentElement;
+    if (!parent) continue;
+    if (!groups.has(parent)) groups.set(parent, []);
+    groups.get(parent).push(btn);
   }
-  return null;
+  return Array.from(groups.values());
 }
 
-function extractCandidateId(container) {
-  const withAttr = container.querySelector("[data-candidate-id]");
-  if (withAttr) return withAttr.getAttribute("data-candidate-id");
+function isButtonSelected(btn) {
+  return (
+    btn.getAttribute("data-is-selected") === "true" ||
+    btn.getAttribute("aria-pressed") === "true"
+  );
+}
 
-  const link = container.querySelector(SELECTORS.candidateLink);
+function readDecisionFromGroup(buttons) {
+  for (const btn of buttons) {
+    if (!isButtonSelected(btn)) continue;
+    const testid = btn.getAttribute("data-testid") || "";
+    if (testid.endsWith("yes")) return "accept";
+    if (testid.endsWith("maybe")) return "undecided";
+    return "reject"; // anything else selected in this trio is the reject button
+  }
+  return null; // no selection made yet
+}
+
+/** Walk up from the button group looking for an ancestor that contains
+ * both a checkbox (list-row marker) and a heading (candidate name) — that's
+ * the candidate "card". Falls back to a fixed number of levels up if no
+ * such ancestor is found (e.g. on the single-candidate detail view, which
+ * has no row checkbox). */
+function findCandidateCard(buttonGroupParent) {
+  let node = buttonGroupParent;
+  for (let i = 0; i < 8 && node; i++) {
+    const hasCheckbox = node.querySelector('input[type="checkbox"]');
+    const hasHeading = node.querySelector("h1, h2, h3");
+    if (hasCheckbox && hasHeading) return node;
+    node = node.parentElement;
+  }
+  // Detail page (no checkbox on the page) — climb a fixed number of levels
+  // instead, or fall back to document.body.
+  node = buttonGroupParent;
+  for (let i = 0; i < 5 && node; i++) {
+    if (node.querySelector("h1, h2, h3")) return node;
+    node = node.parentElement;
+  }
+  return document.body;
+}
+
+function extractName(card) {
+  const heading = card.querySelector("h1, h2, h3");
+  return heading ? heading.textContent.trim() : "";
+}
+
+function extractCandidateId(card) {
+  const link = card.querySelector('a[href*="id="]');
   if (link && link.href) {
-    const match = link.href.match(/candidates?\/([a-zA-Z0-9_-]+)/);
+    const match = link.href.match(/[?&]id=([a-zA-Z0-9]+)/);
     if (match) return match[1];
   }
+  // Detail page: the candidate id is in the current page URL.
+  const urlMatch = window.location.href.match(/[?&]id=([a-zA-Z0-9]+)/);
+  if (urlMatch) return urlMatch[1];
   return null;
 }
 
-function extractName(container) {
-  const el = container.querySelector(SELECTORS.candidateNameInRow);
-  return el ? el.textContent.trim() : "";
-}
-
-function extractWorkExperience(container) {
-  const items = Array.from(container.querySelectorAll(SELECTORS.workExperienceItem));
-  return items
-    .map((item) => {
-      const text = item.textContent.trim();
-      // Best-effort split of "Title - Employer (dateRange)" style text blocks.
-      const dateMatch = text.match(/\(([^)]+)\)\s*$/);
-      const date_range = dateMatch ? dateMatch[1] : "";
-      return { title: "", employer: text.replace(/\([^)]+\)\s*$/, "").trim(), date_range };
-    })
-    .filter((w) => w.employer);
+/** Best-effort parse of "Title" followed by "Employer (dateRange)" line
+ * pairs, as seen in both the list-row and detail-page work history blocks. */
+function extractWorkExperience(card) {
+  const text = (card.innerText || card.textContent || "");
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  const entries = [];
+  for (let i = 1; i < lines.length; i++) {
+    const match = lines[i].match(/^(.*)\(([^)]+)\)\s*$/);
+    if (match) {
+      entries.push({
+        title: lines[i - 1],
+        employer: match[1].trim(),
+        date_range: match[2].trim(),
+      });
+    }
+  }
+  return entries;
 }
 
 function extractScreenerAnswers() {
@@ -106,15 +140,17 @@ function extractScreenerAnswers() {
 }
 
 function extractRecruitingSummary() {
-  const el = document.querySelector(SELECTORS.recruitingSummary);
-  return el ? el.textContent.trim() : "";
+  const headings = Array.from(document.querySelectorAll("h1, h2, h3, h4"));
+  const summaryHeading = headings.find((h) => /recruiting assistant/i.test(h.textContent || ""));
+  if (!summaryHeading) return "";
+  const container = summaryHeading.closest("section, div");
+  return container ? container.textContent.trim().slice(0, 2000) : "";
 }
 
-function extractMatchScore() {
-  const el = document.querySelector(SELECTORS.matchScore);
-  if (!el) return null;
-  const match = (el.textContent || "").match(/\d+/);
-  return match ? parseInt(match[0], 10) : null;
+function extractMatchScore(card) {
+  const text = card.textContent || "";
+  const match = text.match(/\b(\d{1,3})\b\s*(?:match|score)?/i);
+  return match ? parseInt(match[1], 10) : null;
 }
 
 async function postCandidate(payload) {
@@ -145,72 +181,64 @@ async function postCandidate(payload) {
   });
 }
 
-async function syncListPage() {
-  const rows = Array.from(document.querySelectorAll(SELECTORS.listRow));
-  if (rows.length === 0) {
-    console.warn("[NDL Sync] could not find any candidate rows — selectors need calibration");
+function buildPayloadFromCard(card, decision) {
+  const candidateId = extractCandidateId(card);
+  if (!candidateId) {
+    console.warn("[NDL Sync] could not find candidate id for card", card);
+    return null;
+  }
+  const payload = {
+    indeed_candidate_id: candidateId,
+    decision,
+    raw_name: extractName(card),
+    work_experience: extractWorkExperience(card),
+    screener_answers: [],
+  };
+  if (isDetailPage()) {
+    payload.indeed_profile_url = window.location.href;
+    payload.indeed_match_score = extractMatchScore(card);
+    payload.recruiting_summary = extractRecruitingSummary();
+    payload.screener_answers = extractScreenerAnswers();
+  }
+  return payload;
+}
+
+async function syncAll() {
+  const groups = getDecisionGroups();
+  if (groups.length === 0) {
+    console.warn("[NDL Sync] could not find any triage buttons on this page — selectors need calibration");
+    alert("NDL Hiring Sync: couldn't find any candidates on this page.");
     return;
   }
+
   let synced = 0, skipped = 0, failed = 0;
-  for (const row of rows) {
-    const decision = readDecision(row);
+  for (const buttons of groups) {
+    const decision = readDecisionFromGroup(buttons);
     if (!decision || decision === "reject") {
       skipped++;
       continue;
     }
-    const candidateId = extractCandidateId(row);
-    if (!candidateId) {
-      console.warn("[NDL Sync] could not find candidate id for row", row);
+    const card = findCandidateCard(buttons[0].parentElement);
+    const payload = buildPayloadFromCard(card, decision);
+    if (!payload) {
       failed++;
       continue;
     }
-    const payload = {
-      indeed_candidate_id: candidateId,
-      decision,
-      raw_name: extractName(row),
-      work_experience: extractWorkExperience(row),
-      screener_answers: [],
-    };
     const result = await postCandidate(payload);
-    if (result && !result.error) synced++; else failed++;
+    if (result === null) return; // extension key not configured — postCandidate already alerted
+    if (result && !result.error) synced++;
+    else failed++;
   }
-  alert(`NDL Hiring Sync: ${synced} synced, ${skipped} skipped (undecided/reject not touched or rejected), ${failed} failed. Check console for details.`);
-}
 
-async function syncDetailPage() {
-  const decision = readDecision(document.body);
-  if (!decision) {
-    alert("NDL Hiring Sync: couldn't detect which of ✓ / ? / ✗ is currently selected on this page.");
-    return;
-  }
-  const candidateId = extractCandidateId(document.body) || window.location.pathname;
-  const payload = {
-    indeed_candidate_id: candidateId,
-    decision,
-    raw_name: extractName(document.body) || document.title,
-    indeed_profile_url: window.location.href,
-    indeed_match_score: extractMatchScore(),
-    recruiting_summary: extractRecruitingSummary(),
-    work_experience: extractWorkExperience(document.body),
-    screener_answers: extractScreenerAnswers(),
-  };
-  const result = await postCandidate(payload);
-  if (result && !result.error) {
-    alert("NDL Hiring Sync: candidate synced.");
-  } else {
-    alert("NDL Hiring Sync: sync failed, check console.");
-  }
+  alert(`NDL Hiring Sync: ${synced} synced, ${skipped} skipped (no decision / rejected), ${failed} failed. Check console for details.`);
 }
 
 function injectSyncButton() {
   if (document.getElementById("ndl-sync-button")) return;
   const button = document.createElement("button");
   button.id = "ndl-sync-button";
-  button.textContent = isDetailPage() ? "Sync candidate to Asana" : "Sync to Asana";
-  button.addEventListener("click", () => {
-    if (isDetailPage()) syncDetailPage();
-    else syncListPage();
-  });
+  button.textContent = "Sync to Asana";
+  button.addEventListener("click", syncAll);
   document.body.appendChild(button);
 }
 

@@ -74,11 +74,12 @@ function showTemplatePicker(candidateName) {
   });
 }
 
-/** Indeed doesn't expose a stable data-testid/aria-label for the button
- * that opens a candidate's messaging panel — it's plain "Message" or "Send
- * message" text with no other marker, and varies between the list and
- * detail views. Match on visible text instead of chasing an exact selector. */
+/** The detail-page opener has a real stable id (#topComposeEmailButton).
+ * List-page rows don't, and use plain "Send message" text instead — fall
+ * back to a text match for that case. */
 function findMessageOpenerButton() {
+  const byId = document.getElementById("topComposeEmailButton");
+  if (byId) return byId;
   const buttons = Array.from(document.querySelectorAll("button"));
   return buttons.find((b) => /^(message|send message)$/i.test((b.textContent || "").trim()));
 }

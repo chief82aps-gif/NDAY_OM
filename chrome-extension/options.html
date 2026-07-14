@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>NDL Hiring Sync — Settings</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 480px; margin: 40px auto; padding: 0 16px; }
+    label { display: block; margin-top: 16px; font-weight: 600; }
+    input { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; }
+    button { margin-top: 20px; padding: 10px 16px; cursor: pointer; }
+    #status { margin-top: 12px; color: green; }
+  </style>
+</head>
+<body>
+  <h2>NDL Hiring Sync — Settings</h2>
+  <p>These values connect the extension to the NDAY_OM backend. Ask whoever set up the backend for the Extension Key.</p>
+
+  <label for="apiBase">Backend API base URL</label>
+  <input id="apiBase" placeholder="https://nday-om.onrender.com" />
+
+  <label for="extensionKey">Extension Key</label>
+  <input id="extensionKey" type="password" placeholder="shared secret" />
+
+  <button id="save">Save</button>
+  <div id="status"></div>
+
+  <script src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "NDL Hiring — Indeed to Asana Sync",
+  "version": "0.1.0",
+  "description": "Adds a Sync button to Indeed candidate pages that pushes reviewed candidates into the New Day Hiring Asana board.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://*.indeed.com/*",
+    "https://nday-om.onrender.com/*"
+  ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.indeed.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "NDL Hiring Sync — right-click the extension icon and choose Options to configure"
+  }
+}

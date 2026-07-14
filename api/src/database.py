@@ -1699,6 +1699,69 @@ class RingCentralCallLog(Base):
 
 
 # ============================================================================
+# HIRING / CANDIDATE PIPELINE
+# ============================================================================
+
+class Candidate(Base):
+    """Job applicant captured from Indeed via the hiring Chrome extension.
+
+    Dedupe key is indeed_candidate_id — a list-page sync creates the row,
+    a later detail-page sync enriches the same row (contact info, tenure,
+    keyword tags) rather than creating a duplicate.
+    """
+    __tablename__ = "candidates"
+
+    id = Column(Integer, primary_key=True)
+    indeed_candidate_id = Column(String(100), unique=True, index=True, nullable=False)
+    first_name = Column(String(100))
+    last_name = Column(String(100))
+    phone = Column(String(20))
+    email = Column(String(150))
+    location = Column(String(150))
+    resume_url = Column(Text)
+    indeed_profile_url = Column(Text)
+    indeed_match_score = Column(Integer)
+    recruiting_summary_text = Column(Text)
+    avg_tenure_months = Column(Float)
+    status = Column(String(50), default="undecided")  # mirrors Asana column
+    asana_task_gid = Column(String(50))
+    google_contact_resource_name = Column(String(150))
+    driver_id = Column(Integer, ForeignKey("drivers.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    keyword_tags = relationship("CandidateKeywordTag", back_populates="candidate")
+
+    def __repr__(self):
+        return f"<Candidate(name={self.first_name} {self.last_name}, status={self.status})>"
+
+
+class CandidateKeywordTag(Base):
+    """A keyword hit found in a candidate's resume/work-history text."""
+    __tablename__ = "candidate_keyword_tags"
+
+    id = Column(Integer, primary_key=True)
+    candidate_id = Column(Integer, ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False)
+    keyword = Column(String(100), nullable=False)
+    category = Column(String(50))  # prior_employer | certification | disqualifier | local_dsp | nonlocal_dsp
+    matched_text = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    candidate = relationship("Candidate", back_populates="keyword_tags")
+
+
+class KeywordRule(Base):
+    """Admin-editable keyword dictionary used to tag candidates at intake."""
+    __tablename__ = "keyword_rules"
+
+    id = Column(Integer, primary_key=True)
+    keyword = Column(String(100), nullable=False)
+    category = Column(String(50), nullable=False)
+    active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ============================================================================
 # DATABASE FUNCTIONS
 # ============================================================================
 
@@ -1708,7 +1771,31 @@ def init_db():
     ensure_cortex_driver_name_column()
     ensure_dop_driver_name_column()
     ensure_route_duration_columns()
+    seed_keyword_rules()
     print("✓ Database initialized")
+
+
+def seed_keyword_rules():
+    """Seed the candidate keyword dictionary with starter terms if empty.
+    Admin-editable from there via the keyword_rules table — this only runs
+    the first time (skips if any rows already exist)."""
+    default_rules = [
+        ("FedEx", "prior_employer"),
+        ("DoorDash", "prior_employer"),
+        ("UPS", "prior_employer"),
+        ("Amazon", "prior_employer"),
+        ("CDL", "certification"),
+        ("Tow truck", "disqualifier"),
+    ]
+    db = SessionLocal()
+    try:
+        if db.query(KeywordRule).first():
+            return  # already seeded / admin-managed from here
+        for keyword, category in default_rules:
+            db.add(KeywordRule(keyword=keyword, category=category, active=True))
+        db.commit()
+    finally:
+        db.close()
 
 
 def ensure_cortex_driver_name_column():

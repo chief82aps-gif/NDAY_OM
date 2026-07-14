@@ -107,6 +107,41 @@ class AsanaClient:
         except Exception as e:
             raise Exception(f"Failed to create task: {str(e)}")
     
+    def get_sections_in_project(self, project_gid: str) -> List[Dict]:
+        """List sections (columns) in a project."""
+        try:
+            url = f"{self.base_url}/projects/{project_gid}/sections"
+            params = {"opt_fields": "name,gid"}
+            response = requests.get(url, headers=self.headers, params=params)
+            response.raise_for_status()
+            return response.json()["data"]
+        except Exception as e:
+            raise Exception(f"Failed to get sections: {str(e)}")
+
+    def get_section_by_name(self, project_gid: str, section_name: str) -> Optional[Dict]:
+        """Find a section (column) by name, case-insensitive."""
+        for section in self.get_sections_in_project(project_gid):
+            if section["name"].strip().lower() == section_name.strip().lower():
+                return section
+        return None
+
+    def find_task_by_gid(self, task_gid: str) -> Optional[Dict]:
+        """Fetch a task by gid, returning None instead of raising if it's gone."""
+        try:
+            return self.get_task(task_gid)
+        except Exception:
+            return None
+
+    def move_task_to_section(self, task_gid: str, section_gid: str) -> None:
+        """Move an existing task into a different section of the same project."""
+        try:
+            url = f"{self.base_url}/sections/{section_gid}/addTask"
+            payload = {"data": {"task": task_gid}}
+            response = requests.post(url, headers=self.headers, json=payload)
+            response.raise_for_status()
+        except Exception as e:
+            raise Exception(f"Failed to move task to section: {str(e)}")
+
     def get_custom_field_by_name(self, project_gid: str, field_name: str) -> Optional[Dict]:
         """Get a custom field by name from a project."""
         try:

@@ -87,7 +87,10 @@ def _normalize_name(raw_name: str) -> tuple[str, str]:
             return "", ""
         first = parts[0]
         last = " ".join(parts[1:]) if len(parts) > 1 else ""
-    return first.title(), last.title()
+    # Defensive cap matching the DB column width (varchar(100)) — a future
+    # extraction miss on the extension side should degrade to a truncated
+    # name, not a 500 from a raw DataError bubbling out of the DB driver.
+    return first.title()[:100], last.title()[:100]
 
 
 def _extract_contact_info(screener_answers: List[ScreenerAnswer]) -> tuple[Optional[str], Optional[str]]:
@@ -240,7 +243,7 @@ def sync_candidate(
 
     candidate.first_name = first_name
     candidate.last_name = last_name
-    candidate.location = payload.location or candidate.location
+    candidate.location = (payload.location or candidate.location or "")[:150] or None
     candidate.indeed_profile_url = payload.indeed_profile_url or candidate.indeed_profile_url
     candidate.indeed_match_score = payload.indeed_match_score or candidate.indeed_match_score
     candidate.recruiting_summary_text = payload.recruiting_summary or candidate.recruiting_summary_text

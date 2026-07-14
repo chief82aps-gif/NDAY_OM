@@ -172,6 +172,15 @@ function readDecisionFromGroup(buttons) {
  * such ancestor is found (e.g. on the single-candidate detail view, which
  * has no row checkbox). */
 function findCandidateCard(buttonGroupParent) {
+  // Detail page: this exact container ID scopes precisely to the currently
+  // viewed candidate, unlike any generic DOM-walking heuristic — some detail
+  // layouts run a sidebar list of OTHER candidates alongside the main panel,
+  // and a fuzzy walk-up can land on a container wide enough to include it.
+  const profileContainer = document.getElementById("candidateProfileContainer");
+  if (profileContainer && profileContainer.contains(buttonGroupParent)) {
+    return profileContainer;
+  }
+
   let node = buttonGroupParent;
   for (let i = 0; i < 8 && node; i++) {
     const hasCheckbox = node.querySelector('input[type="checkbox"]');
@@ -179,7 +188,7 @@ function findCandidateCard(buttonGroupParent) {
     if (hasCheckbox && hasHeading) return node;
     node = node.parentElement;
   }
-  // Detail page (no checkbox on the page) — climb a fixed number of levels
+  // No checkbox found anywhere reachable — climb a fixed number of levels
   // instead, or fall back to document.body.
   node = buttonGroupParent;
   for (let i = 0; i < 5 && node; i++) {
@@ -191,7 +200,13 @@ function findCandidateCard(buttonGroupParent) {
 
 function extractName(card) {
   const heading = card.querySelector("h1, h2, h3");
-  return heading ? heading.textContent.trim() : "";
+  // innerText (not textContent) for the same reason as the screener/summary
+  // extraction — avoids gluing adjacent elements' text together with no
+  // whitespace. Also hard-capped: this only ever feeds a varchar(100)
+  // database column, so a future extraction miss degrades to a truncated
+  // name instead of crashing the whole sync request.
+  const name = heading ? heading.innerText.trim() : "";
+  return name.slice(0, 95);
 }
 
 function extractCandidateId(card) {

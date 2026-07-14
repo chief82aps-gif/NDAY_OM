@@ -791,6 +791,125 @@ def post_assignment_matrix(shift_date: date, db: Session, force: bool = False) -
         return {"status": "error", "detail": str(exc)}
 
 
+def post_driver_summary_matrix(shift_date: date, db: Session, force: bool = False) -> dict:
+    """
+    Post a #nday-mgt table containing every field each driver's individual
+    DM would show (Route, Van, Staging, Showtime, Wave, Est. Return, ACE
+    Eligibility — content spec: Governance/DRIVER_DM_CONTENT_RULES.md),
+    grouped by wave with the wave lead noted per group.
+
+    Stand-in for the real per-driver DMs while driver Slack-linking is
+    incomplete (see /drivers — 0 linked as of 2026-07-14) — management gets
+    full visibility into exactly what drivers would receive, without
+    needing a Slack account on file for each one. Gated by ROSTERING_ACTIVE
+    (management-facing, like the route summary matrix) — NOT DRIVER_DM_ACTIVE,
+    since nothing here is sent to a driver.
+
+    Idempotent per shift_date via a synthetic SlackIngestLog entry, same
+    pattern as post_assignment_matrix().
+    """
+    if not _ACTIVE:
+        return {"status": "inactive", "note": "Set ROSTERING_ACTIVE=true on Render to enable"}
+
+    fake_id = f"driver_summary_matrix_{shift_date.isoformat()}"
+    existing_log = db.query(SlackIngestLog).filter(SlackIngestLog.slack_file_id == fake_id).first()
+    if existing_log:
+        if not force:
+            return {"status": "already_posted", "date": shift_date.isoformat()}
+        db.delete(existing_log)
+        db.commit()
+
+    assignments = (
+        db.query(DailyRouteAssignment)
+        .filter(
+            DailyRouteAssignment.assignment_date == shift_date,
+            DailyRouteAssignment.driver_name != None,
+            DailyRouteAssignment.driver_name != "",
+        )
+        .all()
+    )
+    if not assignments:
+        return {"status": "no_assignments", "date": shift_date.isoformat()}
+
+    def _sort_key(a):
+        wave_dt = _parse_wave_dt(a.wave or "")
+        return (wave_dt is None, wave_dt or datetime.max, _first_name(a.driver_name).lower())
+
+    assignments.sort(key=_sort_key)
+
+    client = _slack_client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    date_str = shift_date.strftime("%A, %B %-d")
+
+    blocks = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": f"📋 Driver Summary — {date_str}", "emoji": True},
+        },
+        {
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": "_Every field each driver's individual DM shows. Sent here while driver Slack-linking is incomplete._"}],
+        },
+    ]
+
+    col_header = f"{'Driver':<22} {'Route':<8} {'Van':<9} {'Staging':<12} {'Showtime':<9} {'Return':<9} {'ACE'}"
+
+    def _flush(wave_label: str, rows: list[str]):
+        if not rows:
+            return
+        wave_lead_name, _ = _wave_lead_name(shift_date)
+        header = f"Wave {wave_label} · Wave Lead: {wave_lead_name}" if wave_label else "Wave Unassigned"
+        table = "\n".join([col_header, "-" * len(col_header)] + rows)
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*{header}*\n```{table}```"},
+        })
+
+    wave_rows: list[str] = []
+    active_wave = None
+    first_group = True
+    for a in assignments:
+        wave_label = a.wave or ""
+        if not first_group and wave_label != active_wave:
+            _flush(active_wave, wave_rows)
+            wave_rows = []
+        active_wave = wave_label
+        first_group = False
+        name = _full_name(a.driver_name)
+        showtime = _calc_showtime(a.wave) or "—"
+        return_time = _calc_return_time(a.wave or "", a.route_duration) or "—"
+        wave_rows.append(
+            f"{name:<22} {a.route_code or '—':<8} {a.van_number or '—':<9} {a.stage_location or '—':<12} {showtime:<9} {return_time:<9} TBD"
+        )
+    _flush(active_wave, wave_rows)
+
+    blocks.append({
+        "type": "context",
+        "elements": [{"type": "mrkdwn", "text": f"_Posted by NDAY Route Manager · {datetime.utcnow().strftime('%H:%M UTC')}_"}],
+    })
+
+    try:
+        client.chat_postMessage(
+            channel=MGT_CHANNEL,
+            text=f"Driver Summary — {date_str}",
+            blocks=blocks,
+        )
+        db.add(SlackIngestLog(
+            ingest_date=shift_date,
+            file_type="driver_summary_matrix",
+            slack_file_id=fake_id,
+            filename=fake_id,
+            processed_at=datetime.utcnow(),
+        ))
+        db.commit()
+        return {"status": "posted", "date": shift_date.isoformat(), "drivers": len(assignments)}
+    except Exception as exc:
+        logger.error("Driver summary matrix post failed: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+
 # ─── Wave lead notifications ─────────────────────────────────────────────────
 
 def _wave_assignments(shift_date: date, wave_time_str: str, db: Session) -> list:
@@ -1632,6 +1751,18 @@ def trigger_assignment_matrix(shift_date: str, force: bool = False, db: Session 
     except ValueError:
         raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
     return post_assignment_matrix(target, db, force=force)
+
+
+@router.post("/driver-summary-matrix/{shift_date}")
+def trigger_driver_summary_matrix(shift_date: str, force: bool = False, db: Session = Depends(get_db)):
+    """Post the #nday-mgt driver summary (every field each driver's DM would
+    show) for shift_date. Meant to run concurrently with the route summary
+    matrix. Pass ?force=true to re-post."""
+    try:
+        target = date.fromisoformat(shift_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
+    return post_driver_summary_matrix(target, db, force=force)
 
 
 @router.get("/suggested/{shift_date}")

@@ -78,6 +78,27 @@ a related one). **Until that module exists, every driver's DM shows
 computation. Do not attempt to derive real eligibility logic without a
 new explicit decision; the placeholder is intentional, not a bug.
 
+## Interim stand-in: Driver Summary Matrix (while Slack-linking is incomplete)
+
+As of 2026-07-14, **0 of 102 drivers have a linked Slack account**
+(`DriverRosterEntry.slack_member_id`) — checked via `/drivers`. Real
+per-driver DMs can't reach anyone until that's resolved (see
+`scripts/import_ssn_slack.py`, not yet run/wrapped as an endpoint).
+
+Until then, `post_driver_summary_matrix()` (`api/src/routes/rostering.py`,
+`POST /rostering/driver-summary-matrix/{shift_date}`) posts every field
+from this doc's "Current fields" table — Driver, Route, Van, Staging,
+Showtime, Est. Return, plus ACE Eligibility (`TBD`) — as one table to
+`#nday-mgt`, grouped by wave with the wave lead noted per group. This is
+a management-visibility stand-in, **not** a driver-facing send — it's
+gated by `ROSTERING_ACTIVE` (management-facing), not `DRIVER_DM_ACTIVE`,
+since nothing goes to an individual driver. Meant to run alongside
+`post_assignment_matrix()` (the route summary matrix) each morning.
+
+**Once driver Slack-linking is resolved and real per-driver DMs go live**,
+re-evaluate whether this stand-in should keep running — decide explicitly
+rather than leaving two overlapping mgt-channel posts by default.
+
 ## Adding or changing a field
 
 Any change to what this DM contains — adding, removing, or changing how

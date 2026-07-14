@@ -66,3 +66,4 @@ Use this index to quickly locate governing standards, ingest rules, audit rules,
 | EOD Survey | `routes/eod_survey.py` | `/eod-survey` | ✅ |
 | Driver Quality Rankings | `routes/quality.py` | `/driver-quality` | ✅ |
 | Route Assignment Board | `routes/route_assignment.py` | `/route-assignment` | ✅ 2026-07-03 |
+| Safety Events (Netradyne) | `routes/safety_events.py` | *(no page yet — API only)* | ✅ 2026-07-14 |

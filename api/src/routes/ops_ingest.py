@@ -150,6 +150,7 @@ _TYPE_LABELS = {
     "weekly_incentive":  "Weekly Incentive (PDF)",
     "dsp_scorecard":     "DSP Scorecard (PDF)",
     "pod_report":        "POD Report (PDF)",
+    "safety_events":     "Safety Dashboard / Netradyne Events (CSV)",
     "unknown":           "Unknown — needs manual review",
 }
 
@@ -167,6 +168,8 @@ def _classify(filename: str, message: str, channel_id: str = "") -> str:
     if ext == ".csv":
         if any(k in combined for k in ("okami", "capacity forecast", "capacity_forecast", "next day capacity")):
             return "okami_capacity"
+        if any(k in combined for k in ("safety_dashboard", "safety dashboard", "netradyne")):
+            return "safety_events"
         if any(k in combined for k in ("vehicledata", "vehiclesdata", "vehicle data", "vehicles data", "vehicle_data", "fleet", "daily fleet")):
             return "fleet"
         if any(k in combined for k in ("quality", "trailing", "overview", "scorecard")):
@@ -298,6 +301,11 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
     if t == "quality_csv":
         from api.src.routes.quality import _store_quality_metrics
         return _store_quality_metrics(content, job.file_name, job.slack_file_id, db)
+
+    # ── Safety Dashboard / Netradyne Events CSV ──────────────────────────────
+    if t == "safety_events":
+        from api.src.routes.safety_events import _store_safety_events
+        return _store_safety_events(content, job.file_name, job.slack_file_id, db)
 
     # ── Cortex Routes Excel ──────────────────────────────────────────────────
     if t == "cortex":

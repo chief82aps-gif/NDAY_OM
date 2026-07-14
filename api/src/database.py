@@ -1355,6 +1355,22 @@ class CalloutQueue(Base):
     last_reminder_at = Column(DateTime)
 
 
+class TimeOffRequest(Base):
+    """One row per driver-submitted RTO/PTO request via the Slack Home tab.
+    Bare-bones v1: no approval workflow, just a pending record + Slack notification."""
+    __tablename__ = "time_off_requests"
+
+    id              = Column(Integer, primary_key=True)
+    driver_name     = Column(String(255), nullable=False, index=True)
+    slack_member_id = Column(String(20))
+    request_type    = Column(String(20))        # PTO | UTO | Unpaid
+    start_date      = Column(Date, nullable=False)
+    end_date        = Column(Date, nullable=False)
+    reason          = Column(Text)
+    status          = Column(String(20), default="pending", index=True)  # pending | reviewed
+    created_at      = Column(DateTime, default=datetime.utcnow)
+
+
 class SlackIngestLog(Base):
     """Tracks files detected and processed from the Slack channel.
     slack_file_id unique constraint prevents re-processing the same file."""
@@ -2345,6 +2361,36 @@ class ReminderThrottleState(Base):
     reminder_key = Column(String(100), nullable=False, unique=True, index=True)
     state = Column(JSON, nullable=False, default=dict)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class SafetyEvent(Base):
+    """Netradyne driving-safety event (speeding, roadside parking, etc.)
+    from the "Safety Dashboard" CSV export — added 2026-07-14, first
+    ingested file: Safety_Dashboard_NDAY_DLV3_2026-07-13.csv.
+
+    One row per real-world safety event, deduped by Netradyne's own
+    event_id (unique) — the export is a rolling window, so the same event
+    can appear in multiple overlapping uploads; event_id is the natural
+    dedup key rather than date+driver (a driver can have multiple events
+    on the same day).
+    """
+    __tablename__ = "safety_events"
+
+    id = Column(Integer, primary_key=True)
+    event_id = Column(String(50), nullable=False, unique=True, index=True)   # Netradyne's own ID
+    report_date = Column(Date, nullable=False, index=True)                    # "Date" column — export date
+    driver_name = Column(String(150), index=True)                            # "Delivery Associate"
+    transporter_id = Column(String(50), index=True)
+    event_at = Column(DateTime)                                              # "Date (Station Local Time)"
+    vin = Column(String(50))
+    program_impact = Column(String(200))       # raw, e.g. "Scorecard, ORCAS" — comma-separated, not split
+    metric_type = Column(String(100), index=True)     # e.g. "Speeding", "Roadside Parking"
+    metric_subtype = Column(String(150))               # e.g. "Above Posted Speed Limit"
+    source = Column(String(50))                # e.g. "Netradyne", "Netradyne on Fleet Edge"
+    video_link = Column(String(500))
+    review_details = Column(Text)
+    source_file = Column(String(255))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 def get_reminder_state(db, reminder_key: str) -> dict:

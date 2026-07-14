@@ -12,12 +12,16 @@ it without disruption (see the `source` column: "adp_import" |
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
+from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 
 from api.src.database import get_db, DriverRosterEntry, flag_stale_driver_profiles
+from api.src.driver_matching import load_ssn, load_slack, best_ssn_match, best_slack_match
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/drivers", tags=["drivers"])
@@ -77,3 +81,89 @@ def recompute_stale(days: int = 30, db: Session = Depends(get_db)):
     normally this runs automatically on every schedule ingest."""
     flagged = flag_stale_driver_profiles(db, days=days)
     return {"status": "ok", "days": days, "newly_flagged": flagged}
+
+
+@router.post("/import-ssn-slack")
+def import_ssn_slack(
+    dry_run: bool = True,
+    ssn_file: Optional[UploadFile] = File(None),
+    slack_file: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Fuzzy-match the driver roster against an SSN export (real callout PINs)
+    and/or a Slack workspace member export (Slack IDs for driver DMs), and
+    populate ssn_last4 / slack_member_id / slack_verified accordingly.
+
+    Matching logic: api/src/driver_matching.py (shared with
+    scripts/import_ssn_slack.py, the local-CLI equivalent — this endpoint
+    is the preferred way to run it against production since it doesn't
+    require handing raw DB credentials to a local script).
+
+    Pass at least one of ssn_file / slack_file. Defaults to dry_run=true —
+    pass ?dry_run=false to actually write changes.
+    """
+    if not ssn_file and not slack_file:
+        raise HTTPException(400, "Provide at least one of ssn_file or slack_file.")
+
+    ssn_path = slack_path = None
+    try:
+        if ssn_file:
+            with tempfile.NamedTemporaryFile(suffix=os.path.splitext(ssn_file.filename or "")[1] or ".xlsx", delete=False) as tmp:
+                tmp.write(ssn_file.file.read())
+                ssn_path = tmp.name
+        if slack_file:
+            with tempfile.NamedTemporaryFile(suffix=os.path.splitext(slack_file.filename or "")[1] or ".xlsx", delete=False) as tmp:
+                tmp.write(slack_file.file.read())
+                slack_path = tmp.name
+
+        ssn_rows = load_ssn(ssn_path) if ssn_path else []
+        slack_rows = load_slack(slack_path) if slack_path else []
+
+        roster = db.query(DriverRosterEntry).filter(DriverRosterEntry.is_active == True).all()
+
+        ssn_hits: list[dict] = []
+        ssn_misses = 0
+        slack_hits: list[dict] = []
+        slack_misses = 0
+
+        for entry in roster:
+            name = entry.payroll_name
+
+            if ssn_rows:
+                last4, score = best_ssn_match(name, ssn_rows)
+                if last4:
+                    ssn_hits.append({"driver": name, "score": round(score, 2), "pin": last4})
+                    if not dry_run:
+                        entry.ssn_last4 = last4
+                else:
+                    ssn_misses += 1
+
+            if slack_rows:
+                uid, display, score = best_slack_match(name, slack_rows)
+                if uid:
+                    slack_hits.append({"driver": name, "score": round(score, 2), "slack_id": uid, "slack_display": display})
+                    if not dry_run:
+                        entry.slack_member_id = uid
+                        entry.slack_display_name = display
+                        entry.slack_verified = True
+                        entry.slack_verified_at = datetime.utcnow()
+                else:
+                    slack_misses += 1
+
+        if not dry_run:
+            db.commit()
+
+        return {
+            "status": "applied" if not dry_run else "dry_run",
+            "roster_size": len(roster),
+            "ssn": {"matched": len(ssn_hits), "unmatched": ssn_misses, "sample": ssn_hits[:10]} if ssn_rows else None,
+            "slack": {"matched": len(slack_hits), "unmatched": slack_misses, "sample": slack_hits[:10]} if slack_rows else None,
+        }
+    finally:
+        for p in (ssn_path, slack_path):
+            if p:
+                try:
+                    os.unlink(p)
+                except Exception:
+                    pass

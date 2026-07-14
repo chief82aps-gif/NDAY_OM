@@ -130,20 +130,24 @@ function extractWorkExperience(card) {
 }
 
 function extractScreenerAnswers() {
-  // Screener Q&A on Indeed's detail page typically alternates a question
-  // label and an answer value in adjacent block elements. This grabs every
-  // heading-like element followed by the next text block as a Q/A pair.
-  const answers = [];
-  const candidates = Array.from(document.querySelectorAll("div, section"));
-  for (const node of candidates) {
-    const text = node.textContent || "";
-    if (text.length > 300) continue; // skip huge wrapper containers
-    const qMatch = text.match(/^(.*\?)\s*(.*)$/s);
-    if (qMatch && qMatch[1] && qMatch[2]) {
-      answers.push({ question: qMatch[1].trim(), answer: qMatch[2].trim() });
-    }
+  // Screener questions aren't reliably phrased with a "?" (e.g. "Please
+  // provide a valid email address.") so trying to precisely pair each
+  // question with its answer is more fragile than it needs to be — the
+  // only thing this data is ever used for (client-side and server-side)
+  // is regex-matching phone/email out of the text. Just grab the whole
+  // "Screener questions" section as one blob and let the regex do the work.
+  const headings = Array.from(document.querySelectorAll("h1, h2, h3, h4"));
+  const heading = headings.find((h) => /screener questions/i.test(h.textContent || ""));
+  if (!heading) return [];
+
+  // Walk up from the heading until the container is wide enough to include
+  // the actual answers below it, not just the heading itself.
+  let container = heading.closest("section") || heading.parentElement;
+  for (let i = 0; i < 5 && container && container.textContent.trim().length < 200; i++) {
+    container = container.parentElement;
   }
-  return answers;
+  const text = container ? container.textContent.trim().slice(0, 5000) : "";
+  return text ? [{ question: "Screener questions section", answer: text }] : [];
 }
 
 function extractRecruitingSummary() {

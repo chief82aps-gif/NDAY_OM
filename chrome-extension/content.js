@@ -12,6 +12,102 @@
  */
 
 const SENTIMENT_ATTR_PREFIX = "ApplicantSentiment-";
+
+// Message template automation — calibrated 2026-07-14. Assumes the
+// candidate's messaging panel is already open (HR opens it the normal way);
+// this only automates Templates → pick one → Send from there.
+const MESSAGE_TEMPLATES = [
+  "10 DRIVER Quick Hire",
+  "20 Interview request from HR",
+  "30 Answer These Questions Please",
+  "40 Do you live in this area?",
+  "45 Request For Work History",
+  "50 Why do you keep applying?",
+  "60 We Are Trying To Reach You",
+  "70 Background Requirements",
+  "First Contact",
+  "Initial message",
+  "IPI",
+  "LRS template",
+  "Not yet 21",
+];
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function showTemplatePicker(candidateName) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.id = "ndl-template-picker-overlay";
+
+    const box = document.createElement("div");
+    box.id = "ndl-template-picker-box";
+
+    const title = document.createElement("div");
+    title.id = "ndl-template-picker-title";
+    title.textContent = `Send a message to ${candidateName}?`;
+    box.appendChild(title);
+
+    MESSAGE_TEMPLATES.forEach((name) => {
+      const btn = document.createElement("button");
+      btn.className = "ndl-template-picker-option";
+      btn.textContent = name;
+      btn.addEventListener("click", () => {
+        overlay.remove();
+        resolve(name);
+      });
+      box.appendChild(btn);
+    });
+
+    const skip = document.createElement("button");
+    skip.id = "ndl-template-picker-skip";
+    skip.textContent = "Skip — don't send a message";
+    skip.addEventListener("click", () => {
+      overlay.remove();
+      resolve(null);
+    });
+    box.appendChild(skip);
+
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+  });
+}
+
+/** Opens Templates, picks the named one, and clicks Send — assumes the
+ * candidate's messaging panel is already open on the page. */
+async function sendTemplateMessage(templateName) {
+  const templatesButton = document.querySelector('[data-testid="templates-menu-remote-module"]');
+  if (!templatesButton) {
+    alert(
+      "NDL Hiring Sync: couldn't find the Templates button — open this " +
+      "candidate's message panel first, then try again."
+    );
+    return false;
+  }
+  templatesButton.click();
+  await wait(500);
+
+  const templateRow = Array.from(
+    document.querySelectorAll('[data-testid="templates-menu-item"] [role="button"]')
+  ).find((el) => (el.getAttribute("aria-label") || "").trim() === templateName);
+  if (!templateRow) {
+    console.warn(`[NDL Sync] template "${templateName}" not found in the menu`);
+    alert(`NDL Hiring Sync: couldn't find the "${templateName}" template — check it still exists in Indeed.`);
+    return false;
+  }
+  templateRow.click();
+  await wait(800);
+
+  const sendButton = document.querySelector('[data-testid="indeed-messaging--ComposeBox__sendButton"]');
+  if (!sendButton || sendButton.getAttribute("aria-disabled") === "true") {
+    alert("NDL Hiring Sync: template was inserted but Send isn't ready yet — please review and click Send manually.");
+    return false;
+  }
+  sendButton.click();
+  return true;
+}
+
 const PHONE_RE = /(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/;
 const EMAIL_RE = /[\w.+-]+@[\w-]+\.[\w.-]+/;
 
@@ -260,8 +356,15 @@ async function syncAll() {
     }
     const result = await postCandidate(payload);
     if (result === null) return; // extension key not configured — postCandidate already alerted
-    if (result && !result.error) synced++;
-    else failed++;
+    if (result && !result.error) {
+      synced++;
+      const templateName = await showTemplatePicker(payload.raw_name);
+      if (templateName) {
+        await sendTemplateMessage(templateName);
+      }
+    } else {
+      failed++;
+    }
   }
 
   alert(

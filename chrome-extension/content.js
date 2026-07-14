@@ -12,6 +12,13 @@
  */
 
 const SENTIMENT_ATTR_PREFIX = "ApplicantSentiment-";
+const PHONE_RE = /(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/;
+const EMAIL_RE = /[\w.+-]+@[\w-]+\.[\w.-]+/;
+
+function hasContactInfo(screenerAnswers) {
+  const combined = (screenerAnswers || []).map((a) => a.answer).join(" ");
+  return PHONE_RE.test(combined) || EMAIL_RE.test(combined);
+}
 
 function getStoredConfig() {
   return new Promise((resolve) => {
@@ -211,6 +218,18 @@ async function syncAll() {
     return;
   }
 
+  // On a list page, phone/email are never available (screener answers only
+  // exist on the individual candidate page) — warn once for the whole batch
+  // rather than once per candidate, since it's expected here every time.
+  if (!isDetailPage()) {
+    const proceed = confirm(
+      "This is a list view — phone and email can't be captured here (only " +
+      "available on each candidate's individual page). Continue syncing " +
+      "name and work history only for the reviewed candidates?"
+    );
+    if (!proceed) return;
+  }
+
   let synced = 0, skipped = 0, failed = 0;
   for (const buttons of groups) {
     const decision = readDecisionFromGroup(buttons);
@@ -224,13 +243,27 @@ async function syncAll() {
       failed++;
       continue;
     }
+    // On the detail page, phone/email SHOULD be extractable — if they're
+    // not, that's worth flagging per-candidate rather than silently pushing
+    // a contact-less record (unlike the list-page case above, which is
+    // structurally expected every time).
+    if (isDetailPage() && !hasContactInfo(payload.screener_answers)) {
+      const proceed = confirm(
+        `No phone number or email was found for "${payload.raw_name}". ` +
+        `Sync anyway without contact info?`
+      );
+      if (!proceed) {
+        skipped++;
+        continue;
+      }
+    }
     const result = await postCandidate(payload);
     if (result === null) return; // extension key not configured — postCandidate already alerted
     if (result && !result.error) synced++;
     else failed++;
   }
 
-  alert(`NDL Hiring Sync: ${synced} synced, ${skipped} skipped (no decision / rejected), ${failed} failed. Check console for details.`);
+  alert(`NDL Hiring Sync: ${synced} synced, ${skipped} skipped (no decision / rejected / cancelled), ${failed} failed. Check console for details.`);
 }
 
 function injectSyncButton() {

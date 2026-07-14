@@ -394,10 +394,10 @@ async function syncAll() {
     if (result === null) return; // extension key not configured — postCandidate already alerted
     if (result && !result.error) {
       synced++;
-      const templateName = await showTemplatePicker(payload.raw_name);
-      if (templateName) {
-        await sendTemplateMessage(templateName);
-      }
+      // Message-template automation suppressed 2026-07-14 — added too much
+      // latency per candidate. Code kept below (showTemplatePicker /
+      // sendTemplateMessage) in case it's worth re-enabling later; just
+      // not called from here for now.
     } else {
       failed++;
     }

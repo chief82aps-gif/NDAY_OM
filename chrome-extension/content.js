@@ -74,16 +74,36 @@ function showTemplatePicker(candidateName) {
   });
 }
 
-/** Opens Templates, picks the named one, and clicks Send — assumes the
- * candidate's messaging panel is already open on the page. */
+/** Indeed doesn't expose a stable data-testid/aria-label for the button
+ * that opens a candidate's messaging panel — it's plain "Message" or "Send
+ * message" text with no other marker, and varies between the list and
+ * detail views. Match on visible text instead of chasing an exact selector. */
+function findMessageOpenerButton() {
+  const buttons = Array.from(document.querySelectorAll("button"));
+  return buttons.find((b) => /^(message|send message)$/i.test((b.textContent || "").trim()));
+}
+
+/** Ensures the messaging panel is open, then opens Templates, picks the
+ * named one, and clicks Send. */
 async function sendTemplateMessage(templateName) {
-  const templatesButton = document.querySelector('[data-testid="templates-menu-remote-module"]');
+  let templatesButton = document.querySelector('[data-testid="templates-menu-remote-module"]');
+
   if (!templatesButton) {
-    alert(
-      "NDL Hiring Sync: couldn't find the Templates button — open this " +
-      "candidate's message panel first, then try again."
-    );
-    return false;
+    const opener = findMessageOpenerButton();
+    if (!opener) {
+      alert(
+        "NDL Hiring Sync: couldn't find a way to open the message panel " +
+        "automatically — please open it yourself, then try sending again."
+      );
+      return false;
+    }
+    opener.click();
+    await wait(1200); // panel render + Templates button mount
+    templatesButton = document.querySelector('[data-testid="templates-menu-remote-module"]');
+    if (!templatesButton) {
+      alert("NDL Hiring Sync: opened the message panel, but couldn't find the Templates button — please pick a template manually.");
+      return false;
+    }
   }
   templatesButton.click();
   await wait(500);

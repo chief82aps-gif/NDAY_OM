@@ -143,10 +143,14 @@ function extractScreenerAnswers() {
   // Walk up from the heading until the container is wide enough to include
   // the actual answers below it, not just the heading itself.
   let container = heading.closest("section") || heading.parentElement;
-  for (let i = 0; i < 5 && container && container.textContent.trim().length < 200; i++) {
+  for (let i = 0; i < 5 && container && container.innerText.trim().length < 200; i++) {
     container = container.parentElement;
   }
-  const text = container ? container.textContent.trim().slice(0, 5000) : "";
+  // innerText (not textContent) — textContent concatenates separate block
+  // elements with no whitespace, which ran sentences together and made the
+  // greedy phone/email regex over-match across boundaries (e.g. "...valid
+  // email address.brandy_cragg@yahoo.comPlease provide..." all as one token).
+  const text = container ? container.innerText.trim().slice(0, 5000) : "";
   return text ? [{ question: "Screener questions section", answer: text }] : [];
 }
 
@@ -155,7 +159,7 @@ function extractRecruitingSummary() {
   const summaryHeading = headings.find((h) => /recruiting assistant/i.test(h.textContent || ""));
   if (!summaryHeading) return "";
   const container = summaryHeading.closest("section, div");
-  return container ? container.textContent.trim().slice(0, 2000) : "";
+  return container ? container.innerText.trim().slice(0, 2000) : "";
 }
 
 function extractMatchScore(card) {

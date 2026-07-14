@@ -218,19 +218,21 @@ async function syncAll() {
     return;
   }
 
-  // On a list page, phone/email are never available (screener answers only
-  // exist on the individual candidate page) — warn once for the whole batch
-  // rather than once per candidate, since it's expected here every time.
+  // Hard requirement: never create an Asana card without contact info.
+  // Phone/email only exist in screener answers on the individual candidate
+  // page, so a plain list-page sync can never satisfy this — block it
+  // outright rather than offering a bypass.
   if (!isDetailPage()) {
-    const proceed = confirm(
-      "This is a list view — phone and email can't be captured here (only " +
-      "available on each candidate's individual page). Continue syncing " +
-      "name and work history only for the reviewed candidates?"
+    alert(
+      "NDL Hiring Sync: candidates can only be synced from their individual " +
+      "profile page, not the list view — phone/email (required before a " +
+      "card is created) only exist there. Open each candidate and click " +
+      "Sync from their profile."
     );
-    if (!proceed) return;
+    return;
   }
 
-  let synced = 0, skipped = 0, failed = 0;
+  let synced = 0, skipped = 0, failed = 0, blocked = 0;
   for (const buttons of groups) {
     const decision = readDecisionFromGroup(buttons);
     if (!decision || decision === "reject") {
@@ -243,19 +245,10 @@ async function syncAll() {
       failed++;
       continue;
     }
-    // On the detail page, phone/email SHOULD be extractable — if they're
-    // not, that's worth flagging per-candidate rather than silently pushing
-    // a contact-less record (unlike the list-page case above, which is
-    // structurally expected every time).
-    if (isDetailPage() && !hasContactInfo(payload.screener_answers)) {
-      const proceed = confirm(
-        `No phone number or email was found for "${payload.raw_name}". ` +
-        `Sync anyway without contact info?`
-      );
-      if (!proceed) {
-        skipped++;
-        continue;
-      }
+    if (!hasContactInfo(payload.screener_answers)) {
+      console.warn(`[NDL Sync] blocked — no phone/email found for "${payload.raw_name}"`);
+      blocked++;
+      continue;
     }
     const result = await postCandidate(payload);
     if (result === null) return; // extension key not configured — postCandidate already alerted
@@ -263,7 +256,10 @@ async function syncAll() {
     else failed++;
   }
 
-  alert(`NDL Hiring Sync: ${synced} synced, ${skipped} skipped (no decision / rejected / cancelled), ${failed} failed. Check console for details.`);
+  alert(
+    `NDL Hiring Sync: ${synced} synced, ${skipped} skipped (no decision / rejected), ` +
+    `${blocked} blocked (no contact info found), ${failed} failed. Check console for details.`
+  );
 }
 
 function injectSyncButton() {

@@ -41,23 +41,22 @@ Phase 1 is the only phase currently scoped for build. Phases 2–3 are documente
 ### 4.1 Why an extension, not server-side polling
 Indeed gives no public API/webhook to this account. A server-side headless scraper (e.g. on Render, which hosts the NDAY_OM backend) was considered and rejected for Phase 1: automated logins from a datacenter IP are far more likely to trip Indeed's bot/fraud detection than a real person browsing normally, risking the employer account. A human-in-the-loop browser extension avoids that risk entirely — HR does the reviewing they'd do anyway; the extension only automates the data-entry step afterward.
 
-### 4.2 Two page types, two sync actions
+### 4.2 Two page types, one sync action (hard contact-info requirement)
 
-**A. Candidates list page — bulk triage sync**
-- Indeed's own review UI already has three per-candidate actions: ✓ (shortlist/accept), ? (undecided), ✗ (reject).
-- Extension injects a single **"Sync to Asana"** button.
-- On click, content script walks every visible candidate row, reads which of the three states is currently selected, and batches the result.
-- Rule set:
+**Decision, 2026-07-14:** an Asana card is never created without a phone number or email. The extension originally allowed a "bulk triage" sync from the list page (name + work history only, no contact info) with a bypassable warning — that bypass was removed. A card only gets created from the **individual candidate detail page**, where phone/email are actually extractable from the screener answers.
+
+- Indeed's own review UI has three per-candidate actions: ✓ (shortlist/accept, `data-testid="ApplicantSentiment-yes"`), ? (undecided, `-maybe`), ✗ (reject, `-no`) — confirmed via live DOM inspection, selection state read from `data-is-selected`/`aria-pressed`.
+- **List page**: clicking Sync is refused outright with an explanatory alert — phone/email structurally don't exist on this view, so no card is created here at all anymore. (List page is still useful for HR to do the actual ✓/?/✗ triage; the sync step just has to happen per-candidate afterward.)
+- **Detail page**: extension injects a **"Sync to Asana"** button. On click, if screener-answer text yields neither a phone nor email match, the sync is blocked per-candidate (console warning, counted separately in the summary alert) rather than creating a contact-less card.
+- Rule set (detail page only):
   | Indeed action | Asana result |
   |---|---|
   | ✗ Reject | Do nothing |
   | ? Undecided | Create/update card in **"Undecided in Indeed"** column |
   | ✓ Accept | Create/update card in **"1st Contact/Interview"** column |
-- List view only exposes name, location, and work-experience summary — not phone/email.
 
-**B. Candidate detail page — contact-info sync**
-- Extension injects a second **"Sync"** button on the individual candidate profile page.
-- Same ✓/?/✗ buttons are present here too; same rule set applies.
+**Candidate detail page — the only sync path**
+- Extension injects a **"Sync to Asana"** button on the individual candidate profile page.
 - Full contact info is captured here via the **Screener questions** section — Indeed does not expose phone/email as a fixed structured field, they appear as free-text answers to employer-configured questions (e.g. "PLEASE PROVIDE A CURRENT WORKING PHONE NUMBER", "...EMAIL ADDRESS"). Because question wording can change across job postings, extraction must scan *all* screener Q&A answer text and pattern-match with a phone regex and an email regex, not match on question label text.
 - Also capture from this page (for the candidate-analytics module, §6):
   - Full work-experience section (employer names + date ranges) → tenure calculation + keyword matching
@@ -137,7 +136,8 @@ Per `Governance/SRD_MODULE_ARCHITECTURE_v3.md`: one module owns its own route fi
 ## 9. Open items / risks
 
 - **Indeed ToS risk**: even the human-triggered extension approach involves programmatic DOM reading of Indeed's site; server-side polling (rejected for Phase 1) would carry materially higher account-risk. Revisit if Indeed changes their page structure or terms.
-- **Screener question fragility**: phone/email extraction depends on regex-matching answer values, not fixed field names, specifically because the screener questions are employer-configured and could be reworded. Needs a fallback/alert if a sync produces no matched phone or email (likely means either the question was reworded in a way the regex still fails, or the candidate didn't answer it).
+- **Screener question fragility**: phone/email extraction depends on regex-matching answer values, not fixed field names, specifically because the screener questions are employer-configured and could be reworded. **Resolved 2026-07-14**: rather than a soft fallback/alert, this is now a hard block — no phone/email match means no Asana card is created, full stop (§4.2).
+- **Asana project lookup by name is unreliable**: `GET /projects` didn't surface the "New Day Hiring" board by name in production (likely an API pagination/filter quirk), returning "project not found" on first live test. Fixed by adding `ASANA_HIRING_PROJECT_GID` env var (set to `1202834412268957`) which bypasses the name lookup entirely when present — this is now the required config, not just a fallback.
 - **Own email server dependency** (§7 step 4): fully automating the "candidate replies from their new email" step needs a mail server decision — not yet made.
 - **SMS/email provider not yet chosen** for Phase 2 (Twilio + SendGrid/SES suggested, not confirmed).
 - **Screening criteria and interview script**: to be supplied separately; will define the disqualification rules (e.g. felons, tow-truck-only drivers) referenced in §1 and the structured interview form referenced in §7 step 2.

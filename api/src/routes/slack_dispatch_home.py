@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from api.src.database import DriverRosterEntry
 from api.src.routes.document_routing import is_dispatch_staff
 from api.src.routes.slack_home import _client, _dm_driver
+from api.src.routes.slack_interactions import FRONTEND_URL
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +53,38 @@ def build_dispatch_home_view_blocks(db: Session) -> list:
             "elements": [
                 {
                     "type": "button",
+                    "action_id": "dispatch_open_okami",
+                    "text": {"type": "plain_text", "text": "📊 Enter OKAMI", "emoji": True},
+                    "style": "primary",
+                    "url": f"{FRONTEND_URL}/okami-capacity",
+                },
+                {
+                    "type": "button",
+                    "action_id": "dispatch_open_rescue",
+                    "text": {"type": "plain_text", "text": "🚨 Generate Rescue", "emoji": True},
+                    "style": "primary",
+                    "url": f"{FRONTEND_URL}/rescue/open",
+                },
+            ],
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
                     "action_id": "dispatch_remove_terminated_button",
                     "text": {"type": "plain_text", "text": "🗑️ Remove Terminated Employees", "emoji": True},
                     "style": "danger",
+                },
+            ],
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": "dispatch_preview_driver_home",
+                    "text": {"type": "plain_text", "text": "👁️ Preview Driver Home", "emoji": True},
                 },
             ],
         },
@@ -63,6 +93,77 @@ def build_dispatch_home_view_blocks(db: Session) -> list:
             "elements": [{"type": "mrkdwn", "text": "New Day Logistics · Dispatch tools"}],
         },
     ]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Preview Driver Home — lets a dispatch-staff account see the driver Home
+# tab without needing a second Slack login. Stateless: re-renders on demand
+# via these two buttons rather than persisting a "view mode" per user, so it
+# naturally resets to the normal role-based view (see slack_home.py's
+# _publish_home) the next time the tab is reopened fresh. Safe to show the
+# *real* interactive driver view here (not a placeholder) even while
+# DRIVER_DM_ACTIVE is off — every button underneath still checks that flag
+# independently in its own handler, so nothing can actually fire from a
+# preview.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sample_driver_for_preview(db: Session) -> Optional[DriverRosterEntry]:
+    """Best-effort representative driver for the preview — a dispatch
+    account usually isn't itself a linked driver, so there's nothing
+    driver-specific to show for the real viewer. Not meant to be a
+    particular/special driver, just a realistic-looking example."""
+    return (
+        db.query(DriverRosterEntry)
+        .filter(DriverRosterEntry.is_active == True, DriverRosterEntry.slack_member_id.isnot(None))  # noqa: E712
+        .order_by(DriverRosterEntry.payroll_name)
+        .first()
+    )
+
+
+def _handle_dispatch_preview_driver_home(payload: dict, db: Session) -> None:
+    user_id = payload.get("user", {}).get("id", "")
+    if not is_dispatch_staff(user_id, db):
+        return
+    client = _client()
+    if not client:
+        return
+
+    from api.src.routes.slack_home import build_home_view_blocks
+    sample = _sample_driver_for_preview(db)
+    driver_blocks = build_home_view_blocks(sample, db)
+
+    banner = {
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": f":eye: *Previewing the driver Home tab"
+                    f"{f' as {sample.payroll_name}' if sample else ''}.* This is what drivers see.",
+        },
+    }
+    back_button = {
+        "type": "actions",
+        "elements": [{
+            "type": "button",
+            "action_id": "dispatch_back_from_preview",
+            "text": {"type": "plain_text", "text": "← Back to Dispatch Home", "emoji": True},
+        }],
+    }
+    full_blocks = [banner, {"type": "divider"}] + driver_blocks + [back_button]
+    try:
+        client.views_publish(user_id=user_id, view={"type": "home", "blocks": full_blocks})
+    except Exception as exc:
+        logger.warning("Preview driver home publish failed for %s: %s", user_id, exc)
+
+
+def _handle_dispatch_back_from_preview(payload: dict, db: Session) -> None:
+    user_id = payload.get("user", {}).get("id", "")
+    client = _client()
+    if not client:
+        return
+    try:
+        client.views_publish(user_id=user_id, view={"type": "home", "blocks": build_dispatch_home_view_blocks(db)})
+    except Exception as exc:
+        logger.warning("Back-to-dispatch publish failed for %s: %s", user_id, exc)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

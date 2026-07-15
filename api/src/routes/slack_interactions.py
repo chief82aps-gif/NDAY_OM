@@ -483,6 +483,14 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
         from api.src.routes.slack_dispatch_home import _handle_dispatch_remove_terminated_button
         _handle_dispatch_remove_terminated_button(payload, db)
 
+    elif action_id == "dispatch_preview_driver_home":
+        from api.src.routes.slack_dispatch_home import _handle_dispatch_preview_driver_home
+        _handle_dispatch_preview_driver_home(payload, db)
+
+    elif action_id == "dispatch_back_from_preview":
+        from api.src.routes.slack_dispatch_home import _handle_dispatch_back_from_preview
+        _handle_dispatch_back_from_preview(payload, db)
+
     # Slack requires a 200 response within 3 seconds
     return {"ok": True}
 

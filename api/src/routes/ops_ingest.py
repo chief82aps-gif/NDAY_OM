@@ -780,6 +780,15 @@ def manual_scan(db: Session = Depends(get_db)):
     }
 
 
+@router.post("/misrouted-scan")
+def manual_misrouted_scan(db: Session = Depends(get_db)):
+    """Trigger an immediate misrouted-file scan, bypassing the background
+    watcher's 15-min throttle. Same read-only classification as
+    run_misrouted_file_watch() — for manual testing/verification. Returns
+    {"status": "inactive"} if MISROUTED_FILE_WATCH_ACTIVE isn't set."""
+    return check_misrouted_files(db)
+
+
 @router.post("/jobs/{job_id}/ingest")
 def ingest_job(job_id: int, db: Session = Depends(get_db)):
     """Download the Slack file and run it through the appropriate ingest handler."""

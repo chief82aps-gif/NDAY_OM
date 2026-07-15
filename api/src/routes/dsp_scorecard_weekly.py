@@ -66,9 +66,14 @@ def _slack_client():
 
 
 def _current_week_label() -> str:
-    """Return ISO-style week for today, e.g. '2026-W26'."""
+    """Return the ISO-style label of the week this Wednesday's scorecard
+    is expected to cover — the week that just ended, not the calendar
+    week today falls in. Amazon publishes on the Wednesday following a
+    Sunday-ending week, e.g. the scorecard published Wed 2026-07-15
+    (ISO week 29) covers Week 28 (2026-07-06 to 2026-07-12). Only ever
+    called from run_dsp_scorecard_reminder(), itself gated to Wednesdays."""
     today = date.today()
-    iso = today.isocalendar()
+    iso = (today - timedelta(days=7)).isocalendar()
     return f"{iso[0]}-W{iso[1]:02d}"
 
 

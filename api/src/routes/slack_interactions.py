@@ -246,8 +246,14 @@ def post_callout_button():
 
 
 def _driver_dashboard_hub_blocks() -> list:
-    """The single #driver-dashboard hub card: one message, one group of buttons."""
-    return [
+    """The single #driver-dashboard hub card: one message, one group of buttons.
+    Kept as a fallback alongside the Home tab (slack_home.py) — works even for
+    drivers not yet Slack-linked and needs no per-user config."""
+    team_id = os.getenv("SLACK_TEAM_ID")
+    app_id = os.getenv("SLACK_APP_ID")
+    home_deep_link = f"slack://app?team={team_id}&id={app_id}&tab=home" if team_id and app_id else None
+
+    blocks = [
         {
             "type": "header",
             "text": {"type": "plain_text", "text": "New Day Logistics - Driver Dashboard", "emoji": True},
@@ -269,9 +275,8 @@ def _driver_dashboard_hub_blocks() -> list:
                 },
                 {
                     "type": "button",
-                    "action_id": "btn_pto",
+                    "action_id": "home_rto_button",
                     "text": {"type": "plain_text", "text": "Request PTO", "emoji": True},
-                    "url": f"{FRONTEND_URL}/pto-request",
                 },
             ],
         },
@@ -283,12 +288,6 @@ def _driver_dashboard_hub_blocks() -> list:
                     "action_id": "btn_eod",
                     "text": {"type": "plain_text", "text": "End of Day Survey", "emoji": True},
                     "url": f"{FRONTEND_URL}/eod",
-                },
-                {
-                    "type": "button",
-                    "action_id": "btn_suggestions",
-                    "text": {"type": "plain_text", "text": "Suggestion Box", "emoji": True},
-                    "url": f"{FRONTEND_URL}/suggestions",
                 },
                 {
                     "type": "button",
@@ -306,6 +305,14 @@ def _driver_dashboard_hub_blocks() -> list:
             ],
         },
     ]
+
+    if home_deep_link:
+        blocks.insert(3, {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"✨ <{home_deep_link}|Open your full Driver Home> for your standing, quality scores, and more."},
+        })
+
+    return blocks
 
 
 @router.post("/sync-driver-dashboard")
@@ -345,6 +352,65 @@ def sync_driver_dashboard():
         raise HTTPException(500, str(exc))
 
 
+@router.post("/sync-dispatch-hub")
+def sync_dispatch_hub():
+    """Idempotent setup for the dispatch-staff channel hub card, same
+    find-or-post pattern as sync-driver-dashboard. Safe to call repeatedly."""
+    try:
+        from slack_sdk import WebClient
+        from api.src.routes.slack_dispatch_home import DISPATCH_HOME_CHANNEL_ID
+
+        token = os.getenv("SLACK_BOT_TOKEN")
+        if not token:
+            raise HTTPException(500, "SLACK_BOT_TOKEN not set.")
+        client = WebClient(token=token)
+
+        team_id = os.getenv("SLACK_TEAM_ID")
+        app_id = os.getenv("SLACK_APP_ID")
+        home_deep_link = f"slack://app?team={team_id}&id={app_id}&tab=home" if team_id and app_id else None
+
+        header_text = "New Day Logistics - Dispatch Home"
+        blocks = [
+            {"type": "header", "text": {"type": "plain_text", "text": header_text, "emoji": True}},
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": "Dispatch/ops tools live in the Dispatch Home tab now."},
+            },
+        ]
+        if home_deep_link:
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"✨ <{home_deep_link}|Open Dispatch Home>"},
+            })
+        blocks.append({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": "New Day Logistics LLC"}],
+        })
+        fallback_text = "New Day Logistics - Dispatch Home: dispatch/ops tools."
+
+        existing_ts = None
+        history = client.conversations_history(channel=DISPATCH_HOME_CHANNEL_ID, limit=50)
+        for msg in history.get("messages", []):
+            if not msg.get("bot_id"):
+                continue
+            has_marker = header_text in (msg.get("text") or "") or any(
+                header_text in (b.get("text", {}).get("text", "") or "")
+                for b in msg.get("blocks", []) if b.get("type") == "header"
+            )
+            if has_marker:
+                existing_ts = msg["ts"]
+                break
+
+        if existing_ts:
+            client.chat_update(channel=DISPATCH_HOME_CHANNEL_ID, ts=existing_ts, text=fallback_text, blocks=blocks)
+            return {"status": "updated", "channel": DISPATCH_HOME_CHANNEL_ID, "ts": existing_ts}
+        else:
+            resp = client.chat_postMessage(channel=DISPATCH_HOME_CHANNEL_ID, text=fallback_text, blocks=blocks)
+            return {"status": "posted", "channel": DISPATCH_HOME_CHANNEL_ID, "ts": resp["ts"]}
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Interactions endpoint
 # ─────────────────────────────────────────────────────────────────────────────
@@ -365,6 +431,22 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
         return {"ok": True}
 
     payload = json.loads(raw)
+
+    # Modal submissions (Home tab quick-capture forms) are a different
+    # payload shape — no "actions" key, keyed by view.callback_id instead.
+    if payload.get("type") == "view_submission":
+        callback_id = payload.get("view", {}).get("callback_id", "")
+        if callback_id == "home_report_submit":
+            from api.src.routes.slack_home import _handle_home_report_submit
+            return _handle_home_report_submit(payload, db)
+        if callback_id == "home_rto_submit":
+            from api.src.routes.slack_home import _handle_home_rto_submit
+            return _handle_home_rto_submit(payload, db)
+        if callback_id == "dispatch_remove_terminated_submit":
+            from api.src.routes.slack_dispatch_home import _handle_dispatch_remove_terminated_submit
+            return _handle_dispatch_remove_terminated_submit(payload, db)
+        return {"ok": True}
+
     action_id = (payload.get("actions") or [{}])[0].get("action_id", "")
 
     if action_id == "callout_button":
@@ -384,6 +466,22 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
 
     elif action_id == "dvic_ack":
         _handle_dvic_ack(payload, db)
+
+    elif action_id == "home_callout_button":
+        from api.src.routes.slack_home import _handle_home_callout_button
+        _handle_home_callout_button(payload, db)
+
+    elif action_id in ("home_report_crash", "home_report_injury", "home_incident_report"):
+        from api.src.routes.slack_home import _handle_home_report_button
+        _handle_home_report_button(payload, db, action_id)
+
+    elif action_id == "home_rto_button":
+        from api.src.routes.slack_home import _handle_home_rto_button
+        _handle_home_rto_button(payload, db)
+
+    elif action_id == "dispatch_remove_terminated_button":
+        from api.src.routes.slack_dispatch_home import _handle_dispatch_remove_terminated_button
+        _handle_dispatch_remove_terminated_button(payload, db)
 
     # Slack requires a 200 response within 3 seconds
     return {"ok": True}

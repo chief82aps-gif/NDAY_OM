@@ -1,5 +1,10 @@
 # ✅ RBAC Implementation — Completion Report
 
+---
+**Authentication Lock Notice:**
+Authentication and login logic is locked. All changes to authentication, user management, or password logic require code review and must be documented in LOGIN.md. The admin user cannot be deleted or renamed, and admin password changes are only possible via environment variables or code.
+---
+
 **Date**: February 23, 2026  
 **Status**: ✅ **COMPLETE AND READY FOR INTEGRATION**  
 **Delivery Quality**: Production-Ready

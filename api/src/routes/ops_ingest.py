@@ -502,6 +502,12 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
                             for entry in entries:
                                 if entry.driver_name in sweeper_names:
                                     entry.is_sweeper = True
+                                    # Sweepers are never in assign_map (that's the
+                                    # definition of a sweeper) — without this,
+                                    # summary.show_times' correctly-computed value
+                                    # for them was silently discarded and every
+                                    # sweeper showed "See dispatch" downstream.
+                                    entry.show_time = (summary.show_times or {}).get(entry.driver_name) or entry.show_time
                                 a = assign_map.get(entry.driver_name)
                                 if a:
                                     entry.wave_time = getattr(a, 'wave_time', None)
@@ -562,9 +568,10 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
                     pass
             if primary_date_obj:
                 try:
-                    from api.src.routes.rostering import send_driver_shift_dms, post_mgt_summary
+                    from api.src.routes.rostering import send_driver_shift_dms, post_mgt_summary, post_showtime_summary
                     send_driver_shift_dms(primary_date_obj, db)
                     post_mgt_summary(primary_date_obj, db)
+                    post_showtime_summary(primary_date_obj, db)
                 except Exception as e:
                     logger.warning("Post-schedule DM/summary trigger failed: %s", e)
 

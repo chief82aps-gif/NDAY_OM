@@ -25,6 +25,15 @@ interface Checklist {
   adp_clocked_out: ChecklistItem;
 }
 
+interface RtsInfo {
+  status: 'not_started' | 'in_progress' | 'completed';
+  started_at: string | null;
+  completed_at: string | null;
+  expected_return_time: string | null;   // "3:45 PM" label, set on submit
+  routed_to_rescue: boolean;
+  reattempt_assigned_count: number | null;
+}
+
 interface Driver {
   driver_name: string;
   route_code: string | null;
@@ -36,8 +45,10 @@ interface Driver {
   arrived_at: string | null;
   checklist: Checklist;
   eta_return: string | null;       // "3:45 PM" | "Done" | null
+  eta_return_at: string | null;    // naive-UTC ISO instant, for the live countdown
   pct_complete: number | null;     // 0–100 from latest Cortex snapshot
   packages_remaining: number | null;
+  rts: RtsInfo;
 }
 
 interface Wave {
@@ -86,12 +97,48 @@ function waveCountdown(mins: number | null): string {
   return `in ${Math.round(mins)}m`;
 }
 
+function fmtCountdown(seconds: number): string {
+  const overdue = seconds < 0;
+  const abs = Math.abs(Math.round(seconds));
+  const h = Math.floor(abs / 3600);
+  const m = Math.floor((abs % 3600) / 60);
+  const s = abs % 60;
+  const body = h > 0
+    ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+    : `${m}:${String(s).padStart(2, '0')}`;
+  return overdue ? `${body} over` : body;
+}
+
+// Ticks once a second on its own — independent of the 30s data poll — so the
+// countdown doesn't visibly stall between refreshes.
+function Countdown({ targetIso }: { targetIso: string }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const target = new Date(targetIso + 'Z').getTime();
+  const secondsLeft = (target - now) / 1000;
+  const overdue = secondsLeft < 0;
+  return (
+    <span className={`countdown${overdue ? ' overdue' : ''}`}>
+      {fmtCountdown(secondsLeft)}
+    </span>
+  );
+}
+
 // ── Status config ─────────────────────────────────────────────────────────────
 
 const STATUS = {
   arrived: { label: 'Arrived', stripe: '#20D9A0', badge: 'rgba(32,217,160,0.15)', text: '#20D9A0' },
   missing: { label: 'Missing', stripe: '#F87171', badge: 'rgba(248,113,113,0.15)', text: '#F87171' },
   pending: { label: 'Pending', stripe: '#4A6880', badge: 'rgba(74,104,128,0.15)', text: '#7A9DB8' },
+} as const;
+
+const RTS_STATUS = {
+  not_started: { label: 'Not Started', text: '#5A7A90', badge: 'rgba(90,122,144,0.12)' },
+  in_progress: { label: 'RTS In Progress', text: '#F5A123', badge: 'rgba(245,161,35,0.12)' },
+  completed:   { label: 'RTS Complete',    text: '#20D9A0', badge: 'rgba(32,217,160,0.12)' },
 } as const;
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -327,6 +374,20 @@ export default function WaveStatusPage() {
     }
     .pkg-bar-fill.high { background: var(--arrived); }
 
+    .countdown {
+      font-size: 12px; font-weight: 700; font-family: var(--mono);
+      font-variant-numeric: tabular-nums; color: var(--accent);
+    }
+    .countdown.overdue { color: #F87171; }
+
+    .rts-row { margin-top: 7px; }
+    .rts-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 11px; font-family: var(--mono); font-weight: 600;
+      padding: 3px 9px; border-radius: 20px;
+    }
+    .rts-chip .rts-dot { width: 6px; height: 6px; border-radius: 50%; }
+
     .checklist-row {
       display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px;
       padding-top: 8px; border-top: 1px solid var(--border);
@@ -524,11 +585,34 @@ export default function WaveStatusPage() {
                                   <span className={`eta-value${driver.eta_return === 'Done' ? ' done' : ''}`}>
                                     {driver.eta_return}
                                   </span>
+                                  {driver.eta_return_at && driver.eta_return !== 'Done' && (
+                                    <Countdown targetIso={driver.eta_return_at} />
+                                  )}
                                   {driver.packages_remaining != null && driver.packages_remaining > 0 && (
                                     <span className="eta-label">· {driver.packages_remaining} left</span>
                                   )}
                                 </>
                               )}
+                            </div>
+                          )}
+                          {driver.rts && driver.rts.status !== 'not_started' && (
+                            <div className="rts-row">
+                              <span
+                                className="rts-chip"
+                                style={{
+                                  color: RTS_STATUS[driver.rts.status].text,
+                                  background: RTS_STATUS[driver.rts.status].badge,
+                                }}
+                                title={
+                                  driver.rts.completed_at ? `Completed ${fmt12(driver.rts.completed_at)}`
+                                  : driver.rts.started_at ? `Started ${fmt12(driver.rts.started_at)}`
+                                  : undefined
+                                }
+                              >
+                                <span className="rts-dot" style={{ background: RTS_STATUS[driver.rts.status].text }} />
+                                {driver.rts.routed_to_rescue ? 'Routed to Rescue' : RTS_STATUS[driver.rts.status].label}
+                                {driver.rts.expected_return_time && ` · ETA ${driver.rts.expected_return_time}`}
+                              </span>
                             </div>
                           )}
                           {driver.checklist && (

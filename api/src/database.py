@@ -1971,6 +1971,34 @@ def ensure_driver_roster_tracking_columns():
             pass  # Column already exists
 
 
+def ensure_okami_capacity_finalize_columns():
+    """Add frt + finalize-snapshot columns to okami_capacity_logs — the
+    table shipped first without them, then finalize/FRT support was added
+    in a follow-up pass the same day (2026-07-14/15). Safe no-op if the
+    table doesn't exist yet (create_all handles that case fresh)."""
+    for col, typedef in [
+        ("frt", "INTEGER"),
+        ("finalized_at", "TIMESTAMP"),
+        ("finalized_by", "VARCHAR(100)"),
+        ("required_da_count", "INTEGER"),
+        ("da_status", "VARCHAR(20)"),
+        ("required_van_count", "INTEGER"),
+        ("effective_available_vans", "INTEGER"),
+        ("van_status", "VARCHAR(20)"),
+        ("van_deficit", "INTEGER"),
+        ("grounded_vans_snapshot", "JSON" if not DATABASE_URL.startswith("sqlite") else "TEXT"),
+        ("frt_breached", "BOOLEAN"),
+    ]:
+        try:
+            with engine.begin() as conn:
+                if DATABASE_URL.startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE okami_capacity_logs ADD COLUMN {col} {typedef}"))
+                else:
+                    conn.execute(text(f"ALTER TABLE okami_capacity_logs ADD COLUMN IF NOT EXISTS {col} {typedef}"))
+        except Exception:
+            pass  # Column already exists, or table doesn't exist yet (create_all will make it fresh)
+
+
 def flag_stale_driver_profiles(db, days: int = 30) -> int:
     """Flag (never deactivate) driver_roster rows not seen on any schedule
     in `days` days. Only considers rows that have a last_seen_on_schedule
@@ -2393,6 +2421,75 @@ class SafetyEvent(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class OkamiCapacityLog(Base):
+    """Daily Okami capacity planning numbers — added 2026-07-14. Posted
+    today as free-text in Slack by ops (e.g. "61 DAs / Okami 44 /
+    Capacity at 50 plus 4x4 = 51 / Vans - 55"), not a file upload, so
+    there is no ingest parser for it — it's captured directly via a
+    dashboard form (POST /okami-capacity) instead of Slack-message
+    scanning. Append-only, one row per submission: mgt_reminders.py
+    reads "does a row exist for today" rather than "is there exactly
+    one", so a same-day correction is just a fresh submission — the
+    latest row for the date wins for display purposes.
+
+    frt (Flex Up Route Target) is Amazon's own daily ask, read off their
+    scheduling page as a "Flex up target" row that only appears some
+    weeks (a row below the normal "Route target" row) — not every
+    station-day has one, hence nullable. When present it's compared
+    against capacity_total; when null, the flex-up check is skipped
+    entirely rather than treated as a miss.
+
+    Finalization is a separate, explicit step (POST
+    .../okami-capacity/finalize) from raw entry/correction — it locks in
+    one submission for the day, snapshots the computed checks at that
+    moment (so later buffer-% tuning doesn't rewrite history), and is
+    what actually posts the #nday-mgt summary / fires threshold DMs.
+    """
+    __tablename__ = "okami_capacity_logs"
+
+    id = Column(Integer, primary_key=True)
+    log_date = Column(Date, nullable=False, index=True)
+    da_count = Column(Integer)              # "61 DAs"
+    okami_count = Column(Integer)           # "Okami 44"
+    capacity_base = Column(Integer)         # "Capacity at 50"
+    capacity_4x4 = Column(Integer)          # "plus 4x4" — count of 4x4-eligible add-ons
+    capacity_total = Column(Integer)        # "= 51" — capacity_base + capacity_4x4 if both given
+    van_count = Column(Integer)             # "Vans - 55"
+    frt = Column(Integer, nullable=True)    # Amazon's "Flex up target" row, when one exists this week
+    submitted_by = Column(String(100))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Set only by the Finalize action — snapshotted at that moment.
+    finalized_at = Column(DateTime, nullable=True)
+    finalized_by = Column(String(100), nullable=True)
+    required_da_count = Column(Integer, nullable=True)
+    da_status = Column(String(20), nullable=True)          # "ok" | "short"
+    required_van_count = Column(Integer, nullable=True)
+    effective_available_vans = Column(Integer, nullable=True)
+    van_status = Column(String(20), nullable=True)          # "ok" | "short"
+    van_deficit = Column(Integer, nullable=True)
+    grounded_vans_snapshot = Column(JSON, nullable=True)     # [{vin, vehicle_name}, ...] at finalize time
+    frt_breached = Column(Boolean, nullable=True)
+
+
+class OkamiSettings(Base):
+    """Singleton (id=1) tunable knobs for Okami finalization — the
+    buffer percentages the user asked to tweak over time as they learn
+    the right cost/risk tradeoff, plus the count of vehicles (e.g. the
+    one 4x4) that don't flow through the normal Okami/fleet-ingest
+    pipeline. Deliberately NOT per-day — these change rarely, unlike
+    OkamiCapacityLog's per-day numbers.
+    """
+    __tablename__ = "okami_settings"
+
+    id = Column(Integer, primary_key=True)
+    driver_buffer_pct = Column(Integer, nullable=False, default=10)   # 10 -> want DAs >= 110% of capacity_total
+    van_buffer_pct = Column(Integer, nullable=False, default=0)
+    available_non_okami_vehicles = Column(Integer, nullable=False, default=0)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_by = Column(String(100))
+
+
 def get_reminder_state(db, reminder_key: str) -> dict:
     row = db.query(ReminderThrottleState).filter(
         ReminderThrottleState.reminder_key == reminder_key
@@ -2562,6 +2659,8 @@ class DriverShiftDM(Base):
     arrived_at = Column(DateTime)
     arrived_slack_user_id = Column(String(50))
     arrival_confirmed = Column(Boolean, default=False)
+    schedule_acked_at = Column(DateTime)   # when driver tapped 'I've Got My Schedule'
+    eod_checklist_at = Column(DateTime)    # when driver tapped 'EOD Complete'
 
     __table_args__ = (
         Index("idx_dsdm_date_driver", "shift_date", "driver_name"),

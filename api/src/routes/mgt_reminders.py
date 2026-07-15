@@ -120,6 +120,16 @@ def _file_detected_today(db: Session, detected_type: str, today) -> bool:
     )
 
 
+def _resolved_today(db: Session, key: str, cfg: dict, today) -> bool:
+    """Okami isn't a file — it's entered directly via the dashboard form
+    (api/src/routes/okami_capacity.py), so it's resolved by a DB
+    submission for the day, not an OpsIngestJob row."""
+    if key == "okami":
+        from api.src.routes.okami_capacity import has_submission_today
+        return has_submission_today(db, today)
+    return _file_detected_today(db, cfg["detected_type"], today)
+
+
 def _check_one(key: str, db: Session, client, now) -> dict:
     """Runs the check for one reminder key and returns a diagnostic dict
     describing exactly what happened — used by both the silent background
@@ -145,7 +155,7 @@ def _check_one(key: str, db: Session, client, now) -> dict:
         result["reason"] = "already_resolved_this_process"
         return result
 
-    if _file_detected_today(db, cfg["detected_type"], today):
+    if _resolved_today(db, key, cfg, today):
         state["resolved_date"] = today
         _save_state(db, key, state)
         result["reason"] = "file_detected_today"

@@ -9,7 +9,6 @@
 				"-m",
 				"uvicorn",
 				"api.main:app",
-				"--reload",
 				"--host",
 				"127.0.0.1",
 				"--port",
@@ -20,7 +19,16 @@
 		{
 			"label": "Stop NDAY_OM Backend",
 			"type": "shell",
-			"command": "$conn = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue; if ($conn) { $procIds = $conn | Select-Object -ExpandProperty OwningProcess -Unique; foreach ($procId in $procIds) { Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue }; Write-Host \"Stopped backend process(es) on port 8000: $($procIds -join ', ')\" } else { Write-Host \"No backend process listening on port 8000.\" }"
+			"command": "$conn = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue; if ($conn) { $procIds = $conn | Select-Object -ExpandProperty OwningProcess -Unique; foreach ($procId in $procIds) { Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue }; Write-Host ('Stopped backend processes on port 8000: ' + ($procIds -join ', ')) } else { Write-Host 'No backend process listening on port 8000.' }"
+		},
+		{
+			"label": "Run Driver Schedule Regression Test",
+			"type": "shell",
+			"command": ".\\.venv\\Scripts\\python.exe",
+			"args": [
+				"test_driver_schedule_regression.py"
+			],
+			"group": "test"
 		}
 	]
 }

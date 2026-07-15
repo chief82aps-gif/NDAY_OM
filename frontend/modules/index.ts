@@ -16,6 +16,10 @@ import { invoiceAuditModule } from './invoiceAudit';
 import { performanceUploadsModule } from './performanceUploads';
 import { rescueTrackerModule } from './rescueTracker';
 import { adpStatusModule } from './adpStatus';
+import { okamiCapacityModule } from './okamiCapacity';
+import { disciplineTrackerModule } from './disciplineTracker';
+import { driversModule } from './drivers';
+import { waveStatusModule } from './waveStatus';
 import { DashboardModule } from './types';
 
 export const dashboardModules: DashboardModule[] = [
@@ -37,4 +41,8 @@ export const dashboardModules: DashboardModule[] = [
   driverQualityModule,
   eodSurveyModule,
   adpStatusModule,
+  okamiCapacityModule,
+  waveStatusModule,
+  driversModule,
+  disciplineTrackerModule,
 ];

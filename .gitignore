@@ -10,3 +10,4 @@ venv/
 client_secret*.json
 token.json
 google_token.json
+api/users.json

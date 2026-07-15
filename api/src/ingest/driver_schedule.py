@@ -4,6 +4,7 @@ from typing import List, Dict, Tuple, Optional
 from datetime import datetime, timedelta, date
 import openpyxl
 from api.src.models import DriverAssignment, DriverAvailability, DriverScheduleSummary
+from api.src.schedule_config import SHOWTIME_OFFSET_MINUTES
 
 
 def parse_driver_schedule_excel(file_path: str) -> Tuple[DriverScheduleSummary, List[str]]:
@@ -72,8 +73,8 @@ def parse_driver_schedule_excel(file_path: str) -> Tuple[DriverScheduleSummary, 
             selected_date_label
         )
         
-        # Get earliest wave show time for sweepers
-        earliest_show_time = _get_earliest_show_time(assignments_with_show_times)
+        # Sweepers report at the final wave's show time
+        final_show_time = _get_final_show_time(assignments_with_show_times)
         
         # Build summary
         summary = DriverScheduleSummary(
@@ -88,9 +89,9 @@ def parse_driver_schedule_excel(file_path: str) -> Tuple[DriverScheduleSummary, 
         for assignment in assignments_with_show_times:
             show_times_dict[assignment.driver_name] = assignment.show_time or ""
         
-        # Add sweepers with earliest show time
+        # Add sweepers with the final wave's show time
         for sweeper in sweepers:
-            show_times_dict[sweeper] = earliest_show_time
+            show_times_dict[sweeper] = final_show_time
         
         summary.show_times = show_times_dict
         
@@ -308,10 +309,10 @@ def _calculate_show_times(assignments: List[DriverAssignment]) -> List[DriverAss
     if current_group:
         grouped_waves.append(current_group)
     
-    # Calculate show time for each group (25 min before earliest wave in group)
+    # Calculate show time for each group (SHOWTIME_OFFSET_MINUTES before earliest wave in group)
     for group in grouped_waves:
         earliest_wave = min(group, key=_time_to_minutes)
-        show_time = _subtract_minutes_from_time(earliest_wave, 25)
+        show_time = _subtract_minutes_from_time(earliest_wave, SHOWTIME_OFFSET_MINUTES)
         for wave in group:
             wave_to_show_time[wave] = show_time
     
@@ -399,14 +400,16 @@ def _identify_sweepers(
     return sorted(sweepers)
 
 
-def _get_earliest_show_time(assignments: List[DriverAssignment]) -> str:
-    """Get the earliest show time from assignments (Wave 1 & 2 show time)."""
+def _get_final_show_time(assignments: List[DriverAssignment]) -> str:
+    """Get the final (last) wave's show time — sweepers report at the
+    final wave's showtime, per explicit direction (previously this used
+    the earliest wave's showtime)."""
     show_times = [a.show_time for a in assignments if a.show_time]
     if not show_times:
         return ""
-    
-    earliest = min(show_times, key=_time_to_minutes)
-    return earliest
+
+    latest = max(show_times, key=_time_to_minutes)
+    return latest
 
 
 def _parse_timestamp_date(timestamp_str: str) -> Optional[date]:

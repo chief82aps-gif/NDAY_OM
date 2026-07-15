@@ -24,7 +24,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from api.src.database import (
@@ -42,7 +42,10 @@ from api.src.database import (
     CortexSnapshot,
     SlackIngestLog,
     RtsDebrief,
+    get_reminder_state,
+    set_reminder_state,
 )
+from api.src.schedule_config import SHOWTIME_OFFSET_MINUTES
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/rostering", tags=["rostering"])
@@ -102,13 +105,15 @@ def _wave_lead_name(shift_date: date) -> tuple[str, str]:
 
 
 def _calc_showtime(wave_time_str: Optional[str]) -> Optional[str]:
-    """Return showtime = wave_time - 25 minutes, formatted HH:MM AM/PM."""
+    """Return showtime = wave_time - SHOWTIME_OFFSET_MINUTES, formatted HH:MM AM/PM.
+    Mirrors ingest/driver_schedule.py's _calculate_show_times, which does the
+    same offset against wave-consolidated groups — keep the two in sync."""
     if not wave_time_str:
         return None
     for fmt in ("%I:%M %p", "%H:%M", "%I:%M%p"):
         try:
             t = datetime.strptime(wave_time_str.strip(), fmt)
-            show = (t - timedelta(minutes=25)).strftime("%-I:%M %p")
+            show = (t - timedelta(minutes=SHOWTIME_OFFSET_MINUTES)).strftime("%-I:%M %p")
             return show
         except ValueError:
             continue
@@ -261,6 +266,7 @@ def _build_roster_suggestion(shift_date: date, db: Session) -> list[dict]:
             "rank": _STANDING_RANK.get(q["standing"], 0),
             "wave_time": entry.wave_time,
             "show_time": entry.show_time,
+            "service_type": entry.service_type,
             "is_sweeper": entry.is_sweeper,
             "van_constraint": constraint,
             "called_out": name in called_out,
@@ -407,10 +413,12 @@ def send_driver_shift_dms(shift_date: date, db: Session) -> dict:
         slack_id = _get_driver_slack_id(name, db)
         showtime = _calc_showtime(entry.wave_time) or entry.show_time
         wave_display = entry.wave_time or "TBD"
+        service_display = entry.service_type or ("Sweeper — van assigned morning-of" if entry.is_sweeper else "TBD")
 
         text_fallback = (
             f"👋 Hi {name.split()[0]}! Your shift is tomorrow ({date_str}).\n"
             f"🕐 *Showtime:* {showtime or 'See dispatch'} | *Wave:* {wave_display}\n"
+            f"🚐 *Van/Service:* {service_display}\n"
             f"👤 *Wave Lead:* {wave_lead_name}\n"
             f"Please confirm your arrival by tapping the button when you arrive."
         )
@@ -432,6 +440,7 @@ def send_driver_shift_dms(shift_date: date, db: Session) -> dict:
                 "fields": [
                     {"type": "mrkdwn", "text": f"*Showtime:*\n{showtime or 'See dispatch'}"},
                     {"type": "mrkdwn", "text": f"*Wave:*\n{wave_display}"},
+                    {"type": "mrkdwn", "text": f"*Van/Service:*\n{service_display}"},
                     {"type": "mrkdwn", "text": f"*Wave Lead:*\n{wave_lead_name}"},
                     {"type": "mrkdwn", "text": f"*Date:*\n{date_str}"},
                 ],
@@ -635,6 +644,224 @@ def post_mgt_summary(shift_date: date, db: Session, grounded_vans: Optional[list
         return {"status": "error", "detail": str(exc)}
 
 
+# ─── Escalating "schedule not ingested yet" reminder (new) ───────────────────
+# Separate from send_nightly_roster_reminder (DMs 3 named managers a ranked
+# suggestion once at 19:00 — an individual actionable nudge) and from
+# mgt_reminders.py's "schedule" check (DMs individual #nday-mgt members,
+# stops on file *detection*, window closes 20:00). This is the louder,
+# public, escalating layer on top: a #nday-mgt CHANNEL post once the
+# deadline is actually being missed, gated by SCHEDULE_ESCALATION_ACTIVE
+# (kept separate from ROSTERING_ACTIVE/DRIVER_DM_ACTIVE — same reasoning as
+# why DRIVER_DM_ACTIVE was split out: don't let an unproven, publicly-
+# visible behavior go live just because another flag happens to be on).
+
+_ESCALATION_ACTIVE = os.getenv("SCHEDULE_ESCALATION_ACTIVE", "false").lower() == "true"
+
+
+def _tomorrow_schedule_landed(shift_date: date, db: Session) -> bool:
+    """True once DriverScheduleEntry rows for shift_date carry a real
+    wave/show time — not just bare name rows, which can exist early from a
+    multi-week upload whose primary (annotated) date is a different day."""
+    return db.query(DriverScheduleEntry).filter(
+        DriverScheduleEntry.schedule_date == shift_date,
+        or_(DriverScheduleEntry.wave_time.isnot(None), DriverScheduleEntry.show_time.isnot(None)),
+    ).first() is not None
+
+
+def run_schedule_escalation_check(db: Session) -> dict:
+    """Called every ~60s from main.py's _schedule_escalation_loop. Posts an
+    escalating nag to #nday-mgt: 15-min cadence 19:00-20:00 PT, then 5-min
+    cadence with no upper bound — keeps firing until tomorrow's schedule
+    has landed, even overnight, per explicit direction."""
+    if not _ESCALATION_ACTIVE:
+        return {"status": "inactive"}
+
+    from zoneinfo import ZoneInfo as _ZI
+    pacific = _ZI("America/Los_Angeles")
+    now = datetime.now(pacific)
+    today = now.date()
+    tomorrow = today + timedelta(days=1)
+
+    if (now.hour, now.minute) < (19, 0):
+        return {"status": "outside_window"}
+
+    key = "schedule_escalation"
+    raw = get_reminder_state(db, key)
+    last_sent_at = datetime.fromisoformat(raw["last_sent_at"]) if raw.get("last_sent_at") else None
+    resolved_date = date.fromisoformat(raw["resolved_date"]) if raw.get("resolved_date") else None
+
+    if resolved_date == today:
+        return {"status": "already_resolved"}
+
+    if _tomorrow_schedule_landed(tomorrow, db):
+        set_reminder_state(db, key, {
+            "last_sent_at": last_sent_at.isoformat() if last_sent_at else None,
+            "resolved_date": today.isoformat(),
+        })
+        return {"status": "resolved", "date": tomorrow.isoformat()}
+
+    interval_seconds = 900 if now.hour < 20 else 300
+    if last_sent_at and (now - last_sent_at).total_seconds() < interval_seconds:
+        return {"status": "throttled"}
+
+    client = _slack_client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    urgent = now.hour >= 20
+    prefix = ":rotating_light: *Still no schedule for tomorrow* :rotating_light:" if urgent else ":alarm_clock: *Tomorrow's schedule isn't in yet*"
+    text = f"{prefix}\n{tomorrow.strftime('%A, %B %-d')}'s driver schedule hasn't been uploaded. Please post it as soon as it's available."
+
+    try:
+        client.chat_postMessage(channel=MGT_CHANNEL, text=text)
+    except Exception as exc:
+        logger.warning("Schedule escalation post failed: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+    set_reminder_state(db, key, {"last_sent_at": now.isoformat(), "resolved_date": None})
+    return {"status": "sent", "hour": now.hour}
+
+
+# ─── Showtime summary to #nday-mgt (new, posted once the schedule lands) ────
+
+def post_showtime_summary(shift_date: date, db: Session) -> dict:
+    """Post a Showtime-grouped breakdown to #nday-mgt: drivers bucketed by
+    show_time, with van/service type. Sweepers land in the final wave's
+    bucket automatically (their show_time now equals it, per the ingest
+    fix). A different lens than post_mgt_summary's quality/risk matrix —
+    same precedent as post_assignment_matrix being its own function."""
+    if not _ACTIVE:
+        return {"status": "inactive"}
+
+    suggestions = _build_roster_suggestion(shift_date, db)
+    if not suggestions:
+        return {"status": "no_schedule", "date": shift_date.isoformat()}
+
+    client = _slack_client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    date_str = shift_date.strftime("%A, %B %-d")
+    active = [s for s in suggestions if not s["called_out"]]
+
+    buckets: dict[str, list[dict]] = {}
+    for s in active:
+        key = s.get("show_time") or "TBD"
+        buckets.setdefault(key, []).append(s)
+
+    def _sort_key(show_time: str) -> int:
+        if show_time == "TBD":
+            return 24 * 60
+        for fmt in ("%I:%M %p", "%-I:%M %p"):
+            try:
+                t = datetime.strptime(show_time, fmt)
+                return t.hour * 60 + t.minute
+            except ValueError:
+                continue
+        return 24 * 60
+
+    blocks = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": f"🕐 Showtime Summary — {date_str}", "emoji": True},
+        },
+    ]
+
+    for show_time in sorted(buckets, key=_sort_key):
+        lines = []
+        for s in buckets[show_time]:
+            sweeper_tag = " | 🧹 Sweeper" if s["is_sweeper"] else ""
+            service = s.get("service_type") or ("Van assigned morning-of" if s["is_sweeper"] else "TBD")
+            lines.append(f"• {s['driver_name']} — {service}{sweeper_tag}")
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*Showtime {show_time}* ({len(buckets[show_time])})\n" + "\n".join(lines)},
+        })
+
+    blocks.append({
+        "type": "context",
+        "elements": [{"type": "mrkdwn", "text": f"_Posted by NDAY Route Manager · {datetime.utcnow().strftime('%H:%M UTC')}_"}],
+    })
+
+    state_key = f"showtime_summary_{shift_date.isoformat()}"
+    raw = get_reminder_state(db, state_key)
+    existing_ts = raw.get("slack_ts")
+
+    try:
+        if existing_ts:
+            client.chat_update(channel=MGT_CHANNEL, ts=existing_ts, text=f"Showtime Summary — {date_str}", blocks=blocks)
+            slack_ts = existing_ts
+        else:
+            resp = client.chat_postMessage(channel=MGT_CHANNEL, text=f"Showtime Summary — {date_str}", blocks=blocks)
+            slack_ts = resp.get("ts")
+        set_reminder_state(db, state_key, {"slack_ts": slack_ts})
+        return {"status": "posted", "date": shift_date.isoformat(), "slack_ts": slack_ts}
+    except Exception as exc:
+        logger.error("Showtime summary post failed: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+
+# ─── "Potential gap" soft alert (new, soft v1 — no automated callout) ────────
+
+def send_schedule_gap_alert(shift_date: date, db: Session) -> dict:
+    """Single daily check (not a repeating nag): if any scheduled drivers
+    haven't tapped Confirm yet, post one summary to #nday-mgt naming them.
+    Soft v1 per explicit direction — assumes they're still showing, does
+    NOT touch AttendanceEvent/CalloutQueue. The future "tighten this up"
+    hook, when ready, is attendance.py's queue_callout_notification()
+    after creating an AttendanceEvent row with a new reason_code — not
+    built now."""
+    if not _ESCALATION_ACTIVE:
+        return {"status": "inactive"}
+
+    scheduled = (
+        db.query(DriverScheduleEntry)
+        .filter(DriverScheduleEntry.schedule_date == shift_date)
+        .all()
+    )
+    if not scheduled:
+        return {"status": "no_schedule", "date": shift_date.isoformat()}
+
+    state_key = f"schedule_gap_alert_{shift_date.isoformat()}"
+    if get_reminder_state(db, state_key).get("sent"):
+        return {"status": "already_sent"}
+
+    called_out = _called_out_today(shift_date, db)
+    dm_by_driver = {
+        d.driver_name: d
+        for d in db.query(DriverShiftDM).filter(DriverShiftDM.shift_date == shift_date).all()
+    }
+    unconfirmed = [
+        e.driver_name for e in scheduled
+        if e.driver_name not in called_out
+        and getattr(dm_by_driver.get(e.driver_name), "schedule_acked_at", None) is None
+    ]
+    if not unconfirmed:
+        set_reminder_state(db, state_key, {"sent": True})
+        return {"status": "none_unconfirmed"}
+
+    client = _slack_client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    date_str = shift_date.strftime("%A, %B %-d")
+    names = "\n".join(f"• {n}" for n in sorted(unconfirmed))
+    text = (
+        f":warning: *Potential gap — {date_str}*\n"
+        f"{len(unconfirmed)} scheduled driver(s) haven't confirmed their schedule yet "
+        f"(assuming they're still showing):\n{names}"
+    )
+
+    try:
+        client.chat_postMessage(channel=MGT_CHANNEL, text=text)
+    except Exception as exc:
+        logger.warning("Schedule gap alert post failed: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+    set_reminder_state(db, state_key, {"sent": True})
+    return {"status": "sent", "unconfirmed_count": len(unconfirmed)}
+
+
 # ─── #nday-mgt day-of assignment matrix (driver / route / van / est. return) ─
 
 def _first_name(driver_name: str) -> str:
@@ -656,6 +883,15 @@ def _full_name(driver_name: str) -> str:
         last, first = driver_name.split(",", 1)
         return f"{first.strip()} {last.strip()}".strip()
     return driver_name.strip()
+
+
+def _truncate(s: str, width: int) -> str:
+    """Truncate with an ellipsis so a long name can't push a monospace
+    Slack table's other columns out of alignment (Python's :<N format
+    spec pads to a minimum width but never truncates on its own)."""
+    if len(s) <= width:
+        return s
+    return s[: width - 1].rstrip() + "…"
 
 
 def post_assignment_matrix(shift_date: date, db: Session, force: bool = False) -> dict:
@@ -734,7 +970,7 @@ def post_assignment_matrix(shift_date: date, db: Session, force: bool = False) -
             wave_rows = []
         active_wave = wave_label
         first_group = False
-        name = _full_name(a.driver_name)
+        name = _truncate(_full_name(a.driver_name), 22)
         return_time = _calc_return_time(a.wave or "", a.route_duration) or "—"
         standing = quality_map.get(a.driver_name, {}).get("standing", "Unk")
         wave_rows.append(
@@ -897,7 +1133,7 @@ def post_driver_summary_matrix(shift_date: date, db: Session, force: bool = Fals
             wave_rows = []
         active_wave = wave_label
         first_group = False
-        name = _full_name(a.driver_name)
+        name = _truncate(_full_name(a.driver_name), 22)
         showtime = _calc_showtime(a.wave) or "—"
         return_time = _calc_return_time(a.wave or "", a.route_duration) or "—"
         standing = quality_map.get(a.driver_name, {}).get("standing", "Unk")
@@ -1856,11 +2092,8 @@ def ack_schedule(
         rec = DriverShiftDM(shift_date=target, driver_name=driver_name)
         db.add(rec)
 
-    if not getattr(rec, "schedule_acked_at", None):
-        try:
-            rec.schedule_acked_at = datetime.utcnow()  # type: ignore[attr-defined]
-        except Exception:
-            pass
+    if not rec.schedule_acked_at:
+        rec.schedule_acked_at = datetime.utcnow()
     db.commit()
     return {"status": "ok", "driver_name": driver_name, "shift_date": shift_date}
 
@@ -1887,11 +2120,8 @@ def eod_complete(
         rec = DriverShiftDM(shift_date=target, driver_name=driver_name)
         db.add(rec)
 
-    if not getattr(rec, "eod_checklist_at", None):
-        try:
-            rec.eod_checklist_at = datetime.utcnow()  # type: ignore[attr-defined]
-        except Exception:
-            pass
+    if not rec.eod_checklist_at:
+        rec.eod_checklist_at = datetime.utcnow()
     db.commit()
     return {"status": "ok", "driver_name": driver_name, "shift_date": shift_date}
 

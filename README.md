@@ -168,6 +168,12 @@ Example `/upload/status` response:
 - All uploaded files are stored in `uploads/` directory (auto-created)
 - Temporary files can be cleaned up safely
 
+### Pre-deploy regression check (Driver Scheduler)
+- Run scheduler date-alignment regression test:
+  - Command line: `./.venv/Scripts/python.exe test_driver_schedule_regression.py`
+  - VS Code Task: `Run Driver Schedule Regression Test`
+- Expected result: `PASS: driver schedule date alignment regression test`
+
 ## References
 - See [Governance](Governance/) folder for full requirements and PDF format specifications
 - See [DSP_Route_Manager_Software_Manual.md](Governance/DSP_Route_Manager_Software_Manual.md) for system blueprint

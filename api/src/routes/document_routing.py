@@ -47,6 +47,8 @@ def _ensure_tables():
 _DEFAULT_ROUTING = {
     "crash_report": ["dispatch", "ops_manager", "owner"],
     "injury_report": ["dispatch", "ops_manager", "hr"],
+    "incident_report": ["dispatch", "ops_manager"],
+    "time_off_request": ["dispatch", "hr"],
 }
 
 # "owner" and "hr" resolve to individual people, and this repo is public —
@@ -59,6 +61,16 @@ _DEFAULT_ROLE_DIRECTORY = {
     "dispatch": [rid for rid in [os.getenv("DOC_ROUTING_DISPATCH_CHANNEL_ID") or os.getenv("NDAY_MGT_CHANNEL", "C0BCYAW7QP3")] if rid],
     "owner": [rid for rid in [os.getenv("DOC_ROUTING_OWNER_SLACK_ID")] if rid],
     "hr": [rid for rid in [os.getenv("DOC_ROUTING_HR_SLACK_ID")] if rid],
+    # Individual Slack IDs of everyone in #nday-mgt — gates who can open
+    # the Dispatch Home tab (slack_dispatch_home.py). Same pattern as
+    # owner/hr above: real people's Slack IDs live in a Render env var,
+    # never in source, since this repo is public. Comma-separated since
+    # it's more than one person. Admin-editable via PUT
+    # /document-config/roles like every other role here.
+    #   DOC_ROUTING_DISPATCH_STAFF_SLACK_IDS=U0.....,U0.....,U0.....
+    "dispatch_staff": [
+        sid.strip() for sid in os.getenv("DOC_ROUTING_DISPATCH_STAFF_SLACK_IDS", "").split(",") if sid.strip()
+    ],
 }
 
 
@@ -80,6 +92,23 @@ def seed_default_role_directory(db: Session) -> None:
         if not existing:
             db.add(RoleDirectory(role_name=role, slack_ids=slack_ids))
     db.commit()
+
+
+def get_role_slack_ids(db: Session, role_name: str) -> list[str]:
+    """Public helper for other modules (e.g. okami_capacity.py) that need a
+    single role's Slack IDs — e.g. 'owner' (Jayson) / 'hr' (Tamra) — without
+    querying RoleDirectory directly, per the hub-and-spoke rule in CLAUDE.md."""
+    seed_default_role_directory(db)
+    entry = db.query(RoleDirectory).filter(RoleDirectory.role_name == role_name).first()
+    return list(entry.slack_ids) if entry and entry.slack_ids else []
+
+
+def is_dispatch_staff(slack_user_id: str, db: Session) -> bool:
+    """Gates the Dispatch Home tab (slack_dispatch_home.py) and its actions.
+    Re-check this inside every dispatch-only action handler, not just at
+    Home-tab render time — don't trust that only dispatch staff can trigger
+    a given action_id."""
+    return slack_user_id in get_role_slack_ids(db, "dispatch_staff")
 
 
 def resolve_recipients(document_type: str, db: Session) -> dict[str, list[str]]:

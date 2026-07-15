@@ -49,6 +49,41 @@ function StatusPill({ status }: { status: 'ok' | 'short' | null }) {
   );
 }
 
+// da_status is "short" whenever DAs on hand fall below the buffered
+// target (capacity + driver_buffer_pct%), which is most of the time by
+// design — it does NOT mean today's routes are uncovered. Only da_count
+// < capacity_total is a real shortfall. Split those into two different
+// visual treatments so a thin buffer doesn't read as a route-coverage
+// emergency.
+function DaCoverageBlock({ today }: { today: Submission }) {
+  if (today.da_count == null || today.capacity_total == null) return null;
+  const realShortfall = today.da_count < today.capacity_total;
+  const bufferThin = !realShortfall && today.da_status === 'short';
+
+  if (realShortfall) {
+    return (
+      <div className="bg-red-50 border border-red-200 rounded p-2 text-xs text-red-700">
+        🚨 <strong>DA shortfall</strong> — only {today.da_count} drivers for {today.capacity_total} routes today.
+      </div>
+    );
+  }
+  if (bufferThin) {
+    const spare = today.required_da_count != null ? today.required_da_count - today.da_count : null;
+    return (
+      <div className="bg-amber-50 border border-amber-200 rounded p-2 text-xs text-amber-800">
+        🟠 <strong>Driver buffer is thin</strong> — {today.da_count} on hand covers today&apos;s {today.capacity_total} routes
+        {spare != null ? `, but only ${spare} spare` : ''}. If a driver calls out, office staff may need to cover a route.
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center justify-between">
+      <span>DA coverage — {today.da_count} on hand, {today.capacity_total} routes today</span>
+      <StatusPill status="ok" />
+    </div>
+  );
+}
+
 export default function OkamiCapacityPage() {
   const { user } = useAuth();
 
@@ -191,10 +226,7 @@ export default function OkamiCapacityPage() {
                     {today.finalized_by ? ` by ${today.finalized_by}` : ''}
                   </p>
                   <div className="space-y-2 text-sm">
-                    <div className="flex items-center justify-between">
-                      <span>DA coverage — need {today.required_da_count}, have {today.da_count}</span>
-                      <StatusPill status={today.da_status} />
-                    </div>
+                    <DaCoverageBlock today={today} />
                     <div className="flex items-center justify-between">
                       <span>Van coverage — need {today.required_van_count}, effectively have {today.effective_available_vans}</span>
                       <StatusPill status={today.van_status} />

@@ -301,11 +301,28 @@ def finalize(payload: FinalizeRequest, db: Session = Depends(get_db)):
     notifications = {"mgt_summary_sent": False, "van_alert_sent": 0, "frt_alert_sent": 0}
     client = _client()
     if client:
+        # da_status "short" just means below the buffered target — that's
+        # the normal/expected state most days, not a coverage emergency.
+        # Only da_count < capacity_total means today's routes themselves
+        # are short a driver.
+        real_da_shortfall = bool(row.da_count is not None and row.da_count < row.capacity_total)
         summary_lines = [
             f":clipboard: *Okami Capacity finalized* for {row.log_date.isoformat()} (by {row.finalized_by or 'ops'})",
-            f"DAs: {row.da_count} (need {required_da} — {da_status.upper()})   "
-            f"Okami: {row.okami_count}   Capacity: {row.capacity_total}   Vans: {row.van_count} (need {required_van} — {van_status.upper()})",
+            f"DAs: {row.da_count}   Okami: {row.okami_count}   Capacity: {row.capacity_total}   "
+            f"Vans: {row.van_count} (need {required_van} — {van_status.upper()})",
         ]
+        if real_da_shortfall:
+            summary_lines.append(
+                f":rotating_light: *DA shortfall* — only {row.da_count} drivers for {row.capacity_total} routes today."
+            )
+        elif da_status == "short":
+            spare = required_da - row.da_count if row.da_count is not None else None
+            summary_lines.append(
+                f":large_orange_diamond: Driver buffer is thin — {row.da_count} on hand covers today's "
+                f"{row.capacity_total} routes"
+                f"{f', but only {spare} spare' if spare is not None else ''}. "
+                f"If a driver calls out, office staff may need to cover a route."
+            )
         if row.frt is not None:
             summary_lines.append(f"FRT: {row.frt} — {'BREACHED' if frt_breached else 'met'}")
         try:

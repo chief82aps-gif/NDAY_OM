@@ -14,3 +14,5 @@ PyJWT>=2.9.0
 slack_sdk
 requests
 qrcode[pil]
+boto3
+anthropic

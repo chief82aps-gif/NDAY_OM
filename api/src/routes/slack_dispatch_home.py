@@ -65,6 +65,13 @@ def build_dispatch_home_view_blocks(db: Session) -> list:
                     "style": "primary",
                     "url": f"{FRONTEND_URL}/rescue/open",
                 },
+                {
+                    "type": "button",
+                    "action_id": "dispatch_open_crash_report",
+                    "text": {"type": "plain_text", "text": "🚗 Generate Crash Report", "emoji": True},
+                    "style": "danger",
+                    "url": f"{FRONTEND_URL}/crash-report",
+                },
             ],
         },
         {

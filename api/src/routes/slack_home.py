@@ -10,12 +10,17 @@ other Slack interactive component in this app — this module only owns the
 /slack/events endpoint and the Block Kit builders/handlers that
 slack_interactions.py dispatches into.
 
-Crash/injury/incident quick-capture intentionally does NOT try to replicate
-the compliant "DA Incident Packet" field set — it captures a short free-text
+Injury/incident quick-capture intentionally does NOT try to replicate the
+compliant "DA Incident Packet" field set — it captures a short free-text
 description, opens a lightweight record, and immediately notifies dispatch/
-ops/HR. The office finishes the compliant paperwork through the existing
-(correctly login-gated) /crash-report flow. Exact field sets get revisited
-once NDL's manual HRM/OPS forms are reviewed.
+ops/HR. Exact field sets get revisited once NDL's manual HRM/OPS forms are
+reviewed.
+
+Crash reports do NOT originate here. A driver calls dispatch to report a
+crash; dispatch creates the draft from the Dispatch Home tab
+(slack_dispatch_home.py's "🚗 Generate Crash Report" button ->
+/crash-report) so the record — and the chain of who's accountable for
+routing it — starts in the right place. See crash_report.py.
 """
 from __future__ import annotations
 
@@ -228,12 +233,6 @@ def build_home_view_blocks(driver: Optional[DriverRosterEntry], db: Session) -> 
         "elements": [
             {
                 "type": "button",
-                "action_id": "home_report_crash",
-                "text": {"type": "plain_text", "text": "🚗 Report Crash", "emoji": True},
-                "style": "danger",
-            },
-            {
-                "type": "button",
                 "action_id": "home_report_injury",
                 "text": {"type": "plain_text", "text": "🩹 Report Injury", "emoji": True},
                 "style": "danger",
@@ -355,9 +354,8 @@ def _handle_home_callout_button(payload: dict, db: Session) -> None:
         logger.warning("Home callout DM failed: %s", exc)
 
 
-_REPORT_TITLES = {"crash": "Report a Crash", "injury": "Report an Injury", "incident": "Incident Report"}
+_REPORT_TITLES = {"injury": "Report an Injury", "incident": "Incident Report"}
 _REPORT_TYPE_BY_ACTION = {
-    "home_report_crash": "crash",
     "home_report_injury": "injury",
     "home_incident_report": "incident",
 }
@@ -410,21 +408,12 @@ def _handle_home_report_submit(payload: dict, db: Session) -> dict:
     driver = _resolve_driver(user_id, db)
     driver_name = driver.payroll_name if driver else (payload.get("user", {}).get("username") or user_id)
 
-    record_note = ""
-    if report_type == "crash":
-        from api.src.routes.crash_report import start_crash_report, StartRequest
-        try:
-            result = start_crash_report(StartRequest(driver_name=driver_name, submitted_by="Slack (driver quick-report)"), db)
-            record_note = f" (draft {result['report']['report_number']} created)"
-        except Exception as exc:
-            logger.warning("Quick crash-report draft creation failed: %s", exc)
-
-    doc_type = {"crash": "crash_report", "injury": "injury_report"}.get(report_type, "incident_report")
+    doc_type = {"injury": "injury_report"}.get(report_type, "incident_report")
     client = _client()
     if client:
         recipients = resolve_recipients(doc_type, db)
         all_ids = sorted({sid for ids in recipients.values() for sid in ids})
-        text = f"🚨 *{report_type.title()} report* from *{driver_name}*{record_note}\n> {description}"
+        text = f"🚨 *{report_type.title()} report* from *{driver_name}*\n> {description}"
         for slack_id in all_ids:
             try:
                 client.chat_postMessage(channel=slack_id, text=text)

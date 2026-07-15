@@ -117,6 +117,8 @@ class Driver(Base):
     experience_level = Column(String(20))  # 'new', 'intermediate', 'experienced'
     preferred_zones = Column(JSON)  # ['A', 'B', 'E']
     license_expiry = Column(Date)
+    license_number = Column(String(50))   # for crash-report prefill
+    license_state = Column(String(10))    # for crash-report prefill
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -151,6 +153,10 @@ class Vehicle(Base):
     mileage_current = Column(Integer)
     last_maintenance_date = Column(Date)
     next_maintenance_due = Column(Date)
+    license_plate = Column(String(20))         # for crash-report prefill
+    license_plate_state = Column(String(10))   # for crash-report prefill
+    vehicle_year = Column(String(10))          # for crash-report prefill
+    vehicle_make_model = Column(String(100))   # for crash-report prefill
     notes = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -2266,8 +2272,12 @@ class CrashReport(Base):
     third_party_license_no = Column(String(50))
     third_party_license_state = Column(String(10))
 
-    # Narrative
-    accident_description = Column(Text)
+    # Narrative / statements
+    accident_description = Column(Text)               # driver's own statement
+    accident_description_raw = Column(Text)            # verbatim, pre-sanitization
+    third_party_statement = Column(Text)
+    third_party_statement_raw = Column(Text)            # verbatim, pre-sanitization
+    third_party_statement_declined = Column(Boolean, default=False)
 
     # Conditions / other (all optional — police report typically covers these)
     num_lanes = Column(Integer)
@@ -2286,9 +2296,56 @@ class CrashReport(Base):
     police_report_no = Column(String(50))
     citation_issued = Column(Boolean)
 
-    # Attachments
-    photo_urls = Column(JSON)          # list[str] — 360 scene photos
-    diagram_url = Column(String(500))  # photo of the hand-drawn (or digital) accident diagram
+    # Attachments — each JSON column is a list[str] of S3 keys (see storage.py).
+    photo_urls = Column(JSON)                  # 360 scene photos (min 6 enforced at submit)
+    photo_vehicle_damage = Column(JSON)        # NDAY vehicle damage
+    photo_other_vehicle = Column(JSON)         # third-party vehicle (conditional)
+    photo_dl_driver = Column(JSON)             # NDAY driver's license
+    photo_dl_other = Column(JSON)              # third-party driver's license (conditional)
+    photo_insurance_other = Column(JSON)       # third-party insurance card (conditional)
+    photo_license_plate_other = Column(JSON)   # third-party license plate (conditional)
+    diagram_url = Column(String(500))          # photo of the hand-drawn (or digital) accident diagram
+
+    # Drug screen — set to "pending" on submit; dispatch marks "scheduled"/
+    # "completed" (see rts.py's drug-screen hook on driver Return to Station).
+    drug_screen_status = Column(String(20))
+
+
+class CrashReportApproval(Base):
+    """One row per stage of a crash report's sequential approval chain
+    (dispatch -> ops_manager -> owner). HR is notified automatically on owner
+    approval (see crash_report.py) but isn't a gating stage here, so it has no
+    row of its own."""
+    __tablename__ = "crash_report_approvals"
+
+    id = Column(Integer, primary_key=True)
+    report_id = Column(Integer, ForeignKey("crash_reports.id", ondelete="CASCADE"), nullable=False, index=True)
+    stage_order = Column(Integer, nullable=False)   # 1=dispatch, 2=ops_manager, 3=owner
+    role = Column(String(30), nullable=False)
+    status = Column(String(20), default="pending")  # pending | notified | approved
+    notified_at = Column(DateTime)
+    approved_at = Column(DateTime)
+    approved_by = Column(String(100))               # Slack user id of the approver
+    slack_channel = Column(String(50))               # for chat_update on approve
+    slack_ts = Column(String(50))                     # for chat_update on approve
+
+    __table_args__ = (
+        Index("idx_crash_report_approval_report_stage", "report_id", "stage_order", unique=True),
+    )
+
+
+class EmployeeDocument(Base):
+    """Per-employee document archive — populated automatically when a crash
+    report's owner-approval stage completes (see crash_report.py)."""
+    __tablename__ = "employee_documents"
+
+    id = Column(Integer, primary_key=True)
+    driver_name = Column(String(150), nullable=False, index=True)
+    employee_id = Column(String(50))
+    document_type = Column(String(50), nullable=False)   # e.g. "crash_report"
+    related_record_id = Column(Integer)
+    file_url = Column(String(500))
+    created_at = Column(DateTime, default=datetime.utcnow)
 
     # Routing
     routed_at = Column(DateTime)
@@ -2618,6 +2675,50 @@ def ensure_driver_shift_dm_checklist_columns():
     migrations = [
         ("driver_shift_dms", "schedule_acked_at", "TIMESTAMP"),
         ("driver_shift_dms", "eod_checklist_at",  "TIMESTAMP"),
+    ]
+    for table, col, typedef in migrations:
+        try:
+            with engine.begin() as conn:
+                if DATABASE_URL.startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}"))
+                else:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {typedef}"))
+        except Exception:
+            pass  # Column already exists
+
+
+def ensure_crash_report_evidence_columns():
+    """Expand crash reports with the full mandatory-evidence set, statement
+    sanitization audit trail, and drug-screen tracking — added 2026-07-15.
+
+    crash_reports: 5 new per-category photo columns (vehicle_damage/other_vehicle/
+                   dl_driver/dl_other/insurance_other/license_plate_other — the
+                   existing photo_urls column keeps covering the 'scene' category,
+                   no change needed there), third_party_statement (+ declined
+                   flag), *_raw columns holding the verbatim pre-sanitization
+                   text, and drug_screen_status.
+    drivers:       license_number/license_state, for future crash-report prefill.
+    vehicles:      license_plate/license_plate_state/vehicle_year/vehicle_make_model,
+                   for future crash-report prefill.
+    """
+    migrations = [
+        ("crash_reports", "photo_vehicle_damage",          "JSON"),
+        ("crash_reports", "photo_other_vehicle",           "JSON"),
+        ("crash_reports", "photo_dl_driver",                "JSON"),
+        ("crash_reports", "photo_dl_other",                 "JSON"),
+        ("crash_reports", "photo_insurance_other",          "JSON"),
+        ("crash_reports", "photo_license_plate_other",      "JSON"),
+        ("crash_reports", "third_party_statement",          "TEXT"),
+        ("crash_reports", "third_party_statement_declined", "BOOLEAN DEFAULT 0"),
+        ("crash_reports", "accident_description_raw",       "TEXT"),
+        ("crash_reports", "third_party_statement_raw",      "TEXT"),
+        ("crash_reports", "drug_screen_status",              "VARCHAR(20)"),
+        ("drivers",  "license_number", "VARCHAR(50)"),
+        ("drivers",  "license_state",  "VARCHAR(10)"),
+        ("vehicles", "license_plate",       "VARCHAR(20)"),
+        ("vehicles", "license_plate_state", "VARCHAR(10)"),
+        ("vehicles", "vehicle_year",        "VARCHAR(10)"),
+        ("vehicles", "vehicle_make_model",  "VARCHAR(100)"),
     ]
     for table, col, typedef in migrations:
         try:

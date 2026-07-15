@@ -471,7 +471,7 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
         from api.src.routes.slack_home import _handle_home_callout_button
         _handle_home_callout_button(payload, db)
 
-    elif action_id in ("home_report_crash", "home_report_injury", "home_incident_report"):
+    elif action_id in ("home_report_injury", "home_incident_report"):
         from api.src.routes.slack_home import _handle_home_report_button
         _handle_home_report_button(payload, db, action_id)
 
@@ -490,6 +490,14 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
     elif action_id == "dispatch_back_from_preview":
         from api.src.routes.slack_dispatch_home import _handle_dispatch_back_from_preview
         _handle_dispatch_back_from_preview(payload, db)
+
+    elif action_id == "crash_report_approve":
+        from api.src.routes.crash_report import _handle_crash_report_approve
+        _handle_crash_report_approve(payload, db)
+
+    elif action_id == "crash_report_drug_screen_done":
+        from api.src.routes.crash_report import _handle_crash_report_drug_screen_done
+        _handle_crash_report_drug_screen_done(payload, db)
 
     # Slack requires a 200 response within 3 seconds
     return {"ok": True}

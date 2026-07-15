@@ -30,7 +30,7 @@ from sqlalchemy import func
 
 from api.src.database import (
     get_db, RtsDebrief, RescueEvent, RescueContribution,
-    DailyRouteAssignment, CortexSnapshot, DriverRosterEntry,
+    DailyRouteAssignment, CortexSnapshot, DriverRosterEntry, CrashReport,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,8 +100,56 @@ def _expected_return_time(assignment: Optional[DailyRouteAssignment], shift_date
 # Called directly from the Slack action handler (not over HTTP)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _drug_screen_alert(driver_name: str, db: Session) -> None:
+    """Nudges dispatch when a driver with an open post-accident drug-screen
+    requirement (set on crash_report.py's submit_crash_report) hits Return
+    to Station — this is the 'when the driver returns' trigger the
+    drug-screen reminder was waiting on, reusing the RTS tap rather than
+    building separate return-detection logic."""
+    pending = (
+        db.query(CrashReport)
+        .filter(
+            CrashReport.driver_name == driver_name,
+            CrashReport.drug_screen_status.in_(["pending", "scheduled"]),
+            CrashReport.status.in_(["submitted", "routed_complete"]),
+        )
+        .order_by(CrashReport.created_at.desc())
+        .first()
+    )
+    if not pending:
+        return
+    token = os.getenv("SLACK_BOT_TOKEN")
+    if not token:
+        return
+    from api.src.routes.document_routing import get_role_slack_ids
+    dispatch_ids = get_role_slack_ids(db, "dispatch")
+    if not dispatch_ids:
+        return
+    from slack_sdk import WebClient
+    client = WebClient(token=token)
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": (
+            f"🚨 *{driver_name}* is heading back — post-accident drug screen required "
+            f"(Report {pending.report_number})."
+        )}},
+        {"type": "actions", "elements": [{
+            "type": "button",
+            "action_id": "crash_report_drug_screen_done",
+            "text": {"type": "plain_text", "text": "✅ Mark Drug Screen Complete", "emoji": True},
+            "style": "primary",
+            "value": str(pending.id),
+        }]},
+    ]
+    for sid in dispatch_ids:
+        try:
+            client.chat_postMessage(channel=sid, text="Post-accident drug screen required", blocks=blocks)
+        except Exception as exc:
+            logger.warning("Drug-screen RTS alert failed for %s: %s", sid, exc)
+
+
 def start_rts(driver_name: str, slack_user_id: Optional[str], db: Session) -> dict:
     """Driver tapped the RTS button. Returns either a rescue handoff or a debrief link."""
+    _drug_screen_alert(driver_name, db)
     today = date.today()
 
     rescue = _find_open_rescue(driver_name, db)

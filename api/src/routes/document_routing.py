@@ -45,7 +45,14 @@ def _ensure_tables():
 
 # Seed defaults the user specified — safe to call repeatedly (upsert by document_type).
 _DEFAULT_ROUTING = {
-    "crash_report": ["dispatch", "ops_manager", "owner"],
+    # NOTE: crash_report's actual routing is a sequential gated chain
+    # (dispatch -> ops_manager -> owner; see crash_report.py's
+    # _APPROVAL_STAGES / _notify_stage), not a flat broadcast of this list.
+    # "hr" is included here for documentation/consistency with the real
+    # flow — HR is notified automatically once the owner approves, not as
+    # a gating stage — but crash_report.py calls get_role_slack_ids()
+    # directly rather than resolving through this table.
+    "crash_report": ["dispatch", "ops_manager", "owner", "hr"],
     "injury_report": ["dispatch", "ops_manager", "hr"],
     "incident_report": ["dispatch", "ops_manager"],
     "time_off_request": ["dispatch", "hr"],
@@ -311,8 +318,23 @@ _CRASH_REPORT_FIELDS = [
     ("third_party_license_plate_state", "Third Party License Plate & State", "text", False, 370, None),
     ("third_party_license_no", "Third Party Driver License No.", "text", False, 380, None),
     ("third_party_license_state", "Third Party License State", "text", False, 390, None),
-    # Narrative
+    # Narrative / statements — accident_description doubles as the driver's
+    # own statement. Minimum-length/junk-text enforcement lives in
+    # crash_report.py's _looks_sloppy(), not here (this table only checks
+    # presence, not quality).
     ("accident_description", "Describe accident and how it happened", "text", True, 400, None),
+    ("third_party_statement", "Third Party Statement", "text", False, 405, None),
+
+    # Mandatory evidence photos. vehicle_damage/dl_driver are always
+    # required; the third-party ones are conditionally required (enforced
+    # in crash_report.py's submit_crash_report, same pattern as the
+    # third-party text fields above being non-required here).
+    ("photo_vehicle_damage", "Photo(s) of NDAY vehicle damage", "photo", True, 410, None),
+    ("photo_dl_driver", "Photo of driver's license (NDAY driver)", "photo", True, 420, None),
+    ("photo_other_vehicle", "Photo(s) of third party's vehicle", "photo", False, 430, None),
+    ("photo_dl_other", "Photo of third party's driver's license", "photo", False, 440, None),
+    ("photo_insurance_other", "Photo of third party's insurance", "photo", False, 450, None),
+    ("photo_license_plate_other", "Photo of third party's license plate", "photo", False, 460, None),
     # Conditions/other (optional)
     ("num_lanes", "Number of Lanes (each direction)", "number", False, 500, None),
     ("road_construction", "Road Construction", "select", False, 510, ["Asphalt", "Concrete", "Gravel", "Shell", "Dirt"]),

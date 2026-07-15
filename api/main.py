@@ -95,6 +95,21 @@ async def _mgt_reminders_loop():
         await asyncio.sleep(60)
 
 
+async def _misrouted_file_watch_loop():
+    """Every 60 s — delegates to ops_ingest.run_misrouted_file_watch(),
+    which only actually scans every 15 min (own DB-backed throttle). Checks
+    every Slack channel the bot can see other than #nday-operations-management
+    and #dlv3-nday-info for a file that looks like it should have landed
+    there instead, and alerts #nday-mgt if so. Gated by
+    MISROUTED_FILE_WATCH_ACTIVE (default false)."""
+    while True:
+        try:
+            await asyncio.to_thread(ops_ingest.run_misrouted_file_watch)
+        except Exception as exc:
+            logger.warning("Misrouted-file watch loop error: %s", exc)
+        await asyncio.sleep(60)
+
+
 async def _schedule_escalation_loop():
     """Every 60 s — delegates to rostering.run_schedule_escalation_check(),
     which posts an escalating #nday-mgt nag once tomorrow's driver schedule
@@ -346,6 +361,7 @@ async def startup():
     asyncio.create_task(_grounded_van_watcher_loop())
     asyncio.create_task(_wave_lead_watcher_loop())
     asyncio.create_task(_mgt_reminders_loop())
+    asyncio.create_task(_misrouted_file_watch_loop())
     asyncio.create_task(_schedule_escalation_loop())
     asyncio.create_task(_schedule_gap_alert_loop())
 

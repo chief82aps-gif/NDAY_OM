@@ -2530,6 +2530,27 @@ class OpsIngestJob(Base):
     ingested_at = Column(DateTime)
 
 
+class MisroutedFileAlert(Base):
+    """Every file seen by the hourly misrouted-file watcher (ops_ingest.py's
+    check_misrouted_files) in a channel OTHER than #nday-operations-management
+    or #dlv3-nday-info — added 2026-07-15 because a real DSP Scorecard sat
+    undetected for hours after landing in the wrong channel. One row per
+    file evaluated (not just the ones that trigger an alert) so the watcher
+    never re-classifies the same file twice; `alerted` distinguishes the
+    two cases. All NDAY-sourced ingest is expected in C0BE4ALL1EX — this
+    is the safety net for when it isn't.
+    """
+    __tablename__ = "misrouted_file_alerts"
+
+    id = Column(Integer, primary_key=True)
+    slack_file_id = Column(String(50), unique=True, nullable=False, index=True)
+    channel_id = Column(String(50), nullable=False)
+    file_name = Column(String(255), nullable=False)
+    detected_type = Column(String(50), nullable=False)   # whatever _classify() returned
+    alerted = Column(Boolean, nullable=False, default=False)  # False = looked "unknown", no alert sent
+    seen_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class DriverCallout(Base):
     """Tracks drivers who called out for a specific date.
 

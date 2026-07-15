@@ -25,7 +25,7 @@ import requests
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from api.src.database import get_db, OpsIngestJob
+from api.src.database import get_db, OpsIngestJob, MisroutedFileAlert, get_reminder_state, set_reminder_state
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ops-ingest", tags=["ops-ingest"])
@@ -33,6 +33,13 @@ router = APIRouter(prefix="/ops-ingest", tags=["ops-ingest"])
 OPS_CHANNEL = os.getenv("OPS_CHANNEL_ID", "C0BE4ALL1EX")  # #nday-operations-management
 DLV3_INFO_CHANNEL = os.getenv("DLV3_INFO_CHANNEL_ID", "C0AF48TPAMV")  # #dlv3-nday-info (DOP + route sheets)
 SCAN_CHANNELS = [OPS_CHANNEL, DLV3_INFO_CHANNEL]
+MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")  # #nday-mgt — misrouted-file alerts land here
+
+# Off by default, same reasoning as every other new automated Slack-send in
+# this app (DRIVER_DM_ACTIVE, SCHEDULE_ESCALATION_ACTIVE): review it once
+# before it starts posting on its own. Added 2026-07-15 after a real DSP
+# Scorecard sat undetected for hours in the wrong channel.
+_MISROUTED_WATCH_ACTIVE = os.getenv("MISROUTED_FILE_WATCH_ACTIVE", "false").lower() == "true"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -288,6 +295,132 @@ def scan_ops_channel(db: Session) -> list[str]:
         db.commit()
 
     return new_filenames
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Misrouted-file watcher — every 15 min, checks every OTHER channel the bot can
+# see (i.e. not SCAN_CHANNELS) for a file that looks like it should have
+# gone to #nday-operations-management instead. Read-only classification —
+# never ingests, never creates an OpsIngestJob; only alerts #nday-mgt so a
+# human can move it. Added 2026-07-15: a real DSP Scorecard PDF sat
+# undetected for hours after landing in the wrong channel.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _bot_channel_memberships(client) -> list[str]:
+    """Every public/private channel the bot is currently a member of."""
+    channel_ids: list[str] = []
+    cursor: Optional[str] = None
+    while True:
+        resp = client.conversations_list(
+            types="public_channel,private_channel",
+            exclude_archived=True,
+            limit=200,
+            cursor=cursor,
+        )
+        for ch in resp.get("channels", []):
+            if ch.get("is_member"):
+                channel_ids.append(ch["id"])
+        cursor = resp.get("response_metadata", {}).get("next_cursor") or None
+        if not cursor:
+            break
+    return channel_ids
+
+
+def check_misrouted_files(db: Session) -> dict:
+    """Scan every channel the bot can see EXCEPT the two correct ingest
+    channels, classify any file share found there the same way the real
+    scan does, and alert #nday-mgt if it looks like a real NDAY file type
+    (not "unknown"). Every file evaluated gets a MisroutedFileAlert row —
+    alerted or not — so nothing gets re-classified on the next pass."""
+    if not _MISROUTED_WATCH_ACTIVE:
+        return {"status": "inactive"}
+
+    client = _slack_client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    try:
+        other_channels = [c for c in _bot_channel_memberships(client) if c not in SCAN_CHANNELS]
+    except Exception as exc:
+        logger.warning("Misrouted-file watch: conversations_list failed: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+    known_ids: set[str] = {row[0] for row in db.query(MisroutedFileAlert.slack_file_id).all()}
+    alerts_sent = 0
+    files_seen = 0
+
+    for channel_id in other_channels:
+        try:
+            resp = client.conversations_history(channel=channel_id, limit=100)
+        except Exception as exc:
+            logger.info("Misrouted-file watch: history failed for %s: %s", channel_id, exc)
+            continue
+
+        for msg in resp.get("messages", []):
+            files = msg.get("files", [])
+            if not files:
+                continue
+            msg_text: str = msg.get("text", "") or ""
+
+            for f in files:
+                fid: str = f.get("id", "")
+                if not fid or fid in known_ids:
+                    continue
+                known_ids.add(fid)
+
+                fname: str = f.get("name", "") or "unknown"
+                dtype = _classify(fname, msg_text, channel_id)
+                files_seen += 1
+                is_real_type = dtype != "unknown"
+
+                db.add(MisroutedFileAlert(
+                    slack_file_id=fid,
+                    channel_id=channel_id,
+                    file_name=fname,
+                    detected_type=dtype,
+                    alerted=is_real_type,
+                ))
+
+                if is_real_type:
+                    alerts_sent += 1
+                    label = _TYPE_LABELS.get(dtype, dtype)
+                    try:
+                        client.chat_postMessage(
+                            channel=MGT_CHANNEL,
+                            text=(
+                                f":rotating_light: *Misrouted file detected* — `{fname}` in <#{channel_id}> "
+                                f"looks like *{label}* but landed outside <#{OPS_CHANNEL}|nday-operations-management>. "
+                                f"Please move/re-upload it there so it gets picked up."
+                            ),
+                        )
+                    except Exception as exc:
+                        logger.warning("Misrouted-file alert post failed: %s", exc)
+
+    db.commit()
+    return {"status": "checked", "channels_scanned": len(other_channels), "files_seen": files_seen, "alerts_sent": alerts_sent}
+
+
+def run_misrouted_file_watch() -> dict:
+    """Called every ~60s from main.py's loop; only actually scans once an
+    hour (DB-backed throttle, same ReminderThrottleState mechanism used
+    elsewhere in this app — never an in-memory dict)."""
+    if not _MISROUTED_WATCH_ACTIVE:
+        return {"status": "inactive"}
+
+    from api.src.database import SessionLocal
+    db = SessionLocal()
+    try:
+        state = get_reminder_state(db, "misrouted_file_watch")
+        last_run = datetime.fromisoformat(state["last_run_at"]) if state.get("last_run_at") else None
+        now = datetime.now(timezone.utc)
+        if last_run and (now - last_run).total_seconds() < 900:  # 15 min
+            return {"status": "throttled"}
+
+        result = check_misrouted_files(db)
+        set_reminder_state(db, "misrouted_file_watch", {"last_run_at": now.isoformat()})
+        return result
+    finally:
+        db.close()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

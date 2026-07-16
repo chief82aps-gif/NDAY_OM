@@ -50,6 +50,14 @@ NOTIFY_CHANNEL = os.getenv("SLACK_NOTIFY_CHANNEL", "C0AF48TPAMV")
 CORTEX_CHANNEL = os.getenv("CORTEX_NOTIFY_CHANNEL", "C0BE4ALL1EX")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://nday-om.vercel.app")
 
+# Added 2026-07-16: send_all_dms()/send_sweeper_notifications() are a
+# separate, older driver-DM pipeline than rostering.py's — they had no
+# gate of their own and would fire real driver DMs any time check_and_notify()
+# ran, as soon as the master SLACK_NOTIFICATIONS_ACTIVE switch was on,
+# regardless of rostering.py's DRIVER_DM_ACTIVE flag. Same env var, same
+# semantics, now actually checked here too.
+_DM_ACTIVE = os.getenv("DRIVER_DM_ACTIVE", "false").lower() == "true"
+
 # Ops managers who receive DMs after DOP is detected each morning
 OPS_MANAGER_IDS = [
     ("Spencer", os.getenv("SLACK_ID_SPENCER", "U0AJGCYKXPB")),
@@ -613,7 +621,11 @@ def send_driver_dm(assignment: DailyRouteAssignment, db: Session) -> bool:
 
 
 def send_all_dms(for_date: date, db: Session) -> Dict:
-    """Send DMs to all drivers with unsent assignments for for_date."""
+    """Send DMs to all drivers with unsent assignments for for_date.
+    Gated by DRIVER_DM_ACTIVE (default false)."""
+    if not _DM_ACTIVE:
+        return {"status": "inactive", "sent": 0, "skipped": 0, "total": 0}
+
     assignments = (
         db.query(DailyRouteAssignment)
         .filter(
@@ -737,7 +749,11 @@ def send_sweeper_notifications(for_date: date, db: Session) -> Dict:
     """
     Find active roster drivers NOT assigned a route today and DM them as sweepers.
     Only runs once per day — idempotent via SlackIngestLog synthetic entry.
+    Gated by DRIVER_DM_ACTIVE (default false).
     """
+    if not _DM_ACTIVE:
+        return {"status": "inactive", "sent": 0}
+
     fake_id = f"sweeper_notify_{for_date.isoformat()}"
     if db.query(SlackIngestLog).filter(SlackIngestLog.slack_file_id == fake_id).first():
         return {"status": "already_sent"}

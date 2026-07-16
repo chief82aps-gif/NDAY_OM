@@ -22,6 +22,7 @@ Use this index to quickly locate governing standards, ingest rules, audit rules,
 - [Variable Invoice Rules](INVOICE_RULES.md)
 - [Monthly Fleet Invoice Rules](FLEET_INVOICE_RULES.md)
 - [Fleet Vehicle Ingest Rules & Van Assignment Governance](VAN_INGEST_RULES.md)
+- [DOP & Route Sheet Ingest Rules](DOP_ROUTE_SHEET_INGEST_RULES.md) — no filename/type control (Amazon-submitted); two independent detection pipelines; 9 AM reminder; Cortex-authoritative cross-validation (spec'd, not yet built)
 
 ---
 

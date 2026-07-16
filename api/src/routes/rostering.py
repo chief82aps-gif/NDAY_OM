@@ -725,11 +725,17 @@ def run_schedule_escalation_check(db: Session) -> dict:
 # ─── Showtime summary to #nday-mgt (new, posted once the schedule lands) ────
 
 def post_showtime_summary(shift_date: date, db: Session) -> dict:
-    """Post a Showtime-grouped breakdown to #nday-mgt: drivers bucketed by
-    show_time, with van/service type. Sweepers land in the final wave's
-    bucket automatically (their show_time now equals it, per the ingest
-    fix). A different lens than post_mgt_summary's quality/risk matrix —
-    same precedent as post_assignment_matrix being its own function."""
+    """Post a Showtime-grouped breakdown to #nday-mgt AND #nday-team-room
+    (driver-facing): drivers bucketed by show_time, with van/service type.
+    Sweepers land in the final wave's bucket automatically (their show_time
+    now equals it, per the ingest fix). A different lens than
+    post_mgt_summary's quality/risk matrix — same precedent as
+    post_assignment_matrix being its own function.
+
+    Deliberately does NOT include performance/safety metrics (unlike
+    post_driver_summary_matrix) — this is the one roster-facing summary
+    that's safe to show drivers directly, per explicit 2026-07-16
+    decision to add #nday-team-room as a second destination."""
     if not _ACTIVE:
         return {"status": "inactive"}
 
@@ -786,17 +792,24 @@ def post_showtime_summary(shift_date: date, db: Session) -> dict:
 
     state_key = f"showtime_summary_{shift_date.isoformat()}"
     raw = get_reminder_state(db, state_key)
-    existing_ts = raw.get("slack_ts")
+
+    def _post_or_update(channel: str, ts_key: str) -> Optional[str]:
+        existing_ts = raw.get(ts_key)
+        if existing_ts:
+            client.chat_update(channel=channel, ts=existing_ts, text=f"Showtime Summary — {date_str}", blocks=blocks)
+            return existing_ts
+        resp = client.chat_postMessage(channel=channel, text=f"Showtime Summary — {date_str}", blocks=blocks)
+        return resp.get("ts")
 
     try:
-        if existing_ts:
-            client.chat_update(channel=MGT_CHANNEL, ts=existing_ts, text=f"Showtime Summary — {date_str}", blocks=blocks)
-            slack_ts = existing_ts
-        else:
-            resp = client.chat_postMessage(channel=MGT_CHANNEL, text=f"Showtime Summary — {date_str}", blocks=blocks)
-            slack_ts = resp.get("ts")
-        set_reminder_state(db, state_key, {"slack_ts": slack_ts})
-        return {"status": "posted", "date": shift_date.isoformat(), "slack_ts": slack_ts}
+        mgt_ts = _post_or_update(MGT_CHANNEL, "mgt_slack_ts")
+        team_ts = None
+        try:
+            team_ts = _post_or_update(TEAM_CHANNEL, "team_slack_ts")
+        except Exception as exc:
+            logger.warning("Showtime summary post to #nday-team-room failed: %s", exc)
+        set_reminder_state(db, state_key, {"mgt_slack_ts": mgt_ts, "team_slack_ts": team_ts})
+        return {"status": "posted", "date": shift_date.isoformat(), "mgt_slack_ts": mgt_ts, "team_slack_ts": team_ts}
     except Exception as exc:
         logger.error("Showtime summary post failed: %s", exc)
         return {"status": "error", "detail": str(exc)}

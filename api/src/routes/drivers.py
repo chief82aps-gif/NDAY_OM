@@ -21,7 +21,10 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 
 from api.src.database import get_db, DriverRosterEntry, flag_stale_driver_profiles
-from api.src.driver_matching import load_ssn, load_slack, best_ssn_match, best_slack_match
+from api.src.driver_matching import (
+    load_ssn, load_slack, load_associates,
+    best_ssn_match, best_slack_match, best_slack_match_via_associates,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/drivers", tags=["drivers"])
@@ -88,6 +91,7 @@ def import_ssn_slack(
     dry_run: bool = True,
     ssn_file: Optional[UploadFile] = File(None),
     slack_file: Optional[UploadFile] = File(None),
+    associate_file: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
 ):
     """
@@ -100,13 +104,25 @@ def import_ssn_slack(
     is the preferred way to run it against production since it doesn't
     require handing raw DB credentials to a local script).
 
+    associate_file (optional, added 2026-07-16): an Amazon associate/
+    Transporter roster export ("AssociateData (N).csv"), used only
+    alongside slack_file. For each driver, first tries bridging through
+    this file's legal name -> email local-part -> Slack username (a
+    strict/deterministic match); only falls back to fuzzy-matching the
+    roster name directly against Slack's display/real name if that
+    bridge doesn't resolve. The direct fuzzy match alone regularly misses
+    real matches because Slack's "Real Name" field is often an
+    auto-generated placeholder derived from the username (e.g.
+    "A Laporte Ndl"), not something with the driver's actual middle name
+    or full legal name in it.
+
     Pass at least one of ssn_file / slack_file. Defaults to dry_run=true —
     pass ?dry_run=false to actually write changes.
     """
     if not ssn_file and not slack_file:
         raise HTTPException(400, "Provide at least one of ssn_file or slack_file.")
 
-    ssn_path = slack_path = None
+    ssn_path = slack_path = associate_path = None
     try:
         if ssn_file:
             with tempfile.NamedTemporaryFile(suffix=os.path.splitext(ssn_file.filename or "")[1] or ".xlsx", delete=False) as tmp:
@@ -116,9 +132,14 @@ def import_ssn_slack(
             with tempfile.NamedTemporaryFile(suffix=os.path.splitext(slack_file.filename or "")[1] or ".xlsx", delete=False) as tmp:
                 tmp.write(slack_file.file.read())
                 slack_path = tmp.name
+        if associate_file:
+            with tempfile.NamedTemporaryFile(suffix=os.path.splitext(associate_file.filename or "")[1] or ".csv", delete=False) as tmp:
+                tmp.write(associate_file.file.read())
+                associate_path = tmp.name
 
         ssn_rows = load_ssn(ssn_path) if ssn_path else []
         slack_rows = load_slack(slack_path) if slack_path else []
+        associate_rows = load_associates(associate_path) if associate_path else []
 
         roster = db.query(DriverRosterEntry).filter(DriverRosterEntry.is_active == True).all()
 
@@ -140,9 +161,20 @@ def import_ssn_slack(
                     ssn_misses += 1
 
             if slack_rows:
-                uid, display, score = best_slack_match(name, slack_rows)
+                uid = display = None
+                score = 0.0
+                method = None
+                if associate_rows:
+                    uid, display, score = best_slack_match_via_associates(name, associate_rows, slack_rows)
+                    if uid:
+                        method = "associate_bridge"
+                if not uid:
+                    uid, display, score = best_slack_match(name, slack_rows)
+                    if uid:
+                        method = "direct_fuzzy"
+
                 if uid:
-                    slack_hits.append({"driver": name, "score": round(score, 2), "slack_id": uid, "slack_display": display})
+                    slack_hits.append({"driver": name, "score": round(score, 2), "slack_id": uid, "slack_display": display, "method": method})
                     if not dry_run:
                         entry.slack_member_id = uid
                         entry.slack_display_name = display
@@ -158,10 +190,10 @@ def import_ssn_slack(
             "status": "applied" if not dry_run else "dry_run",
             "roster_size": len(roster),
             "ssn": {"matched": len(ssn_hits), "unmatched": ssn_misses, "sample": ssn_hits[:10]} if ssn_rows else None,
-            "slack": {"matched": len(slack_hits), "unmatched": slack_misses, "sample": slack_hits[:10]} if slack_rows else None,
+            "slack": {"matched": len(slack_hits), "unmatched": slack_misses, "sample": slack_hits[:20]} if slack_rows else None,
         }
     finally:
-        for p in (ssn_path, slack_path):
+        for p in (ssn_path, slack_path, associate_path):
             if p:
                 try:
                     os.unlink(p)

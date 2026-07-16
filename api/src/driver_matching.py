@@ -9,10 +9,28 @@ credentials handed to a local script when this exists.
 """
 from __future__ import annotations
 
+import csv
+import os
 import re
 from difflib import SequenceMatcher
 
-MATCH_THRESHOLD = 0.82   # SequenceMatcher ratio cutoff
+MATCH_THRESHOLD = 0.82            # SequenceMatcher ratio cutoff
+ASSOCIATE_MATCH_THRESHOLD = 0.90  # stricter — feeds a deterministic email lookup, a wrong hit here silently links the wrong Slack account
+
+
+def _read_rows(path: str) -> list[dict]:
+    """Read a header-row table from either .xlsx or .csv into a list of
+    dicts keyed by header name. CSV support added 2026-07-16 for the
+    SlackMemberExtractor Chrome-extension export, which ships CSV with a
+    UTF-8 BOM rather than xlsx."""
+    if os.path.splitext(path)[1].lower() == ".csv":
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            return list(csv.DictReader(f))
+    import openpyxl
+    wb = openpyxl.load_workbook(path)
+    ws = wb.active
+    hdrs = [str(c.value).strip() if c.value else "" for c in ws[1]]
+    return [dict(zip(hdrs, raw)) for raw in ws.iter_rows(min_row=2, values_only=True)]
 
 
 def _norm(s: str) -> str:
@@ -42,14 +60,9 @@ def _build_ssn_candidates(first: str, middle: str, last: str) -> list[str]:
 
 
 def load_ssn(path: str) -> list[dict]:
-    """Load SSN xlsx → list of {candidates: [...], last4}"""
-    import openpyxl
-    wb = openpyxl.load_workbook(path)
-    ws = wb.active
-    hdrs = [str(c.value).strip() if c.value else "" for c in ws[1]]
+    """Load SSN export (xlsx) → list of {candidates: [...], last4}"""
     rows = []
-    for raw in ws.iter_rows(min_row=2, values_only=True):
-        row = dict(zip(hdrs, raw))
+    for row in _read_rows(path):
         last4 = str(row.get("last 4") or "").strip().zfill(4)
         first  = str(row.get("Legal First Name")   or "").strip()
         middle = str(row.get("Legal Middle Name")  or "").strip()
@@ -61,20 +74,67 @@ def load_ssn(path: str) -> list[dict]:
 
 
 def load_slack(path: str) -> list[dict]:
-    """Load Slack xlsx → list of {user_id, username, display_name}"""
-    import openpyxl
-    wb = openpyxl.load_workbook(path)
-    ws = wb.active
-    hdrs = [str(c.value).strip() if c.value else "" for c in ws[1]]
+    """Load a Slack workspace member export (xlsx or CSV) → list of
+    {user_id, username, display_name}. Supports two header conventions:
+    the original xlsx export ("User ID"/"Username"/"Display Name") and the
+    SlackMemberExtractor CSV tool ("Id"/"Name"/"Real Name" — CSV's
+    "Display Name" is often blank, so "Real Name" is the fallback)."""
     rows = []
-    for raw in ws.iter_rows(min_row=2, values_only=True):
-        row = dict(zip(hdrs, raw))
-        user_id      = str(row.get("User ID")      or "").strip()
-        username     = str(row.get("Username")      or "").strip()
-        display_name = str(row.get("Display Name") or "").strip()
+    for row in _read_rows(path):
+        user_id      = str(row.get("User ID") or row.get("Id") or "").strip()
+        username     = str(row.get("Username") or row.get("Name") or "").strip()
+        display_name = (
+            str(row.get("Display Name") or "").strip()
+            or str(row.get("Real Name") or "").strip()
+        )
         if user_id:
             rows.append({"user_id": user_id, "username": username, "display_name": display_name})
     return rows
+
+
+def load_associates(path: str) -> list[dict]:
+    """Load an Amazon associate/Transporter roster export (xlsx or CSV,
+    e.g. "AssociateData (N).csv") → list of {name, email}. Bridges a
+    roster driver's legal name to a Slack account via email local-part —
+    far more reliable than fuzzy-matching directly against Slack's often
+    auto-generated "Real Name" field (e.g. "A Laporte Ndl", generated
+    from the username, not a real display name someone typed in)."""
+    rows = []
+    for row in _read_rows(path):
+        name = str(row.get("Name and ID") or row.get("Name") or "").strip()
+        email = str(row.get("Email") or "").strip()
+        if name and email and "@" in email:
+            rows.append({"name": name, "email": email})
+    return rows
+
+
+def best_slack_match_via_associates(
+    roster_name: str, associate_rows: list[dict], slack_rows: list[dict]
+) -> tuple[str | None, str | None, float]:
+    """Bridge roster_name -> associate legal name (strict fuzzy match) ->
+    email local-part -> exact match against the Slack export's username
+    column. Returns (None, None, best_associate_score) if any link in the
+    chain fails — the caller should fall back to best_slack_match()
+    (direct fuzzy match against Slack display/real names) in that case."""
+    slack_by_username = {
+        r["username"].strip().lower(): r for r in slack_rows if r["username"]
+    }
+
+    best_assoc, best_score = None, 0.0
+    for a in associate_rows:
+        score = _ratio(roster_name, a["name"])
+        if score > best_score:
+            best_score = score
+            best_assoc = a
+    if best_score < ASSOCIATE_MATCH_THRESHOLD or not best_assoc:
+        return None, None, best_score
+
+    local_part = best_assoc["email"].split("@")[0].strip().lower()
+    slack_row = slack_by_username.get(local_part)
+    if not slack_row:
+        return None, None, best_score
+
+    return slack_row["user_id"], (slack_row["display_name"] or slack_row["username"]), best_score
 
 
 def best_ssn_match(roster_name: str, ssn_rows: list[dict]) -> tuple[str | None, float]:

@@ -169,7 +169,7 @@ def scan_channel_for_files(for_date: date) -> Dict[str, Optional[dict]]:
         fid = f.get("id")
         url = f.get("url_private_download") or f.get("url_private")
 
-        if ".xlsx" in nl and ("dop" in nl or "day" in nl):
+        if (".xlsx" in nl or ".csv" in nl) and ("dop" in nl or "day" in nl):
             result["dop"] = {"id": fid, "name": name, "url": url}
 
         elif ".pdf" in nl and (

@@ -10,29 +10,73 @@ rather than re-deriving status from scratch each session.
 
 ---
 
-## Cross-cutting facts (checked 2026-07-15, don't re-derive from stale memory)
+## Cross-cutting facts (checked 2026-07-16, don't re-derive from stale memory)
 
-- **Driver Slack-linking: 61 of 102 active drivers linked** (verified live against
-  production `nday-om.onrender.com/drivers`). 41 remain unlinked — a
-  re-run of the SSN/Slack import against updated export files would
-  help, but this is no longer a hard blocker for driver-DM work.
-- **Production is not fully current.** It already has the driver-profiles
-  module (hence the real Slack-linking data above), but does **not**
-  have `safety_events.py` or `okami_capacity.py` yet — both 404 there.
-  All of today's Okami work is still uncommitted locally (`git status`
-  confirmed). Nothing "restarts" into place — it needs an explicit
-  commit → push → manual Render redeploy (Render does not auto-deploy).
-- **Correction:** `SLACK_NOTIFICATIONS_ACTIVE=true` and `ROSTERING_ACTIVE=true`
-  in production (confirmed via Render env var list) — the earlier "both
-  false" note was stale. `DRIVER_DM_ACTIVE` is unset (defaults `false`) —
-  still the real gate on driver-facing DMs.
-- **Security — before the next commit:** `api/users.json` (tracked, modified)
-  now contains what looks like a real admin password in plaintext, in a
-  confirmed-public repo. Confirm whether it's real before it ships.
-- **Security — before the next commit:** `document_routing.py`'s new
-  `dispatch_staff` role hardcodes six real names + Slack IDs directly in
-  source, violating the policy stated two lines above it in the same
-  file. Needs to move to an env var or DB seed like `owner`/`hr` did.
+- **Driver Slack-linking: 84 of 104 active drivers linked** (verified live
+  2026-07-16). Up from 61/102. A deterministic email-bridge matcher
+  (`best_slack_match_via_associates()` in `driver_matching.py`) is built,
+  deployed, and locally verified to resolve **10 more** with 100%
+  confidence and zero conflicts — but **has not actually been run against
+  production yet** (`POST /drivers/import-ssn-slack?dry_run=false` with
+  both `slack_file` + `associate_file`). That's a live action item, not
+  done. Of the remaining 20: 2 (Adrian Shelton, daniela gonzalez) are
+  confirmed active employees who just haven't joined Slack; 1 (Diana
+  Esmeralda Vazquez) was terminated (now marked `is_active=False` via the
+  new `/drivers/{id}/terminate` endpoint); 7 are genuinely unexplained —
+  not in the Amazon associate export at all, active or inactive, and never
+  seen on a real schedule (`source: adp_import`, `last_seen_on_schedule:
+  None`) — likely stale ADP-import leftovers, not real current drivers.
+- **Production is now fully current** — `okami_capacity.py`, `safety_events.py`,
+  crash-report v2 (S3 evidence, Claude sanitization, sequential approval
+  chain), the single-driver edit UI (`/drivers`), and everything else
+  built through 2026-07-16 is live and deploy-verified. The "not fully
+  current" note from 2026-07-15 no longer applies.
+- `SLACK_NOTIFICATIONS_ACTIVE=true`, `ROSTERING_ACTIVE=true` in production.
+  `DRIVER_DM_ACTIVE` **was found flipped to `true` in production on
+  2026-07-16** (not set by anyone in this session — cause unconfirmed) and
+  flipped back to `false`. Given what §"Driver DM readiness" below found,
+  treat any future `true` sighting as worth investigating, not assuming
+  intentional.
+- **Driver DM readiness — real progress, not there yet.** Two real bugs
+  found and fixed this session, both would have caused problems the
+  moment `DRIVER_DM_ACTIVE` went live:
+  1. `daily_notify.py`'s own driver-DM pipeline (`send_all_dms`,
+     `send_sweeper_notifications` — separate from `rostering.py`'s) had
+     **no `DRIVER_DM_ACTIVE` gate at all**. Fixed.
+  2. `build_daily_assignments()` deleted and recreated the whole day's
+     `DailyRouteAssignment` rows on every scheduler tick (every ~10 min,
+     8-10 AM), resetting `dm_sent`/`ack_token` each time — would have
+     re-sent every driver's DM on every rebuild. Converted to an upsert
+     that preserves notification state; also fixed a related bug where a
+     scheduler replay with empty `pdf_data` was blanking out
+     previously-known van/wave data.
+  Still open: the ~20 unlinked drivers above, and no live end-to-end test
+  has ever been run with `DRIVER_DM_ACTIVE=true` against a real driver.
+- **Two independent, non-communicating DOP/Route-Sheet detection
+  pipelines exist**: `ops_ingest.py` (content-based classification,
+  `OpsIngestJob` table, feeds the 9 AM `mgt_reminders.py` reminder) vs.
+  `daily_notify.py` (was filename-keyword-based — `.xlsx` only, missed a
+  real `.csv` DOP upload on 2026-07-16; now fixed to accept `.csv` too;
+  `SlackIngestLog` table; feeds `DailyRouteAssignment`/driver DMs/summary
+  matrix). See `Governance/DOP_ROUTE_SHEET_INGEST_RULES.md` — don't
+  re-diagnose a miss in one pipeline as a bug in the other.
+- **New this session**: Cortex-authoritative route-code reconciliation
+  (`check_route_code_reconciliation()` — >10% DOP-or-Route-Sheet-vs-Cortex
+  mismatch posts a one-time `#nday-mgt` warning naming the bad file);
+  "Re-Run Route Assignments" Dispatch Home button (rebuilds today's
+  assignments, DMs only what actually changed — new/changed/removed —
+  since a driver was last told, via a new `notified_snapshot` column;
+  backgrounded via FastAPI `BackgroundTasks` since it can exceed Slack's
+  3-second ack window); `/drivers/{id}/terminate` (nothing previously set
+  `is_active=False` anywhere, so "Remove Terminated Employees" on
+  Dispatch Home had no way to ever find anyone); single-driver edit UI on
+  `/drivers` (fix one bad Slack link/phone/PIN without a full re-import).
+- **Security — status unconfirmed, re-check before next commit:**
+  `api/users.json` plaintext-password concern and `document_routing.py`'s
+  `dispatch_staff` hardcoded names — both were flagged 2026-07-15; the
+  latter appeared fixed (reads `DOC_ROUTING_DISPATCH_STAFF_SLACK_IDS` env
+  var) as of a system reminder mid-session, but re-verify both directly
+  rather than trusting this note.
 
 ---
 
@@ -61,13 +105,14 @@ Added the same gate `rostering.py`/`dvic.py` use: while off, the tab
 shows a "Coming Soon" placeholder and the DM/notification-sending
 handlers no-op.
 
-There's also apparently a **separate `slack_dispatch_home.py`** (referenced
-by `document_routing.py`'s new `dispatch_staff` role and an
-`is_dispatch_staff` import) that hasn't been reviewed yet — a
-dispatch-facing counterpart to this driver-facing tab. Needs its own
-look before this item can be called fully assessed.
+**Update:** `slack_dispatch_home.py` (the dispatch-facing counterpart) is
+now extensively built and reviewed — quick-link buttons (OKAMI, Rescue,
+Crash Report), "Remove Terminated Employees" (now actually functional,
+see cross-cutting facts), "Preview Driver Home", and "Re-Run Route
+Assignments" (rebuilds today's assignments, DMs drivers only what
+changed since they were last told).
 
-- [ ] Review `slack_dispatch_home.py` (exists, unreviewed)
+- [x] Review `slack_dispatch_home.py`
 - [ ] **Security: move `document_routing.py`'s `dispatch_staff` role
       off hardcoded real names/Slack IDs** before this gets committed —
       violates the file's own stated policy, in a confirmed-public repo
@@ -100,13 +145,17 @@ via the interim Driver Summary Matrix). Performance Coaching Message
 to its own module — not started. ACE Eligibility shows a static "TBD"
 placeholder — no real criteria defined.
 
-- [ ] Get remaining 41 drivers linked (re-run import against updated
-      export files, if available)
+- [ ] Run the already-built associate-bridge matcher against production
+      (`dry_run=false`) to pick up 10 more confirmed links; investigate
+      the 7 unexplained unlinked names before assuming they're stale
 - [ ] Define Performance Coaching Message criteria and build the module
 - [ ] Define real ACE Eligibility criteria
-- [ ] End-to-end test with a handful of the 61 already-linked drivers
-- [ ] Explicit sign-off, then flip `DRIVER_DM_ACTIVE` +
-      `SLACK_NOTIFICATIONS_ACTIVE`
+- [ ] End-to-end test with a handful of already-linked drivers — never
+      actually done; two real send-side bugs were found and fixed this
+      session without ever having sent a real test DM (see cross-cutting
+      facts) — do this before flipping the flag, not after
+- [ ] Explicit sign-off, then flip `DRIVER_DM_ACTIVE`
+      (`SLACK_NOTIFICATIONS_ACTIVE` is already `true`)
 
 **Decision:** ⚪
 **Notes:**
@@ -138,13 +187,13 @@ source — not installed in any browser, not configured anywhere.
 
 ## 4. Okami Validation Process (dispatch dashboard)
 
-**Status:** Built and verified this session — draft submit, Finalize,
-FRT/DA/van coverage checks, Slack notifications to `#nday-mgt` +
-`#nday-fleet` + Jayson/Tamra. Logic confirmed correct via direct backend
-tests and a stubbed-Slack-client test; full UI flow confirmed via
-Playwright. **Not deployed** — see cross-cutting facts above.
+**Status: DEPLOYED 2026-07-15, live in production.** Draft submit,
+Finalize, FRT/DA/van coverage checks, Slack notifications to `#nday-mgt`
++ `#nday-fleet` + Jayson/Tamra, and the "low driver buffer" messaging fix
+(distinguishes a real route-coverage shortfall from just being under the
+10% buffer target) are all live. Dispatch Home has a quick-link button.
 
-- [ ] Commit, push, and manually redeploy on Render
+- [x] Commit, push, and manually redeploy on Render
 - [ ] Run one real test against the actual `#nday-mgt`/`#nday-fleet`
       channels (only a stub client has been tested so far)
 - [ ] Build a small UI for the buffer-% settings (currently API-only:

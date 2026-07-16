@@ -110,7 +110,8 @@ sees it). Always active, no feature flag. Manual trigger:
 
 ## 4. Cross-Validation Rule — Cortex Is the Source of Truth for Route Codes
 
-**Status: specified here, not yet implemented in code (see §5).**
+**Status: implemented 2026-07-16** — `check_route_code_reconciliation()`
+(`api/src/routes/daily_notify.py`), called as step 4A of `check_and_notify()`.
 
 - **Cortex is always correct on route codes.** If the DOP's or the Route
   Sheet's route-code set disagrees with Cortex's, the DOP or Route Sheet is

@@ -535,7 +535,8 @@ def ingest_slack(slack_file_id: str, file_url: str, filename: str, db: Session =
 
 
 def _mgt_summary_rows(week: str, db: Session) -> list[dict]:
-    """Per-driver name / avg inspection time / instance count for a week."""
+    """Per-driver name / avg inspection time / instance count / most recent
+    inspection time (the "Naughty List") for a week."""
     violations = db.query(DvicViolation).filter(DvicViolation.week == week).all()
     by_driver: dict = defaultdict(list)
     for v in violations:
@@ -544,11 +545,20 @@ def _mgt_summary_rows(week: str, db: Session) -> list[dict]:
     rows = []
     for tid, vrows in by_driver.items():
         durations = [v.duration_seconds for v in vrows if v.duration_seconds is not None]
+        # "Most current" = the driver's latest inspection by start_time,
+        # falling back to start_date if start_time is missing — lets
+        # management see whether someone's trending better or worse, not
+        # just their flat average.
+        most_recent = max(
+            vrows,
+            key=lambda v: (v.start_time or datetime.min, v.start_date or date.min),
+        )
         rows.append({
             "transporter_id": tid,
             "name": vrows[0].transporter_name or tid,
             "avg_seconds": round(sum(durations) / len(durations), 1) if durations else None,
             "instances": len(vrows),
+            "most_recent_seconds": most_recent.duration_seconds,
         })
     rows.sort(key=lambda r: r["instances"], reverse=True)
     return rows
@@ -572,20 +582,25 @@ def post_mgt_summary(req: DmRequest, db: Session = Depends(get_db)):
         return {"status": "no_data", "week": week}
 
     week_label = _week_label(week)
-    lines = [f"{'Driver':<24} {'Avg Time':>10} {'Instances':>10}"]
+    lines = [f"{'Driver':<24} {'Instances':>10} {'Avg Time':>10} {'Most Recent':>12}"]
     for r in rows:
         avg = f"{r['avg_seconds']:.0f}s" if r["avg_seconds"] is not None else "—"
-        lines.append(f"{r['name']:<24} {avg:>10} {str(r['instances']):>10}")
+        recent = f"{r['most_recent_seconds']}s" if r["most_recent_seconds"] is not None else "—"
+        lines.append(f"{r['name']:<24} {str(r['instances']):>10} {avg:>10} {recent:>12}")
     table = "```\n" + "\n".join(lines) + "\n```"
 
     blocks = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": f"DVIC Under-90 Summary — {week_label}", "emoji": True},
+            "text": {"type": "plain_text", "text": f"🚨 DVIC Naughty List — {week_label}", "emoji": True},
+        },
+        {
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": "Drivers with pre-trip inspections completed in under 90 seconds this week, sorted by instance count."}],
         },
         {"type": "section", "text": {"type": "mrkdwn", "text": table}},
     ]
-    _post(NDAY_MGT_CHANNEL, f"DVIC Under-90 Summary — {week_label}", blocks=blocks)
+    _post(NDAY_MGT_CHANNEL, f"DVIC Naughty List — {week_label}", blocks=blocks)
 
     return {"status": "posted", "week": week, "driver_count": len(rows)}
 

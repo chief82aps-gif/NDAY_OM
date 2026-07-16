@@ -801,6 +801,86 @@ def manual_misrouted_scan(db: Session = Depends(get_db)):
     return check_misrouted_files(db)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# DVIC auto-ingest — added 2026-07-16 after a real DVIC file sat correctly
+# detected but un-ingested for hours (nobody had clicked "ingest"). Safe to
+# run unattended: _store_dvic() only parses and stores violation data
+# (DvicSnapshot/DvicViolation) — no driver-facing Slack send happens as a
+# side effect of ingestion itself. Discipline DMs stay on their own,
+# separate, still-manual /dvic/send-dm endpoints, untouched by this.
+# ─────────────────────────────────────────────────────────────────────────────
+
+DVIC_AUTO_INGEST_ACTIVE = os.getenv("DVIC_AUTO_INGEST_ACTIVE", "true").lower() == "true"
+
+
+def run_dvic_auto_ingest(db: Session) -> dict:
+    """Ingest every pending DVIC OpsIngestJob. Mirrors /jobs/{id}/ingest's
+    logic (download -> _dispatch -> status update -> Slack confirmation) but
+    runs automatically instead of waiting for a manual click."""
+    if not DVIC_AUTO_INGEST_ACTIVE:
+        return {"status": "inactive"}
+
+    jobs = (
+        db.query(OpsIngestJob)
+        .filter(OpsIngestJob.detected_type == "dvic", OpsIngestJob.status == "pending")
+        .all()
+    )
+    ingested = errors = 0
+    for job in jobs:
+        if not job.file_url:
+            continue
+        job.status = "ingesting"
+        db.commit()
+
+        content = _download_file(job.file_url)
+        if not content:
+            job.status = "error"
+            job.error_message = "Could not download file from Slack. The link may have expired."
+            db.commit()
+            errors += 1
+            continue
+
+        try:
+            result = _dispatch(job, content, db)
+        except Exception as exc:
+            logger.exception("DVIC auto-ingest dispatch error for job %s", job.id)
+            job.status = "error"
+            job.error_message = str(exc)[:500]
+            job.result_json = None
+            db.commit()
+            errors += 1
+            continue
+
+        job.status = "complete" if result.get("status") not in ("error", "unsupported") else result["status"]
+        job.result_json = result
+        job.ingested_at = datetime.now(timezone.utc)
+        db.commit()
+
+        label = _TYPE_LABELS.get(job.detected_type, job.detected_type)
+        if result.get("status") == "ingested":
+            records = result.get("records") or result.get("driver_count") or result.get("records_parsed", "")
+            confirm_text = f":white_check_mark: *{label} auto-ingested* — `{job.file_name}`"
+            if records:
+                confirm_text += f"\nRecords loaded: {records}"
+            if result.get("week"):
+                confirm_text += f" | Week: {result['week']}"
+            _post_confirmation(confirm_text)
+            ingested += 1
+        elif result.get("status") == "already_ingested":
+            _post_confirmation(f":repeat: `{job.file_name}` was already ingested (skipped duplicate).")
+        elif result.get("status") == "unsupported":
+            _post_confirmation(f":warning: `{job.file_name}` queued but no handler built yet for type `{job.detected_type}`.")
+
+    return {"status": "checked", "ingested": ingested, "errors": errors, "total_pending": len(jobs)}
+
+
+@router.post("/dvic-auto-ingest")
+def manual_dvic_auto_ingest(db: Session = Depends(get_db)):
+    """Manual trigger for run_dvic_auto_ingest() — same call the background
+    loop makes, for testing or to force an immediate catch-up on backlog."""
+    return run_dvic_auto_ingest(db)
+
+
 @router.post("/jobs/{job_id}/ingest")
 def ingest_job(job_id: int, db: Session = Depends(get_db)):
     """Download the Slack file and run it through the appropriate ingest handler."""

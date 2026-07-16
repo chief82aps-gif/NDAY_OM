@@ -20,6 +20,7 @@ import logging
 import os
 from typing import Optional
 
+from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
 
 from api.src.database import DriverRosterEntry
@@ -71,6 +72,29 @@ def build_dispatch_home_view_blocks(db: Session) -> list:
                     "text": {"type": "plain_text", "text": "🚗 Generate Crash Report", "emoji": True},
                     "style": "danger",
                     "url": f"{FRONTEND_URL}/crash-report",
+                },
+            ],
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": "dispatch_rerun_route_assignments",
+                    "text": {"type": "plain_text", "text": "🔄 Re-Run Route Assignments", "emoji": True},
+                    "style": "primary",
+                    "confirm": {
+                        "title": {"type": "plain_text", "text": "Re-run today's route assignments?"},
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": "Re-scans for corrected files, rebuilds today's assignments, and notifies "
+                                     "affected drivers: new assignments get the normal DM, changed ones get an "
+                                     "update DM, and drivers dropped from a route get a removal DM. Also refreshes "
+                                     "the #nday-mgt matrix.",
+                        },
+                        "confirm": {"type": "plain_text", "text": "Re-run"},
+                        "deny": {"type": "plain_text", "text": "Cancel"},
+                    },
                 },
             ],
         },
@@ -160,6 +184,72 @@ def _handle_dispatch_preview_driver_home(payload: dict, db: Session) -> None:
         client.views_publish(user_id=user_id, view={"type": "home", "blocks": full_blocks})
     except Exception as exc:
         logger.warning("Preview driver home publish failed for %s: %s", user_id, exc)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Re-Run Route Assignments — rerun_route_assignments() (daily_notify.py) can
+# take a while (channel re-scans, ingest, possibly several DM sends), well
+# past Slack's 3-second interaction ack window. So the button handler only
+# acks fast (an ephemeral "running" message) and hands the real work to a
+# FastAPI BackgroundTask, which opens its own DB session — the request-scoped
+# one is on its way to being torn down by the time a background task runs.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _run_rerun_and_report(user_id: str) -> None:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from api.src.database import SessionLocal
+    from api.src.routes.daily_notify import rerun_route_assignments
+
+    client = _client()
+    db = SessionLocal()
+    try:
+        today = datetime.now(ZoneInfo("America/Los_Angeles")).date()
+        result = rerun_route_assignments(today, db)
+        changed = result["changed_dms"]
+        removed = result["removed_dms"]
+        new_dms = (result.get("initial_check") or {}).get("dms") or {}
+        lines = [
+            f":white_check_mark: *Re-Run Route Assignments complete* for {today.isoformat()}",
+            f"New DMs: {new_dms.get('sent', 0)} sent, {new_dms.get('skipped', 0)} skipped",
+            f"Changed DMs: {changed['sent']} sent, {changed['skipped']} skipped",
+            f"Removed DMs: {removed['sent']} sent, {removed['skipped']} skipped",
+        ]
+        if not result.get("dm_active"):
+            lines.append("_DRIVER_DM_ACTIVE is off — assignments were rebuilt and the summary refreshed, but no driver DMs were actually sent._")
+        summary = "\n".join(lines)
+    except Exception as exc:
+        logger.exception("Re-run route assignments background task failed")
+        summary = f":x: Re-Run Route Assignments failed: {exc}"
+    finally:
+        db.close()
+
+    if client:
+        try:
+            _dm_driver(client, user_id, summary)
+        except Exception as exc:
+            logger.warning("Rerun summary DM failed for %s: %s", user_id, exc)
+        try:
+            client.chat_postMessage(channel=DISPATCH_HOME_CHANNEL_ID, text=summary)
+        except Exception as exc:
+            logger.warning("Rerun summary audit-log post failed: %s", exc)
+
+
+def _handle_dispatch_rerun_route_assignments(payload: dict, db: Session, background_tasks: BackgroundTasks) -> None:
+    user_id = payload.get("user", {}).get("id", "")
+    if not is_dispatch_staff(user_id, db):
+        logger.warning("Non-dispatch user %s attempted dispatch_rerun_route_assignments", user_id)
+        return
+    client = _client()
+    if client:
+        try:
+            client.chat_postMessage(
+                channel=user_id,
+                text=":arrows_counterclockwise: Re-running today's route assignments — results will post here shortly.",
+            )
+        except Exception as exc:
+            logger.warning("Rerun ack DM failed for %s: %s", user_id, exc)
+    background_tasks.add_task(_run_rerun_and_report, user_id)
 
 
 def _handle_dispatch_back_from_preview(payload: dict, db: Session) -> None:

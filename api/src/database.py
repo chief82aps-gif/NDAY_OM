@@ -1308,6 +1308,16 @@ class DailyRouteAssignment(Base):
     acknowledged_at = Column(DateTime)
     ack_token = Column(String(40), unique=True, index=True)
 
+    # Snapshot of {driver_name, van_number, stage_location, wave, packages,
+    # route_duration, service_type} at the moment the driver was last
+    # actually told about this assignment (initial DM or a later "changed"
+    # DM). Added 2026-07-16 for the "Re-Run Route Assignments" Dispatch
+    # Home button — comparing current values against this (not against
+    # whatever the automatic background rebuild silently changed the row
+    # to) is what lets a rerun tell whether the driver's last DM is now
+    # stale, without needing to track every intermediate silent update.
+    notified_snapshot = Column(JSON)
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
@@ -1872,6 +1882,19 @@ def ensure_route_duration_columns():
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS route_duration INTEGER"))
         except Exception:
             pass  # Column already exists
+
+
+def ensure_daily_route_assignment_notified_snapshot_column():
+    """Add notified_snapshot to daily_route_assignments — added 2026-07-16
+    for the 'Re-Run Route Assignments' Dispatch Home button."""
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE daily_route_assignments ADD COLUMN notified_snapshot JSON"))
+            else:
+                conn.execute(text("ALTER TABLE daily_route_assignments ADD COLUMN IF NOT EXISTS notified_snapshot JSON"))
+    except Exception:
+        pass  # Column already exists
 
 
 def dedupe_daily_route_assignments(db=None) -> int:

@@ -561,6 +561,16 @@ def _first_name(payroll_name: str) -> str:
     return payroll_name.split()[0]
 
 
+_TRACKED_FIELDS = ("driver_name", "van_number", "stage_location", "wave", "packages", "route_duration", "service_type")
+
+
+def _tracked_fields(assignment: DailyRouteAssignment) -> dict:
+    """The subset of an assignment's fields a driver actually needs to know
+    about — what notified_snapshot stores, and what a rerun diffs against
+    to decide whether the driver's last DM is now stale."""
+    return {f: getattr(assignment, f) for f in _TRACKED_FIELDS}
+
+
 def send_driver_dm(assignment: DailyRouteAssignment, db: Session) -> bool:
     """Send a Slack DM to the driver with their route details + confirmation link."""
     client = _slack_client()
@@ -613,10 +623,99 @@ def send_driver_dm(assignment: DailyRouteAssignment, db: Session) -> bool:
         assignment.dm_sent_at = datetime.utcnow()
         assignment.dm_message_ts = resp["ts"]
         assignment.dm_channel = resp["channel"]
+        assignment.notified_snapshot = _tracked_fields(assignment)
         db.commit()
         return True
     except Exception as exc:
         logger.warning("DM send failed for %s: %s", assignment.driver_name, exc)
+        return False
+
+
+def send_driver_dm_update(assignment: DailyRouteAssignment, old_snapshot: dict, db: Session) -> bool:
+    """Send a "your assignment changed" DM — used by rerun_route_assignments()
+    for a driver who was already notified once, but one or more tracked
+    fields have changed since (any change, not just route/van/wave — per
+    explicit 2026-07-16 decision). Shows old -> new for whatever changed."""
+    client = _slack_client()
+    if not client:
+        return False
+
+    slack_id = _lookup_slack_id(assignment.driver_name, db)
+    if not slack_id:
+        return False
+
+    first = _first_name(assignment.driver_name or "Driver")
+    date_str = _fmt_date(assignment.assignment_date)
+    new_snapshot = _tracked_fields(assignment)
+
+    field_labels = {
+        "driver_name": "Driver", "van_number": "Van", "stage_location": "Stage",
+        "wave": "Wave", "packages": "Planned Packages", "route_duration": "Route Duration (min)",
+        "service_type": "Service Type",
+    }
+    changed_lines = []
+    for f in _TRACKED_FIELDS:
+        old_v, new_v = old_snapshot.get(f), new_snapshot.get(f)
+        if old_v != new_v:
+            changed_lines.append(f"• *{field_labels.get(f, f)}:* {old_v or '—'} → {new_v or '—'}")
+
+    if not changed_lines:
+        return False  # nothing actually changed — shouldn't happen, caller already diffed
+
+    show_time = _calc_show_time(assignment.wave or "")
+    return_time = _calc_return_time(assignment.wave or "", assignment.route_duration)
+    confirm_url = f"{FRONTEND_URL}/confirm?token={assignment.ack_token}"
+
+    lines = [
+        f"⚠️ Update, {first} — your route for *{date_str}* has changed:",
+        "",
+        *changed_lines,
+        "",
+        f"📍 *Route:* {assignment.route_code or '—'}",
+    ]
+    if show_time:
+        lines.append(f"⏰ *Show Time:* {show_time}")
+    if return_time:
+        lines.append(f"🏁 *Expected Return:* {return_time}")
+    lines += ["", f"✅ *Confirm attendance:* <{confirm_url}|Tap here>"]
+
+    try:
+        client.chat_postMessage(channel=slack_id, text="\n".join(lines))
+        assignment.notified_snapshot = new_snapshot
+        db.commit()
+        return True
+    except Exception as exc:
+        logger.warning("Update DM send failed for %s: %s", assignment.driver_name, exc)
+        return False
+
+
+def send_driver_removal_dm(assignment: DailyRouteAssignment, db: Session) -> bool:
+    """Send a "you're no longer on today's route" DM — used by
+    rerun_route_assignments() when a route_code the driver was already
+    notified about disappears from a freshly re-ingested DOP."""
+    client = _slack_client()
+    if not client:
+        return False
+
+    slack_id = _lookup_slack_id(assignment.driver_name, db)
+    if not slack_id:
+        return False
+
+    first = _first_name(assignment.driver_name or "Driver")
+    date_str = _fmt_date(assignment.assignment_date)
+    lines = [
+        f"🔄 {first}, you've been removed from route *{assignment.route_code or '?'}* for *{date_str}*.",
+        "",
+        "You're no longer assigned to that route — please check with dispatch for your updated assignment, if any.",
+    ]
+
+    try:
+        client.chat_postMessage(channel=slack_id, text="\n".join(lines))
+        assignment.assignment_status = "removed"
+        db.commit()
+        return True
+    except Exception as exc:
+        logger.warning("Removal DM send failed for %s: %s", assignment.driver_name, exc)
         return False
 
 
@@ -961,6 +1060,93 @@ def check_and_notify(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Manual re-run — "Re-Run Route Assignments" Dispatch Home button. Unlike
+# check_and_notify() (which only ever asks "has this driver been notified
+# yet?" and is meant to run unattended every 10 min all morning), this is
+# meant to be clicked by a human any time after the initial run to pick up
+# corrections: new assignments get the normal DM, drivers whose tracked
+# fields changed since their last DM get an update DM, and drivers dropped
+# from the route entirely get a removal DM. Refreshes the #nday-mgt
+# assignment matrix too. Added 2026-07-16.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def rerun_route_assignments(for_date: date, db: Session) -> Dict:
+    before_notified_codes = {
+        a.route_code
+        for a in db.query(DailyRouteAssignment)
+        .filter(
+            DailyRouteAssignment.assignment_date == for_date,
+            DailyRouteAssignment.route_code.isnot(None),
+            DailyRouteAssignment.notified_snapshot.isnot(None),
+        )
+        .all()
+    }
+
+    # Re-scan/ingest any newly corrected files, rebuild (upsert), and send
+    # DMs for brand-new assignments — all of check_and_notify()'s existing,
+    # already-tested logic.
+    check_result = check_and_notify(db, for_date=for_date)
+
+    current_dop_route_codes = {
+        (d.route_code or "").upper() for d in get_latest_dop_rows(db, for_date)
+    }
+
+    changed_sent = changed_skipped = 0
+    current_rows = (
+        db.query(DailyRouteAssignment)
+        .filter(DailyRouteAssignment.assignment_date == for_date)
+        .all()
+    )
+    for a in current_rows:
+        if not a.driver_name or not a.notified_snapshot:
+            continue  # never notified yet -> not a "change", handled as "new" above
+        if _tracked_fields(a) == a.notified_snapshot:
+            continue  # nothing actually changed
+        if _DM_ACTIVE:
+            if send_driver_dm_update(a, a.notified_snapshot, db):
+                changed_sent += 1
+            else:
+                changed_skipped += 1
+
+    removed_sent = removed_skipped = 0
+    removed_codes = before_notified_codes - current_dop_route_codes
+    if removed_codes:
+        removed_rows = (
+            db.query(DailyRouteAssignment)
+            .filter(
+                DailyRouteAssignment.assignment_date == for_date,
+                DailyRouteAssignment.route_code.in_(removed_codes),
+                DailyRouteAssignment.assignment_status != "removed",
+            )
+            .all()
+        )
+        for a in removed_rows:
+            if _DM_ACTIVE:
+                if send_driver_removal_dm(a, db):
+                    removed_sent += 1
+                else:
+                    removed_skipped += 1
+
+    summary_result = {"status": "skipped_no_active_flag"}
+    try:
+        from api.src.routes.rostering import post_assignment_matrix
+        summary_result = post_assignment_matrix(for_date, db, force=True)
+    except Exception as exc:
+        logger.warning("Rerun: summary refresh failed: %s", exc)
+        summary_result = {"status": "error", "detail": str(exc)}
+
+    return {
+        "status": "ok",
+        "date": for_date.isoformat(),
+        "dm_active": _DM_ACTIVE,
+        "initial_check": check_result,
+        "changed_dms": {"sent": changed_sent, "skipped": changed_skipped},
+        "removed_dms": {"sent": removed_sent, "skipped": removed_skipped},
+        "summary": summary_result,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # ECP watch — nightly roster prompt
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1227,6 +1413,24 @@ def trigger_check(date: Optional[str] = None, db: Session = Depends(get_db)):
 
     result = check_and_notify(db, for_date=for_date)
     return result
+
+
+@router.post("/daily-notify/rerun")
+def trigger_rerun(date: Optional[str] = None, db: Session = Depends(get_db)):
+    """Re-Run Route Assignments — pick up corrections since the initial
+    morning run: new assignments get the normal DM, changed ones get an
+    update DM, removed ones get a removal DM, and the #nday-mgt matrix is
+    refreshed. Driver-DM sub-steps still respect DRIVER_DM_ACTIVE."""
+    try:
+        for_date = (
+            datetime.strptime(date, "%Y-%m-%d").date()
+            if date
+            else datetime.now(PACIFIC).date()
+        )
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date — use YYYY-MM-DD.")
+
+    return rerun_route_assignments(for_date, db)
 
 
 @router.post("/daily-notify/send-dms")

@@ -22,7 +22,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from api.src.database import get_db, DriverRosterEntry
@@ -416,7 +416,7 @@ def sync_dispatch_hub():
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/interactions")
-async def slack_interactions(request: Request, db: Session = Depends(get_db)):
+async def slack_interactions(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Receives all Slack interactive component payloads."""
     body = await request.body()
     timestamp = request.headers.get("X-Slack-Request-Timestamp", "0")
@@ -490,6 +490,10 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
     elif action_id == "dispatch_back_from_preview":
         from api.src.routes.slack_dispatch_home import _handle_dispatch_back_from_preview
         _handle_dispatch_back_from_preview(payload, db)
+
+    elif action_id == "dispatch_rerun_route_assignments":
+        from api.src.routes.slack_dispatch_home import _handle_dispatch_rerun_route_assignments
+        _handle_dispatch_rerun_route_assignments(payload, db, background_tasks)
 
     elif action_id == "crash_report_approve":
         from api.src.routes.crash_report import _handle_crash_report_approve

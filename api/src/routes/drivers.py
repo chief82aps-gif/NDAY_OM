@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from api.src.database import get_db, DriverRosterEntry, flag_stale_driver_profiles
@@ -76,6 +77,31 @@ def get_driver(driver_id: int, db: Session = Depends(get_db)):
     if not r:
         raise HTTPException(404, f"Driver {driver_id} not found")
     return _serialize(r)
+
+
+class TerminateRequest(BaseModel):
+    terminated_by: Optional[str] = None
+
+
+@router.post("/{driver_id}/terminate")
+def terminate_driver(driver_id: int, req: TerminateRequest, db: Session = Depends(get_db)):
+    """Mark a driver terminated (is_active=False) — the one write this
+    interim module allows, per its docstring (a future HR module owns
+    the rest of create/terminate). Nothing previously set is_active to
+    False anywhere in the codebase, which meant the 'Remove Terminated
+    Employees' Dispatch Home button (slack_dispatch_home.py) — which
+    finds candidates via is_active==False + a linked Slack account — had
+    no way to ever find anyone. This is what feeds it."""
+    r = db.query(DriverRosterEntry).filter(DriverRosterEntry.id == driver_id).first()
+    if not r:
+        raise HTTPException(404, f"Driver {driver_id} not found")
+    if not r.is_active:
+        return {"status": "already_inactive", "driver": _serialize(r)}
+    r.is_active = False
+    db.commit()
+    db.refresh(r)
+    logger.info("Driver %s (id=%s) marked terminated by %s", r.payroll_name, r.id, req.terminated_by or "unknown")
+    return {"status": "terminated", "driver": _serialize(r)}
 
 
 @router.post("/recompute-stale")

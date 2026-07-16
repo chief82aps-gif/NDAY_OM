@@ -423,12 +423,24 @@ def build_daily_assignments(
 ) -> int:
     """
     Merge DOP rows + Cortex driver names + PDF van data into DailyRouteAssignment.
-    Clears and rebuilds the table for for_date on each call.
-    """
-    db.query(DailyRouteAssignment).filter(
-        DailyRouteAssignment.assignment_date == for_date
-    ).delete(synchronize_session=False)
 
+    Upserts by (assignment_date, route_code) rather than deleting and
+    recreating the day's rows on every call. The scheduler reruns this every
+    ~10 min from 8-10 AM; a delete+recreate meant every rerun reset dm_sent/
+    ack_token back to their defaults, which would have caused every driver
+    to be re-DMed on each pass once driver DMs go live. Two rules for the
+    merge:
+      - On an EXISTING row, only overwrite a computed field when the new
+        value is non-empty — this also fixes a related bug where pdf_data
+        comes back [] on a replay (the route sheet was already ingested,
+        so it's not re-parsed) and used to blank out previously-known
+        van_number/wave/stage. dm_sent/dm_sent_at/ack_token/acknowledged
+        are never touched on an existing row, only set at creation.
+      - A route_code that disappears from a corrected DOP is left alone
+        rather than deleted — silently removing a row out from under an
+        already-DMed/acknowledged driver is worse than a stale leftover
+        row; that's a case for a human to look at, not to auto-delete.
+    """
     pdf_by_route = {
         a["route_code"].upper(): a for a in pdf_data if a.get("route_code")
     }
@@ -454,6 +466,14 @@ def build_daily_assignments(
         if c.driver_name
     }
 
+    existing_by_route = {
+        (a.route_code or "").upper(): a
+        for a in db.query(DailyRouteAssignment)
+        .filter(DailyRouteAssignment.assignment_date == for_date)
+        .all()
+        if a.route_code
+    }
+
     count = 0
     for dop in dop_rows:
         rc = (dop.route_code or "").upper()
@@ -465,30 +485,42 @@ def build_daily_assignments(
         )
 
         pdf = pdf_by_route.get(rc) or pdf_by_driver.get(driver.lower(), {})
+        driver_name = driver or pdf.get("driver_name", "")
+        van_number = pdf.get("van_number") or ""
+        stage_location = dop.station or pdf.get("stage") or ""
+        wave = dop.wave or pdf.get("wave_time") or ""
 
-        db.add(DailyRouteAssignment(
-            assignment_date=for_date,
-            route_code=dop.route_code,
-            driver_name=driver or pdf.get("driver_name", ""),
-            van_number=pdf.get("van_number", ""),
-            stage_location=dop.station or pdf.get("stage", ""),
-            wave=dop.wave or pdf.get("wave_time", ""),
-            packages=dop.planned_packages,
-            route_duration=dop.route_duration,
-            service_type=dop.service_type,
-            ack_token=str(uuid.uuid4()).replace("-", ""),
-        ))
+        existing = existing_by_route.get(rc)
+        if existing:
+            existing.driver_name = driver_name or existing.driver_name
+            existing.van_number = van_number or existing.van_number
+            existing.stage_location = stage_location or existing.stage_location
+            existing.wave = wave or existing.wave
+            existing.packages = dop.planned_packages if dop.planned_packages is not None else existing.packages
+            existing.route_duration = dop.route_duration if dop.route_duration is not None else existing.route_duration
+            existing.service_type = dop.service_type or existing.service_type
+        else:
+            db.add(DailyRouteAssignment(
+                assignment_date=for_date,
+                route_code=dop.route_code,
+                driver_name=driver_name,
+                van_number=van_number,
+                stage_location=stage_location,
+                wave=wave,
+                packages=dop.planned_packages,
+                route_duration=dop.route_duration,
+                service_type=dop.service_type,
+                ack_token=str(uuid.uuid4()).replace("-", ""),
+            ))
         count += 1
 
     try:
         db.commit()
     except Exception as exc:
         # A concurrent call (e.g. the automatic background loop racing a
-        # manual re-ingest) can hit the unique (assignment_date, route_code)
-        # index added 2026-07-13 after the delete-then-insert here overlapped
-        # with another call and produced duplicate rows in production. Rather
-        # than crash the caller, roll back this batch — the other call's
-        # rows are already committed and correct.
+        # manual re-ingest) can still race on the unique (assignment_date,
+        # route_code) index added 2026-07-13. Roll back this batch — the
+        # other call's rows are already committed and correct.
         db.rollback()
         logger.warning("build_daily_assignments: commit failed for %s, likely a concurrent rebuild — rolled back: %s", for_date, exc)
         return 0

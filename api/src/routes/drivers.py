@@ -41,8 +41,10 @@ def _serialize(r: DriverRosterEntry) -> dict:
         "flagged_inactive": r.flagged_inactive,
         "flagged_inactive_at": r.flagged_inactive_at.isoformat() if r.flagged_inactive_at else None,
         "slack_member_id": r.slack_member_id,
+        "slack_display_name": r.slack_display_name,
         "slack_verified": r.slack_verified,
         "phone": r.phone,
+        "ssn_last4": r.ssn_last4,
         "hire_date": r.hire_date.isoformat() if r.hire_date else None,
         "position_code": r.position_code,
     }
@@ -76,6 +78,49 @@ def get_driver(driver_id: int, db: Session = Depends(get_db)):
     r = db.query(DriverRosterEntry).filter(DriverRosterEntry.id == driver_id).first()
     if not r:
         raise HTTPException(404, f"Driver {driver_id} not found")
+    return _serialize(r)
+
+
+class DriverUpdateRequest(BaseModel):
+    phone: Optional[str] = None
+    ssn_last4: Optional[str] = None
+    slack_member_id: Optional[str] = None
+    slack_display_name: Optional[str] = None
+    is_active: Optional[bool] = None
+    updated_by: Optional[str] = None
+
+
+@router.patch("/{driver_id}")
+def update_driver(driver_id: int, req: DriverUpdateRequest, db: Session = Depends(get_db)):
+    """Manual single-driver correction — for fixing one bad Slack link,
+    phone number, or PIN (or reactivating a mistakenly-terminated driver)
+    without a full CSV re-import. Any field left null in the request is
+    left untouched; pass an empty string to clear a text field.
+
+    Deliberately does NOT allow editing payroll_name — it's used as a
+    plain-string join key against DailyRouteAssignment.driver_name and
+    DriverScheduleEntry.driver_name elsewhere, so renaming it here would
+    silently orphan those rows rather than update them.
+    """
+    r = db.query(DriverRosterEntry).filter(DriverRosterEntry.id == driver_id).first()
+    if not r:
+        raise HTTPException(404, f"Driver {driver_id} not found")
+
+    if req.phone is not None:
+        r.phone = req.phone
+    if req.ssn_last4 is not None:
+        r.ssn_last4 = req.ssn_last4
+    if req.slack_member_id is not None:
+        r.slack_member_id = req.slack_member_id
+        r.slack_display_name = req.slack_display_name
+        r.slack_verified = bool(req.slack_member_id)
+        r.slack_verified_at = datetime.utcnow() if req.slack_member_id else None
+    if req.is_active is not None:
+        r.is_active = req.is_active
+
+    db.commit()
+    db.refresh(r)
+    logger.info("Driver %s (id=%s) manually updated by %s", r.payroll_name, r.id, req.updated_by or "unknown")
     return _serialize(r)
 
 

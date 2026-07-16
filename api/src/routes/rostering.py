@@ -265,7 +265,7 @@ def _build_roster_suggestion(shift_date: date, db: Session) -> list[dict]:
             "score": q["score"],
             "rank": _STANDING_RANK.get(q["standing"], 0),
             "wave_time": entry.wave_time,
-            "show_time": entry.show_time,
+            "show_time": _calc_showtime(entry.wave_time) or entry.show_time,
             "service_type": entry.service_type,
             "is_sweeper": entry.is_sweeper,
             "van_constraint": constraint,
@@ -772,7 +772,8 @@ def post_showtime_summary(shift_date: date, db: Session) -> dict:
         for s in buckets[show_time]:
             sweeper_tag = " | 🧹 Sweeper" if s["is_sweeper"] else ""
             service = s.get("service_type") or ("Van assigned morning-of" if s["is_sweeper"] else "TBD")
-            lines.append(f"• {s['driver_name']} — {service}{sweeper_tag}")
+            name = _truncate(s["driver_name"], 22)
+            lines.append(f"• {name} — {service}{sweeper_tag}")
         blocks.append({
             "type": "section",
             "text": {"type": "mrkdwn", "text": f"*Showtime {show_time}* ({len(buckets[show_time])})\n" + "\n".join(lines)},
@@ -2014,6 +2015,16 @@ def trigger_assignment_matrix(shift_date: str, force: bool = False, db: Session 
     except ValueError:
         raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
     return post_assignment_matrix(target, db, force=force)
+
+
+@router.post("/showtime-summary/{shift_date}")
+def trigger_showtime_summary(shift_date: str, db: Session = Depends(get_db)):
+    """Post (or refresh) the #nday-mgt Showtime-grouped breakdown for shift_date."""
+    try:
+        target = date.fromisoformat(shift_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
+    return post_showtime_summary(target, db)
 
 
 @router.post("/driver-summary-matrix/{shift_date}")

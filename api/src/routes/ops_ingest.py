@@ -620,34 +620,46 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
                                 source_file=job.file_name,
                             ))
                             saved_count += 1
-                    # Annotate wave/show times for the primary scheduled date
-                    if summary and summary.date:
-                        from datetime import datetime as _dt
-                        try:
-                            primary_date = _dt.strptime(summary.date, "%m/%d/%Y").date()
-                            sweeper_names = set(summary.sweepers or [])
-                            assign_map = {a.driver_name: a for a in (summary.assignments or [])}
-                            entries = (
-                                db.query(DriverScheduleEntry)
-                                .filter(DriverScheduleEntry.schedule_date == primary_date)
-                                .all()
-                            )
-                            for entry in entries:
-                                if entry.driver_name in sweeper_names:
-                                    entry.is_sweeper = True
-                                    # Sweepers are never in assign_map (that's the
-                                    # definition of a sweeper) — without this,
-                                    # summary.show_times' correctly-computed value
-                                    # for them was silently discarded and every
-                                    # sweeper showed "See dispatch" downstream.
-                                    entry.show_time = (summary.show_times or {}).get(entry.driver_name) or entry.show_time
-                                a = assign_map.get(entry.driver_name)
-                                if a:
-                                    entry.wave_time = getattr(a, 'wave_time', None)
-                                    entry.show_time = getattr(a, 'show_time', None)
-                                    entry.service_type = getattr(a, 'service_type', None)
-                        except Exception as e:
-                            logger.warning("Schedule annotation failed: %s", e)
+                    # This session is autoflush=False (see database.py), so the
+                    # rows just added above are only pending in Python — the
+                    # annotation query right below queries the DB directly and
+                    # would see none of them without an explicit flush. Without
+                    # this, wave_time/show_time/service_type/is_sweeper never
+                    # get set on ANY entry, for ANY date — the query below always
+                    # returns empty and the loop body silently never runs.
+                    db.flush()
+                    # Annotate wave/show times for EVERY date column the file
+                    # contains, not just the primary/selected date — a
+                    # multi-day export (e.g. a full week) otherwise leaves
+                    # every other date permanently blank. See
+                    # DriverScheduleSummary.by_calendar_date.
+                    if summary and summary.by_calendar_date:
+                        for cal_date, day_data in summary.by_calendar_date.items():
+                            try:
+                                sweeper_names = set(day_data.get("sweepers") or [])
+                                assign_map = {a.driver_name: a for a in (day_data.get("assignments") or [])}
+                                day_show_times = day_data.get("show_times") or {}
+                                entries = (
+                                    db.query(DriverScheduleEntry)
+                                    .filter(DriverScheduleEntry.schedule_date == cal_date)
+                                    .all()
+                                )
+                                for entry in entries:
+                                    if entry.driver_name in sweeper_names:
+                                        entry.is_sweeper = True
+                                        # Sweepers are never in assign_map (that's the
+                                        # definition of a sweeper) — without this,
+                                        # the correctly-computed show_time for them
+                                        # was silently discarded and every sweeper
+                                        # showed "See dispatch" downstream.
+                                        entry.show_time = day_show_times.get(entry.driver_name) or entry.show_time
+                                    a = assign_map.get(entry.driver_name)
+                                    if a:
+                                        entry.wave_time = getattr(a, 'wave_time', None)
+                                        entry.show_time = getattr(a, 'show_time', None)
+                                        entry.service_type = getattr(a, 'service_type', None)
+                            except Exception as e:
+                                logger.warning("Schedule annotation failed for %s: %s", cal_date, e)
                     # Upsert DriverRosterEntry for every unique driver in the
                     # schedule so the callout page PIN check can find them.
                     # This table is the interim driver-profile source of truth

@@ -94,7 +94,38 @@ def parse_driver_schedule_excel(file_path: str) -> Tuple[DriverScheduleSummary, 
             show_times_dict[sweeper] = final_show_time
         
         summary.show_times = show_times_dict
-        
+
+        # Same per-date computation as above, but repeated for every date
+        # column in the file (a multi-day export has one column per day) —
+        # without this, only the primary/selected date ever gets wave/show
+        # times, and every other date in the file stays permanently blank.
+        year_hint = timestamp_date.year if timestamp_date else date.today().year
+        assignments_by_label: Dict[str, List[DriverAssignment]] = {}
+        for a in assignments:
+            assignments_by_label.setdefault(a.date, []).append(a)
+
+        by_calendar_date: Dict[date, dict] = {}
+        for label in assigned_dates:
+            calendar_date = _parse_schedule_header_date(label, year_hint)
+            if not calendar_date:
+                continue
+            label_assignments = _calculate_show_times(list(assignments_by_label.get(label, [])))
+            label_sweepers = _identify_sweepers(
+                set(a.driver_name for a in label_assignments),
+                availability_by_driver,
+                label,
+            )
+            label_final_show_time = _get_final_show_time(label_assignments)
+            label_show_times = {a.driver_name: a.show_time or "" for a in label_assignments}
+            for sweeper in label_sweepers:
+                label_show_times[sweeper] = label_final_show_time
+            by_calendar_date[calendar_date] = {
+                "assignments": label_assignments,
+                "sweepers": label_sweepers,
+                "show_times": label_show_times,
+            }
+        summary.by_calendar_date = by_calendar_date
+
         return summary, errors
     
     except Exception as e:

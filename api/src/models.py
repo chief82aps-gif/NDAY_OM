@@ -1,7 +1,7 @@
 """Data models for ingest and validation."""
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, date
 
 
 @dataclass
@@ -95,9 +95,14 @@ class DriverScheduleSummary:
     """Summary of driver assignments and show times."""
     timestamp: str  # From A2 of the file
     date: str  # The date being scheduled for (next day)
-    assignments: List[DriverAssignment] = field(default_factory=list)  # Rostered drivers
-    sweepers: List[str] = field(default_factory=list)  # Scheduled but not assigned
-    show_times: Dict[str, str] = field(default_factory=dict)  # driver_name -> show_time
+    assignments: List[DriverAssignment] = field(default_factory=list)  # Rostered drivers (primary date only)
+    sweepers: List[str] = field(default_factory=list)  # Scheduled but not assigned (primary date only)
+    show_times: Dict[str, str] = field(default_factory=dict)  # driver_name -> show_time (primary date only)
+    # Same three views, but for EVERY date column in the file, not just the
+    # primary/selected one — a multi-day export (e.g. a full week) otherwise
+    # only ever gets wave/show times annotated for the one date matching the
+    # file's own upload timestamp. Keyed by calendar date.
+    by_calendar_date: Dict[date, dict] = field(default_factory=dict)
 
 
 @dataclass

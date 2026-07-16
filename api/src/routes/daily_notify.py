@@ -40,6 +40,8 @@ from api.src.database import (
     DriverRosterEntry,
     get_latest_dop_rows,
     get_latest_cortex_rows,
+    get_reminder_state,
+    set_reminder_state,
 )
 
 logger = logging.getLogger(__name__)
@@ -48,6 +50,7 @@ router = APIRouter()
 PACIFIC = ZoneInfo("America/Los_Angeles")
 NOTIFY_CHANNEL = os.getenv("SLACK_NOTIFY_CHANNEL", "C0AF48TPAMV")
 CORTEX_CHANNEL = os.getenv("CORTEX_NOTIFY_CHANNEL", "C0BE4ALL1EX")
+MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://nday-om.vercel.app")
 
 # Added 2026-07-16: send_all_dms()/send_sweeper_notifications() are a
@@ -912,6 +915,101 @@ def send_sweeper_notifications(for_date: date, db: Session) -> Dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Route-code reconciliation — Cortex is treated as always correct on route
+# codes (per explicit 2026-07-16 rule; see
+# Governance/DOP_ROUTE_SHEET_INGEST_RULES.md section 4). If the DOP's or the
+# Route Sheet's route-code set disagrees with Cortex's by more than 10%,
+# that file — never Cortex — is presumed wrong, and the station needs to
+# correct/resubmit it. Informational only: never blocks assignment building,
+# just flags it to #nday-mgt so a human can chase it down.
+# ─────────────────────────────────────────────────────────────────────────────
+
+RECONCILIATION_THRESHOLD = 0.10
+
+
+def _route_codes(rows_or_dicts, code_key: str = "route_code") -> set:
+    codes = set()
+    for r in rows_or_dicts or []:
+        raw = r.get(code_key) if isinstance(r, dict) else getattr(r, code_key, None)
+        if raw:
+            codes.add(str(raw).strip().upper())
+    return codes
+
+
+def check_route_code_reconciliation(for_date: date, pdf_data: List[Dict], db: Session) -> Dict:
+    """Compare DOP and Route Sheet route codes against Cortex's for
+    for_date. Posts a one-time-per-day #nday-mgt warning for whichever file
+    (DOP and/or Route Sheet) mismatches Cortex by more than
+    RECONCILIATION_THRESHOLD, naming the specific routes that are missing or
+    extra so the station knows what to fix. Cortex itself is never
+    considered the problem."""
+    cortex_rows = get_latest_cortex_rows(db, for_date)
+    if not cortex_rows:
+        latest = db.query(func.max(Cortex.assignment_date)).scalar()
+        if latest:
+            cortex_rows = get_latest_cortex_rows(db, latest)
+    cortex_codes = _route_codes(cortex_rows)
+    if not cortex_codes:
+        return {"status": "no_cortex_data"}
+
+    dop_codes = _route_codes(get_latest_dop_rows(db, for_date))
+    route_sheet_codes = _route_codes(pdf_data)
+
+    client = _slack_client()
+    results: Dict[str, dict] = {}
+
+    for label, state_suffix, codes in (
+        ("DOP", "dop", dop_codes),
+        ("Route Sheet", "route_sheet", route_sheet_codes),
+    ):
+        if not codes:
+            results[label] = {"status": "no_data"}
+            continue
+
+        missing = cortex_codes - codes   # in Cortex, absent from this file
+        extra = codes - cortex_codes     # in this file, absent from Cortex
+        mismatch_pct = len(missing | extra) / len(cortex_codes)
+        results[label] = {
+            "mismatch_pct": round(mismatch_pct * 100, 1),
+            "missing_count": len(missing),
+            "extra_count": len(extra),
+        }
+
+        if mismatch_pct <= RECONCILIATION_THRESHOLD:
+            results[label]["status"] = "ok"
+            continue
+
+        state_key = f"route_reconciliation_{state_suffix}_{for_date.isoformat()}"
+        if get_reminder_state(db, state_key).get("posted"):
+            results[label]["status"] = "already_flagged"
+            continue
+
+        if client:
+            lines = [
+                f":warning: *Route code mismatch — {label}, {for_date.isoformat()}*",
+                f"{label} differs from Cortex by {mismatch_pct * 100:.1f}% "
+                f"({len(missing | extra)} of {len(cortex_codes)} route codes). "
+                f"Cortex is treated as correct — please have the station review and resubmit the {label}.",
+            ]
+            if missing:
+                lines.append(f"Missing from {label} (Cortex has these, {label} doesn't): {', '.join(sorted(missing)[:15])}")
+            if extra:
+                lines.append(f"Extra in {label} (not in Cortex): {', '.join(sorted(extra)[:15])}")
+            try:
+                client.chat_postMessage(channel=MGT_CHANNEL, text="\n".join(lines))
+                results[label]["status"] = "flagged"
+            except Exception as exc:
+                logger.warning("Route reconciliation post failed for %s: %s", label, exc)
+                results[label]["status"] = "post_failed"
+        else:
+            results[label]["status"] = "no_slack_client"
+
+        set_reminder_state(db, state_key, {"posted": True})
+
+    return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main pipeline orchestrator
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1041,6 +1139,9 @@ def check_and_notify(
     if has_dop:
         count = build_daily_assignments(for_date, pdf_data, db)
         result["assignments"] = count
+
+    # ── 4A. Cross-validate DOP/Route Sheet route codes against Cortex ────────
+    result["reconciliation"] = check_route_code_reconciliation(for_date, pdf_data, db)
 
     # ── 5. Send per-driver DMs ────────────────────────────────────────────────
     has_assignments = (

@@ -495,6 +495,10 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
         from api.src.routes.slack_dispatch_home import _handle_dispatch_rerun_route_assignments
         _handle_dispatch_rerun_route_assignments(payload, db, background_tasks)
 
+    elif action_id == "dispatch_republish_showtime":
+        from api.src.routes.slack_dispatch_home import _handle_dispatch_republish_showtime
+        _handle_dispatch_republish_showtime(payload, db)
+
     elif action_id == "crash_report_approve":
         from api.src.routes.crash_report import _handle_crash_report_approve
         _handle_crash_report_approve(payload, db)

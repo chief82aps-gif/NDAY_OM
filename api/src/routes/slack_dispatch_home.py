@@ -96,6 +96,11 @@ def build_dispatch_home_view_blocks(db: Session) -> list:
                         "deny": {"type": "plain_text", "text": "Cancel"},
                     },
                 },
+                {
+                    "type": "button",
+                    "action_id": "dispatch_republish_showtime",
+                    "text": {"type": "plain_text", "text": "🔁 Re-Publish Showtime Matrix", "emoji": True},
+                },
             ],
         },
         {
@@ -250,6 +255,46 @@ def _handle_dispatch_rerun_route_assignments(payload: dict, db: Session, backgro
         except Exception as exc:
             logger.warning("Rerun ack DM failed for %s: %s", user_id, exc)
     background_tasks.add_task(_run_rerun_and_report, user_id)
+
+
+def _handle_dispatch_republish_showtime(payload: dict, db: Session) -> None:
+    """Re-Publish Showtime Matrix — unlike Re-Run Route Assignments, this
+    is just a DB query plus two Slack posts (post_showtime_summary()
+    updates the existing #nday-mgt/#nday-team-room messages in place, no
+    channel re-scan or file downloads involved), so it comfortably finishes
+    inside Slack's 3-second interaction window and doesn't need a
+    BackgroundTask."""
+    user_id = payload.get("user", {}).get("id", "")
+    if not is_dispatch_staff(user_id, db):
+        logger.warning("Non-dispatch user %s attempted dispatch_republish_showtime", user_id)
+        return
+
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo
+    from api.src.routes.rostering import post_showtime_summary
+
+    today = _dt.now(ZoneInfo("America/Los_Angeles")).date()
+    try:
+        result = post_showtime_summary(today, db)
+    except Exception as exc:
+        logger.exception("Re-publish showtime matrix failed")
+        result = {"status": "error", "detail": str(exc)}
+
+    client = _client()
+    if not client:
+        return
+    if result.get("status") == "posted":
+        summary = f":white_check_mark: Showtime matrix republished for {today.isoformat()}."
+    elif result.get("status") == "no_schedule":
+        summary = f":warning: No driver schedule data found for {today.isoformat()} — nothing to publish."
+    elif result.get("status") == "inactive":
+        summary = ":warning: ROSTERING_ACTIVE is off — nothing was published."
+    else:
+        summary = f":x: Re-publish failed: {result}"
+    try:
+        _dm_driver(client, user_id, summary)
+    except Exception as exc:
+        logger.warning("Republish showtime summary DM failed for %s: %s", user_id, exc)
 
 
 def _handle_dispatch_back_from_preview(payload: dict, db: Session) -> None:

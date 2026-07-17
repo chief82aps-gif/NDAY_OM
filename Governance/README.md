@@ -22,7 +22,8 @@ Use this index to quickly locate governing standards, ingest rules, audit rules,
 - [Variable Invoice Rules](INVOICE_RULES.md)
 - [Monthly Fleet Invoice Rules](FLEET_INVOICE_RULES.md)
 - [Fleet Vehicle Ingest Rules & Van Assignment Governance](VAN_INGEST_RULES.md)
-- [DOP & Route Sheet Ingest Rules](DOP_ROUTE_SHEET_INGEST_RULES.md) — no filename/type control (Amazon-submitted); two independent detection pipelines; 9 AM reminder; Cortex-authoritative cross-validation (spec'd, not yet built)
+- [DOP & Route Sheet Ingest Rules](DOP_ROUTE_SHEET_INGEST_RULES.md) — no filename/type control (Amazon-submitted); two independent detection pipelines; 9 AM reminder; Cortex-authoritative cross-validation (implemented 2026-07-16); Route Sheet persistence fix (2026-07-17)
+- [Driver Individual Scoring Rules](DRIVER_SCORING_RULES.md) — Overall/Safety/Quality/Attendance weighted score mirroring the scorecard's own category weights; Tenured Workforce report ingest (Friday COB); 92%/90% color thresholds; ranking/bonus eligibility gates
 
 ---
 
@@ -68,3 +69,5 @@ Use this index to quickly locate governing standards, ingest rules, audit rules,
 | Driver Quality Rankings | `routes/quality.py` | `/driver-quality` | ✅ |
 | Route Assignment Board | `routes/route_assignment.py` | `/route-assignment` | ✅ 2026-07-03 |
 | Safety Events (Netradyne) | `routes/safety_events.py` | *(no page yet — API only)* | ✅ 2026-07-14 |
+| Tenured Workforce Ingest | `routes/tenured_workforce.py` | *(no page yet — API only)* | ✅ 2026-07-17 |
+| Driver Individual Scoring | `routes/driver_scoring.py` | *(no page yet — API only)* | ✅ 2026-07-17 |

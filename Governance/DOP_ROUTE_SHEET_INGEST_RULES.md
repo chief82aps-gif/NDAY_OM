@@ -139,10 +139,16 @@ sees it). Always active, no feature flag. Manual trigger:
   not a channel+time-window-only one. A more robust version would treat any
   non-PDF file landing in `#dlv3-nday-info` during the scan as a DOP
   candidate, full stop.
-- **The §4 cross-validation/kickback check does not exist yet.** No code
-  currently compares DOP, Route Sheet, and Cortex route-code sets against
-  each other. This section is a specification for that future work, not a
-  description of current behavior.
+- **Resolved 2026-07-16/17: Route Sheet data used to be lost entirely if
+  DOP arrived later than the Route Sheet on the same day** (exactly what
+  happened 2026-07-16 — the DOP `.csv` detection bug delayed DOP by
+  hours, so by the time it landed the already-ingested Route Sheet's
+  van/wave/stage data had nowhere to go, since nothing persisted it past
+  the single `check_and_notify()` call that parsed it). Fixed by adding
+  `RouteSheetEntry` (`api/src/database.py`), persisted the same way
+  DOP/Cortex already are — see `get_latest_route_sheet_rows()`.
+  `build_daily_assignments()` now merges from this table instead of
+  relying solely on the same-call `pdf_data` parameter.
 
 ---
 
@@ -152,9 +158,18 @@ sees it). Always active, no feature flag. Manual trigger:
 - DOP parsing: `parse_dop_excel()` (`api/src/ingest/dop.py`), via
   `read_tabular_file()` (`api/src/column_mapping.py`)
 - Route Sheet parsing: `parse_route_sheet_pdf()` (`api/src/routes/daily_notify.py`)
+- Route Sheet persistence: `RouteSheetEntry` / `get_latest_route_sheet_rows()` (`api/src/database.py`)
 - The automatic scan window: `_daily_notify_loop()` (`api/main.py`)
 - The 9 AM reminder: `mgt_reminders.py`
-- (Future) Cross-validation: not yet implemented — see §5
+- Cross-validation (§4): `check_route_code_reconciliation()` (`api/src/routes/daily_notify.py`)
+- Manual "Re-Run Route Assignments" (covers post-initial-run corrections,
+  notifies drivers of new/changed/removed assignments): `rerun_route_assignments()`
+  (`api/src/routes/daily_notify.py`), Dispatch Home button
+- Generalized auto-ingest (a file only needs to be *placed* in the right
+  channel, no separate confirmation click): `run_ops_auto_ingest()`
+  (`api/src/routes/ops_ingest.py`) — covers `dvic`/`driver_schedule`/
+  `fleet`/`quality_csv`/`safety_events`/`dsp_scorecard`/`tenured_workforce`;
+  deliberately excludes `dop`/`cortex`/`route_sheets` (see §3A)
 
 **Any changes to these rules must**:
 

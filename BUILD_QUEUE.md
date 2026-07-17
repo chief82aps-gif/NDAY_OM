@@ -10,7 +10,38 @@ rather than re-deriving status from scratch each session.
 
 ---
 
-## Cross-cutting facts (checked 2026-07-16, don't re-derive from stale memory)
+## Cross-cutting facts (checked 2026-07-17, don't re-derive from stale memory)
+
+- **Session of 2026-07-16/17 shipped**: generalized auto-ingest (no more
+  manual "click ingest" for 7 safe file types — `dvic`, `driver_schedule`,
+  `fleet`, `quality_csv`, `safety_events`, `dsp_scorecard`,
+  `tenured_workforce` — see `run_ops_auto_ingest()` in `ops_ingest.py`);
+  Route Sheet persistence fix (`RouteSheetEntry` — van/wave/stage data no
+  longer lost when DOP lands late in the same day); Cortex-authoritative
+  route-code reconciliation (`check_route_code_reconciliation()`, >10%
+  mismatch warns `#nday-mgt`); "Re-Run Route Assignments" and "Re-Publish
+  Showtime Matrix" Dispatch Home buttons; the new Tenured Workforce
+  ingest pipeline + Friday-COB reminder; the new Driver Individual
+  Scoring module (`driver_scoring.py`). Full detail in
+  `Governance/DOP_ROUTE_SHEET_INGEST_RULES.md` and the new
+  `Governance/DRIVER_SCORING_RULES.md`.
+- **Driver Individual Scoring is live via API but has no visual list
+  yet.** `GET /driver-scoring/scores` returns Overall/Safety/Quality/
+  Attendance + color (92%/90% thresholds) + ranking/bonus eligibility
+  for every driver in the latest quality snapshot. User asked to see a
+  real list built from production data — blocked only on confirming the
+  scores endpoint's deploy went live, not on any further code work.
+- **Still open — `im:write` OAuth scope missing.** Confirmed live in
+  Render logs: `conversations.open` fails with `missing_scope`, which
+  blocks "Re-Run Route Assignments"'s DM-back-to-the-clicker step (the
+  rebuild itself still runs and posts to channels fine). Needs: add
+  `im:write` in the Slack app's OAuth & Permissions page, reinstall the
+  app to the workspace, update `SLACK_BOT_TOKEN` in Render if it
+  rotates.
+- **Still open — `DISPATCH_HOME_CHANNEL_ID` misconfigured.** Default
+  `C0BHGL7DLLC` returns `channel_not_found`, blocking the Dispatch Home
+  audit-log post step. Needs the correct channel ID confirmed and the
+  bot invited as a member before it'll post.
 
 - **Driver Slack-linking: 84 of 104 active drivers linked** (verified live
   2026-07-16). Up from 61/102. A deterministic email-bridge matcher
@@ -311,6 +342,38 @@ no birthdate field exists anywhere in the schema.
 - [ ] Build the morning loop + message composer, post to
       `#nday-team-room`
 - [ ] Decide tone/content variety (fixed template vs. rotating pool)
+
+**Decision:** ⚪
+**Notes:**
+
+---
+
+## 10. Driver Individual Scoring — visual list + home screen display
+
+**Status:** Formula, ingest pipeline, and API endpoint are built and
+deployed (`Governance/DRIVER_SCORING_RULES.md`, `driver_scoring.py`,
+`tenured_workforce.py`). Not yet built: any way to actually look at the
+scores besides calling the raw endpoint.
+
+- [ ] Once the `/driver-scoring/scores` deploy is confirmed live, pull
+      real production data and build the visual list the user asked for
+      (Overall/Safety/Quality/Attendance, color-coded 92%/90%) — this was
+      requested and is the next concrete step, just paused for EOD wrap-up
+- [ ] Decide where this list lives: a dispatch-facing page (`/driver-
+      scoring` in the frontend?), a Slack digest, or both
+- [ ] Driver-facing version for the Slack Home tab (see item 1) — show a
+      driver their own score + bonus-eligible flag, not the full roster
+- [ ] Bonus **dollar amount** calc/messaging ("here's what you're
+      leaving on the table by missing the bonus") — not started, needs a
+      bonus-per-tier dollar figure from the user first
+- [ ] Add `transporter_id` to `DriverRosterEntry` — flagged by the user
+      as the right long-term primary key (survives payroll/email
+      changes); today's scoring join goes through
+      `QualityMetricDriver.transporter_id` instead, which works but means
+      two tables carry the same identity concept
+- [ ] Manual correction path for a bad Tenured Workforce row (agreed:
+      reuse the existing single-driver edit page pattern, not a new
+      dedicated button) — low priority, the report is authoritative
 
 **Decision:** ⚪
 **Notes:**

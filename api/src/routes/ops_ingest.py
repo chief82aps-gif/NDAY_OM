@@ -802,30 +802,54 @@ def manual_misrouted_scan(db: Session = Depends(get_db)):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# DVIC auto-ingest — added 2026-07-16 after a real DVIC file sat correctly
-# detected but un-ingested for hours (nobody had clicked "ingest"). Safe to
-# run unattended: _store_dvic() only parses and stores violation data
-# (DvicSnapshot/DvicViolation) — no driver-facing Slack send happens as a
-# side effect of ingestion itself. Discipline DMs stay on their own,
-# separate, still-manual /dvic/send-dm endpoints, untouched by this.
+# Universal auto-ingest — generalized 2026-07-17 (started 2026-07-16 as
+# DVIC-only) after a real driver-schedule file sat correctly detected but
+# un-ingested overnight (nobody had clicked "ingest"), on top of the same
+# gap already found for DVIC. Per explicit direction: placing a file in the
+# right channel should be enough on its own — no separate confirmation
+# click should ever be required.
+#
+# Deliberately EXCLUDES "dop", "cortex", "route_sheets": those three are
+# already auto-ingested through a completely separate pipeline
+# (daily_notify.py's own channel scan + check_and_notify(), which builds
+# DailyRouteAssignment directly). Auto-ingesting them here too would add a
+# second, independent writer into the same DOP/Cortex tables for the same
+# upload — the "same table, multiple independent writers" hazard already
+# on record as architectural debt. Their OpsIngestJob rows staying
+# "pending" here is expected, not a real gap — see
+# Governance/DOP_ROUTE_SHEET_INGEST_RULES.md.
+#
+# Every included type was checked for driver-facing side effects before
+# being added: dvic/fleet/quality_csv/safety_events are pure DB storage
+# with zero Slack sends; dsp_scorecard posts a management-facing summary
+# as its intended feature (not a risky side effect); driver_schedule does
+# call rostering.send_driver_shift_dms(), but that's already independently
+# gated by DRIVER_DM_ACTIVE (default false) — auto-ingest cannot cause a
+# real driver DM to fire on its own.
 # ─────────────────────────────────────────────────────────────────────────────
 
-DVIC_AUTO_INGEST_ACTIVE = os.getenv("DVIC_AUTO_INGEST_ACTIVE", "true").lower() == "true"
+OPS_AUTO_INGEST_ACTIVE = os.getenv("OPS_AUTO_INGEST_ACTIVE", "true").lower() == "true"
+_AUTO_INGEST_TYPES = ("dvic", "driver_schedule", "fleet", "quality_csv", "safety_events", "dsp_scorecard")
 
 
-def run_dvic_auto_ingest(db: Session) -> dict:
-    """Ingest every pending DVIC OpsIngestJob. Mirrors /jobs/{id}/ingest's
-    logic (download -> _dispatch -> status update -> Slack confirmation) but
-    runs automatically instead of waiting for a manual click."""
-    if not DVIC_AUTO_INGEST_ACTIVE:
+def run_ops_auto_ingest(db: Session) -> dict:
+    """Ingest every pending OpsIngestJob of a type known to be safe to run
+    unattended (see module docstring above for what's excluded and why).
+    Mirrors /jobs/{id}/ingest's own logic (download -> _dispatch -> status
+    update -> Slack confirmation) but runs automatically instead of waiting
+    for a manual click. Processes oldest-first so a same-day correction
+    (e.g. a later driver-schedule re-upload) ends up as the final state."""
+    if not OPS_AUTO_INGEST_ACTIVE:
         return {"status": "inactive"}
 
     jobs = (
         db.query(OpsIngestJob)
-        .filter(OpsIngestJob.detected_type == "dvic", OpsIngestJob.status == "pending")
+        .filter(OpsIngestJob.detected_type.in_(_AUTO_INGEST_TYPES), OpsIngestJob.status == "pending")
+        .order_by(OpsIngestJob.id.asc())
         .all()
     )
     ingested = errors = 0
+    by_type: dict = {}
     for job in jobs:
         if not job.file_url:
             continue
@@ -843,7 +867,7 @@ def run_dvic_auto_ingest(db: Session) -> dict:
         try:
             result = _dispatch(job, content, db)
         except Exception as exc:
-            logger.exception("DVIC auto-ingest dispatch error for job %s", job.id)
+            logger.exception("Auto-ingest dispatch error for job %s (%s)", job.id, job.detected_type)
             job.status = "error"
             job.error_message = str(exc)[:500]
             job.result_json = None
@@ -866,19 +890,20 @@ def run_dvic_auto_ingest(db: Session) -> dict:
                 confirm_text += f" | Week: {result['week']}"
             _post_confirmation(confirm_text)
             ingested += 1
+            by_type[job.detected_type] = by_type.get(job.detected_type, 0) + 1
         elif result.get("status") == "already_ingested":
             _post_confirmation(f":repeat: `{job.file_name}` was already ingested (skipped duplicate).")
         elif result.get("status") == "unsupported":
             _post_confirmation(f":warning: `{job.file_name}` queued but no handler built yet for type `{job.detected_type}`.")
 
-    return {"status": "checked", "ingested": ingested, "errors": errors, "total_pending": len(jobs)}
+    return {"status": "checked", "ingested": ingested, "errors": errors, "total_pending": len(jobs), "by_type": by_type}
 
 
-@router.post("/dvic-auto-ingest")
-def manual_dvic_auto_ingest(db: Session = Depends(get_db)):
-    """Manual trigger for run_dvic_auto_ingest() — same call the background
+@router.post("/auto-ingest")
+def manual_ops_auto_ingest(db: Session = Depends(get_db)):
+    """Manual trigger for run_ops_auto_ingest() — same call the background
     loop makes, for testing or to force an immediate catch-up on backlog."""
-    return run_dvic_auto_ingest(db)
+    return run_ops_auto_ingest(db)
 
 
 @router.post("/jobs/{job_id}/ingest")

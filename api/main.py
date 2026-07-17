@@ -199,24 +199,24 @@ async def _ops_ingest_scan_loop():
         await asyncio.sleep(60)
 
 
-async def _dvic_auto_ingest_loop():
-    """Every 60 s — ingest any pending DVIC OpsIngestJob (detected but not
-    yet ingested). Safe to run unattended: ingestion only stores violation
-    data, no driver-facing Slack send is a side effect of it. Gated by
-    DVIC_AUTO_INGEST_ACTIVE (default true)."""
+async def _ops_auto_ingest_loop():
+    """Every 60 s — ingest any pending OpsIngestJob of a type safe to run
+    unattended (dvic/driver_schedule/fleet/quality_csv/safety_events/
+    dsp_scorecard — see ops_ingest.py's module docstring for what's
+    excluded and why). Gated by OPS_AUTO_INGEST_ACTIVE (default true)."""
     while True:
         try:
             db = SessionLocal()
             try:
-                result = await asyncio.to_thread(ops_ingest.run_dvic_auto_ingest, db)
+                result = await asyncio.to_thread(ops_ingest.run_ops_auto_ingest, db)
                 if result.get("ingested"):
-                    logger.info("DVIC auto-ingest: %s", result)
+                    logger.info("Ops auto-ingest: %s", result)
             except Exception as exc:
-                logger.warning("DVIC auto-ingest loop error: %s", exc)
+                logger.warning("Ops auto-ingest loop error: %s", exc)
             finally:
                 db.close()
         except Exception as exc:
-            logger.warning("DVIC auto-ingest loop outer error: %s", exc)
+            logger.warning("Ops auto-ingest loop outer error: %s", exc)
         await asyncio.sleep(60)
 
 
@@ -374,7 +374,7 @@ async def startup():
     asyncio.create_task(_daily_notify_loop())
     asyncio.create_task(_ecp_watch_loop())
     asyncio.create_task(_ops_ingest_scan_loop())
-    asyncio.create_task(_dvic_auto_ingest_loop())
+    asyncio.create_task(_ops_auto_ingest_loop())
     asyncio.create_task(_dvic_reminder_loop())
     asyncio.create_task(_dsp_scorecard_reminder_loop())
     asyncio.create_task(_eod_survey_loop())

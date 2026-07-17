@@ -2,7 +2,7 @@
 Manager reminder DMs — nags #nday-mgt members individually when a required
 file hasn't landed in its monitored channel yet.
 
-Six reminders, all DM-only to every member of #nday-mgt (never posted to
+Seven reminders, all DM-only to every member of #nday-mgt (never posted to
 the channel itself, never sent to drivers):
 
   1. DOP file                — window 9:00-10:00 AM PT, every 5 min until posted (#dlv3-nday-info)
@@ -11,6 +11,7 @@ the channel itself, never sent to drivers):
   4. Fleet / Vehicle Data    — window 9:00-10:00 AM PT, every 5 min until posted (#nday-operations-management)
   5. Okami capacity forecast — window 3:30-9:00 PM PT,  every 5 min until posted (#nday-operations-management)
   6. Driver schedule (post-rostering) — window 5:00-8:00 PM PT, every 5 min until posted (#nday-operations-management)
+  7. Tenured Workforce DAs Report — Fridays only, window 5:00 PM-11:59 PM PT ("by COB"), every 5 min until posted (#nday-operations-management) — includes where to find/export it in Amazon's portal
 
 Windows are all against our own server clock in Pacific local time (never
 against a Slack message timestamp, which we don't control on the Amazon
@@ -20,7 +21,8 @@ an earliest-possible threshold. DOP/Route Sheets normally arrive before
 their own expected windows below. Each reminder stops nagging for the
 day once a matching OpsIngestJob row is detected, or once its window
 closes — and resets automatically at midnight Pacific (state keyed by
-date).
+date). Reminder #7 additionally only ever checks on Fridays (weekday=4);
+every other day it's a no-op regardless of time.
 
 Endpoints:
   POST /mgt-reminders/check   Manual trigger (same call the background loop makes)
@@ -55,6 +57,17 @@ _REMINDERS = {
     "fleet":        {"detected_type": "fleet",        "label": "Fleet / Vehicle Data file",   "window": (9, 0, 10, 0)},
     "okami":        {"detected_type": "okami_capacity","label": "Okami capacity forecast",    "window": (15, 30, 21, 0)},
     "schedule":     {"detected_type": "driver_schedule","label": "Driver schedule",           "window": (17, 0, 20, 0)},
+    "tenured_workforce": {
+        "detected_type": "tenured_workforce",
+        "label": "Tenured Workforce DAs Report",
+        "window": (17, 0, 23, 59),
+        "weekday": 4,  # Friday only (Monday=0 ... Sunday=6) -- "by COB each Friday"
+        "hint": (
+            "Find it at logistics.amazon.com -> Performance -> Interactive Report -> "
+            "Supplementary Reports -> *TWF Dashboard*. Export via the three-stacked-dots "
+            "menu (⋮) -> *Export to CSV*."
+        ),
+    },
 }
 
 # Persisted in the database (ReminderThrottleState), not in-memory — an
@@ -143,6 +156,11 @@ def _check_one(key: str, db: Session, client, now) -> dict:
         "reason": None, "recipients": None, "sent": None, "error": None,
     }
 
+    weekday = cfg.get("weekday")  # Monday=0 ... Sunday=6, None = every day
+    if weekday is not None and now.weekday() != weekday:
+        result["reason"] = "wrong_weekday"
+        return result
+
     start_h, start_m, end_h, end_m = cfg["window"]
     past_start = (now.hour, now.minute) >= (start_h, start_m)
     past_end = (now.hour, now.minute) >= (end_h, end_m)
@@ -178,14 +196,17 @@ def _check_one(key: str, db: Session, client, now) -> dict:
 
     sent = 0
     send_errors: list[str] = []
+    hint = cfg.get("hint")
+    message = (
+        f":alarm_clock: *{cfg['label']} reminder* — this hasn't been posted "
+        f"yet today. Please post it as soon as it's available."
+        + (f"\n{hint}" if hint else "")
+    )
     for uid in recipients:
         try:
             client.chat_postMessage(
                 channel=uid,
-                text=(
-                    f":alarm_clock: *{cfg['label']} reminder* — this hasn't been posted "
-                    f"yet today. Please post it as soon as it's available."
-                ),
+                text=message,
             )
             sent += 1
         except Exception as exc:

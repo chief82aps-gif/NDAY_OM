@@ -158,6 +158,7 @@ _TYPE_LABELS = {
     "dsp_scorecard":     "DSP Scorecard (PDF)",
     "pod_report":        "POD Report (PDF)",
     "safety_events":     "Safety Dashboard / Netradyne Events (CSV)",
+    "tenured_workforce": "Tenured Workforce DAs Report (CSV/Excel)",
     "unknown":           "Unknown — needs manual review",
 }
 
@@ -173,6 +174,8 @@ def _classify(filename: str, message: str, channel_id: str = "") -> str:
         return "wst_zip"
 
     if ext == ".csv":
+        if any(k in combined for k in ("tenured_workforce", "tenured workforce", "twf dashboard", "twf_dashboard")):
+            return "tenured_workforce"
         if any(k in combined for k in ("okami", "capacity forecast", "capacity_forecast", "next day capacity")):
             return "okami_capacity"
         if any(k in combined for k in ("safety_dashboard", "safety dashboard", "netradyne")):
@@ -439,6 +442,11 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
     if t == "safety_events":
         from api.src.routes.safety_events import _store_safety_events
         return _store_safety_events(content, job.file_name, job.slack_file_id, db)
+
+    # ── Tenured Workforce DAs Report (CSV/Excel) ─────────────────────────────
+    if t == "tenured_workforce":
+        from api.src.routes.tenured_workforce import _store_tenured_workforce
+        return _store_tenured_workforce(content, job.file_name, job.slack_file_id, db)
 
     # ── Cortex Routes Excel ──────────────────────────────────────────────────
     if t == "cortex":
@@ -829,7 +837,7 @@ def manual_misrouted_scan(db: Session = Depends(get_db)):
 # ─────────────────────────────────────────────────────────────────────────────
 
 OPS_AUTO_INGEST_ACTIVE = os.getenv("OPS_AUTO_INGEST_ACTIVE", "true").lower() == "true"
-_AUTO_INGEST_TYPES = ("dvic", "driver_schedule", "fleet", "quality_csv", "safety_events", "dsp_scorecard")
+_AUTO_INGEST_TYPES = ("dvic", "driver_schedule", "fleet", "quality_csv", "safety_events", "dsp_scorecard", "tenured_workforce")
 
 
 def run_ops_auto_ingest(db: Session) -> dict:

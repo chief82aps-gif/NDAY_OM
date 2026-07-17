@@ -11,7 +11,8 @@ Maps Python classes to PostgreSQL database tables.
 from datetime import datetime, date, time, timedelta
 from sqlalchemy import (
     create_engine, Column, Integer, String, Boolean, DateTime, Date, Time,
-    DECIMAL, ForeignKey, Text, TIMESTAMP, JSON, Index, func, text, Float
+    DECIMAL, ForeignKey, Text, TIMESTAMP, JSON, Index, func, text, Float,
+    UniqueConstraint
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
@@ -1685,6 +1686,75 @@ class QualityMetricDriver(Base):
         Index("idx_qmd_week_driver", "week", "driver_name"),
         Index("idx_qmd_standing_score", "overall_standing", "overall_score"),
     )
+
+
+class TenuredWorkforceRecord(Base):
+    """Per-driver per-week row from Amazon's "Tenured Workforce DAs Report"
+    (logistics.amazon.com -> Performance -> Interactive Report ->
+    Supplementary Reports -> TWF Dashboard). Added 2026-07-17 to back the
+    driver-score tenure gate and the trailing-6-week route-count
+    eligibility gate. Uploaded weekly as a full historical re-export (the
+    same file each week contains every prior week too), so ingestion
+    upserts by (transporter_id, year, week) rather than replacing by
+    source_file the way DOP/Cortex do — past weeks don't change, only the
+    newest week is actually new data each time.
+
+    Column name note: "Trabsporter ID" is Amazon's own typo in the source
+    file, not ours — kept as transporter_id here, just documenting why the
+    parser matches on that literal misspelling.
+    """
+    __tablename__ = "tenured_workforce_records"
+
+    id = Column(Integer, primary_key=True)
+    dsp = Column(String(20))
+    station = Column(String(20), index=True)
+    year = Column(Integer, index=True)
+    week = Column(Integer, index=True)
+    employee_id = Column(String(50))
+    transporter_id = Column(String(50), index=True)
+    da_name = Column(String(255))
+    days_since_last_delivery = Column(Integer)
+    delivery_status = Column(String(50))
+    driver_status = Column(String(20))
+    tenure_status = Column(String(20))       # "Tenured" | "Not Tenured"
+    lifetime_routes = Column(Integer)
+    routes_in_week = Column(Integer)
+    source_file = Column(String(255))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("transporter_id", "year", "week", name="uq_twf_driver_week"),
+        Index("idx_twf_transporter_year_week", "transporter_id", "year", "week"),
+    )
+
+
+def get_latest_tenure_record(db, transporter_id: str):
+    """Most recent (highest year, week) TenuredWorkforceRecord for a
+    driver, or None if they've never appeared in a Tenured Workforce
+    report."""
+    return (
+        db.query(TenuredWorkforceRecord)
+        .filter(TenuredWorkforceRecord.transporter_id == transporter_id)
+        .order_by(TenuredWorkforceRecord.year.desc(), TenuredWorkforceRecord.week.desc())
+        .first()
+    )
+
+
+def get_trailing_route_count(db, transporter_id: str, weeks: int = 6) -> int:
+    """Sum of routes_in_week over a driver's N most recent Tenured
+    Workforce report rows — the trailing-N-week route count used for the
+    30-route ranking/bonus eligibility gate. Naturally handles gap weeks
+    (a week the driver didn't work just doesn't contribute), unlike
+    subtracting lifetime_routes N weeks back, which would require an
+    exact-week match."""
+    rows = (
+        db.query(TenuredWorkforceRecord.routes_in_week)
+        .filter(TenuredWorkforceRecord.transporter_id == transporter_id)
+        .order_by(TenuredWorkforceRecord.year.desc(), TenuredWorkforceRecord.week.desc())
+        .limit(weeks)
+        .all()
+    )
+    return sum(r[0] or 0 for r in rows)
 
 
 # ============================================================================

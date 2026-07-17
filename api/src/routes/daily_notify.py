@@ -42,6 +42,8 @@ from api.src.database import (
     get_latest_cortex_rows,
     get_reminder_state,
     set_reminder_state,
+    RouteSheetEntry,
+    get_latest_route_sheet_rows,
 )
 
 logger = logging.getLogger(__name__)
@@ -451,13 +453,33 @@ def build_daily_assignments(
         rather than deleted — silently removing a row out from under an
         already-DMed/acknowledged driver is worse than a stale leftover
         row; that's a case for a human to look at, not to auto-delete.
+
+    Route Sheet data comes from two sources, merged together: the pdf_data
+    passed in (only non-empty on the same call that just parsed it fresh)
+    and RouteSheetEntry (persisted, survives past that one call). This
+    matters whenever DOP arrives later than the Route Sheet on a given
+    day — without the persisted fallback, van/wave/stage data would be
+    silently unavailable forever once DOP finally lands and this function
+    runs for the first time (see RouteSheetEntry's docstring).
     """
+    persisted_rs = get_latest_route_sheet_rows(db, for_date)
     pdf_by_route = {
-        a["route_code"].upper(): a for a in pdf_data if a.get("route_code")
+        r.route_code.upper(): {"van_number": r.van_number, "wave_time": r.wave_time, "stage": r.stage, "driver_name": r.driver_name}
+        for r in persisted_rs if r.route_code
     }
     pdf_by_driver = {
-        a["driver_name"].lower(): a for a in pdf_data if a.get("driver_name")
+        r.driver_name.lower(): {"van_number": r.van_number, "wave_time": r.wave_time, "stage": r.stage, "driver_name": r.driver_name}
+        for r in persisted_rs if r.driver_name
     }
+    # Fresh pdf_data (this call's own parse, if any) takes priority —
+    # overlay it last, though in practice it's redundant with the
+    # persisted rows by the time this runs (route sheet is persisted
+    # before this function is called in check_and_notify).
+    for a in pdf_data:
+        if a.get("route_code"):
+            pdf_by_route[a["route_code"].upper()] = a
+        if a.get("driver_name"):
+            pdf_by_driver[a["driver_name"].lower()] = a
 
     dop_rows = get_latest_dop_rows(db, for_date)
 
@@ -1122,6 +1144,26 @@ def check_and_notify(
             content = _download_slack_file(rs_file["url"])
             if content:
                 pdf_data = parse_route_sheet_pdf(content)
+                # Persist per-route data so it survives past this single call
+                # — without this, if DOP arrives later than the Route Sheet
+                # (as happened 2026-07-16), the van/wave/stage data is gone
+                # forever once build_daily_assignments() finally runs, since
+                # this file can never be re-parsed (SlackIngestLog above).
+                db.query(RouteSheetEntry).filter(
+                    RouteSheetEntry.upload_date == for_date,
+                    RouteSheetEntry.source_file == rs_file["name"],
+                ).delete(synchronize_session=False)
+                for row in pdf_data:
+                    if row.get("route_code"):
+                        db.add(RouteSheetEntry(
+                            upload_date=for_date,
+                            route_code=row["route_code"],
+                            van_number=row.get("van_number"),
+                            wave_time=row.get("wave_time"),
+                            stage=row.get("stage"),
+                            driver_name=row.get("driver_name"),
+                            source_file=rs_file["name"],
+                        ))
                 db.add(SlackIngestLog(
                     ingest_date=for_date,
                     file_type="route_sheet",

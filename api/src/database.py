@@ -966,6 +966,51 @@ class Cortex(Base):
 # DOP (DAY OF PLAN)
 # ============================================================================
 
+class RouteSheetEntry(Base):
+    """Per-route data (van_number/wave/stage) parsed from a Route Sheet PDF.
+
+    Added 2026-07-16: parse_route_sheet_pdf()'s output previously only ever
+    existed as an in-memory list for the single check_and_notify() call that
+    parsed it, then was discarded — the pre-existing RouteSheet table only
+    stores file-level metadata (name, status), not per-route data. If DOP
+    arrives later than the Route Sheet on a given day (as happened
+    2026-07-16, when a detection bug delayed DOP for hours), the van/wave/
+    stage data was silently unavailable to merge in at all once DOP finally
+    landed, since SlackIngestLog prevents ever re-parsing the same Route
+    Sheet file again. Persisting these rows the same way DOP/Cortex already
+    do fixes that — see get_latest_route_sheet_rows().
+    """
+    __tablename__ = "route_sheet_entries"
+
+    id = Column(Integer, primary_key=True)
+    upload_date = Column(Date, nullable=False, index=True)
+    route_code = Column(String(50), index=True)
+    van_number = Column(String(50))
+    wave_time = Column(String(20))
+    stage = Column(String(100))
+    driver_name = Column(String(255))
+    source_file = Column(String(255))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_route_sheet_entry_date_route', 'upload_date', 'route_code'),
+    )
+
+
+def get_latest_route_sheet_rows(db, upload_date):
+    """Return all RouteSheetEntry rows from the most recently ingested
+    source_file for upload_date. See get_latest_dop_rows() for why scoping
+    to a single source_file matters."""
+    latest_file = _latest_source_file(db, RouteSheetEntry, RouteSheetEntry.upload_date, upload_date)
+    if latest_file is None:
+        return []
+    return (
+        db.query(RouteSheetEntry)
+        .filter(RouteSheetEntry.upload_date == upload_date, RouteSheetEntry.source_file == latest_file)
+        .all()
+    )
+
+
 class DOP(Base):
     """DOP (Day of Plan) route scheduling data"""
     __tablename__ = "dop_routes"

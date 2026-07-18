@@ -81,12 +81,19 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     name = Column(String(100))
     email = Column(String(100))
-    role = Column(String(20), nullable=False, default='driver')  
+    role = Column(String(20), nullable=False, default='driver')
     # Valid roles: 'admin', 'manager', 'dispatcher', 'driver'
     is_active = Column(Boolean, default=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_login = Column(DateTime)
+    # Added 2026-07-17 for the invite/reset-password flow (auth.py):
+    # slack_user_id is who to DM; reset_token/expiry back a one-time
+    # set-password link used for both first-time invites (is_active=False,
+    # password_hash=PENDING_PASSWORD_HASH until completed) and later resets.
+    slack_user_id = Column(String(20))
+    reset_token = Column(String(64), unique=True, index=True)
+    reset_token_expires_at = Column(DateTime)
 
     # Relationships
     driver = relationship("Driver", back_populates="user", uselist=False)
@@ -1997,6 +2004,43 @@ def ensure_route_duration_columns():
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS route_duration INTEGER"))
         except Exception:
             pass  # Column already exists
+
+
+def ensure_user_auth_columns():
+    """Add slack_user_id/reset_token/reset_token_expires_at to users —
+    added 2026-07-17 for the invite/reset-password Dispatch Home flow."""
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE users ADD COLUMN slack_user_id VARCHAR(20)"))
+            else:
+                conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS slack_user_id VARCHAR(20)"))
+    except Exception:
+        pass
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE users ADD COLUMN reset_token VARCHAR(64)"))
+            else:
+                conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token VARCHAR(64)"))
+    except Exception:
+        pass
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE users ADD COLUMN reset_token_expires_at DATETIME"))
+            else:
+                conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires_at TIMESTAMP"))
+    except Exception:
+        pass
+
+
+def get_user_by_username(db, username: str):
+    return db.query(User).filter(User.username == username.lower().strip()).first()
+
+
+def get_user_by_reset_token(db, token: str):
+    return db.query(User).filter(User.reset_token == token).first()
 
 
 def ensure_daily_route_assignment_notified_snapshot_column():

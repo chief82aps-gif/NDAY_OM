@@ -23,10 +23,11 @@ from typing import Optional
 from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
 
-from api.src.database import DriverRosterEntry
+from api.src.database import DriverRosterEntry, User
 from api.src.routes.document_routing import is_dispatch_staff
 from api.src.routes.slack_home import _client, _dm_driver
 from api.src.routes.slack_interactions import FRONTEND_URL
+from api.src.routes import auth as auth_routes
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,10 @@ DISPATCH_HOME_CHANNEL_ID = os.getenv("DISPATCH_HOME_CHANNEL_ID", "C0BHGL7DLLC")
 
 REMOVE_TERMINATED_CALLBACK_ID = "dispatch_remove_terminated_submit"
 MAX_CANDIDATES = 10  # Block Kit checkboxes element practical/UI limit per block
+
+INVITE_USER_CALLBACK_ID = "dispatch_invite_user_submit"
+RESET_PASSWORD_CALLBACK_ID = "dispatch_reset_password_submit"
+ROLE_OPTIONS = ["admin", "manager", "dispatcher", "driver"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -121,6 +126,22 @@ def build_dispatch_home_view_blocks(db: Session) -> list:
                     "type": "button",
                     "action_id": "dispatch_preview_driver_home",
                     "text": {"type": "plain_text", "text": "👁️ Preview Driver Home", "emoji": True},
+                },
+            ],
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": "dispatch_invite_user_button",
+                    "text": {"type": "plain_text", "text": "➕ Invite User", "emoji": True},
+                    "style": "primary",
+                },
+                {
+                    "type": "button",
+                    "action_id": "dispatch_reset_password_button",
+                    "text": {"type": "plain_text", "text": "🔑 Reset Password", "emoji": True},
                 },
             ],
         },
@@ -222,6 +243,19 @@ def _run_rerun_and_report(user_id: str) -> None:
         ]
         if not result.get("dm_active"):
             lines.append("_DRIVER_DM_ACTIVE is off — assignments were rebuilt and the summary refreshed, but no driver DMs were actually sent._")
+
+        from api.src.routes.daily_notify import get_missing_docs_today
+        from api.src.routes.ops_ingest import is_type_ingested_today
+        missing_docs = get_missing_docs_today(today, db)
+        missing_labels = [
+            label for label, dockey in (("DOP", "dop"), ("Route Sheet", "route_sheets"), ("Cortex", "cortex"))
+            if missing_docs[dockey]
+        ]
+        if not is_type_ingested_today(db, "fleet", today):
+            missing_labels.append("Fleet")
+        if missing_labels:
+            lines.append(f":warning: Missing today: {', '.join(missing_labels)} — counts above may be incomplete until these are posted.")
+
         summary = "\n".join(lines)
     except Exception as exc:
         logger.exception("Re-run route assignments background task failed")
@@ -465,5 +499,268 @@ def _handle_dispatch_remove_terminated_submit(payload: dict, db: Session) -> dic
         client.chat_postMessage(channel=DISPATCH_HOME_CHANNEL_ID, text=summary)
     except Exception as exc:
         logger.warning("Remove-terminated audit log post failed: %s", exc)
+
+    return {"response_action": "clear"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Invite User — creates a pending account (auth.py's User table) and DMs the
+# invitee a link to set their own password. Root cause this fixes: this app
+# used to authenticate against a local api/users.json file that's
+# .gitignore'd and doesn't ship with a Render deploy, so any account only
+# living there (or created via the old /create-user against a running
+# instance's ephemeral disk) silently stopped working on the next redeploy.
+# auth.py now backs everything with the users table instead.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _invite_user_modal() -> dict:
+    return {
+        "type": "modal",
+        "callback_id": INVITE_USER_CALLBACK_ID,
+        "title": {"type": "plain_text", "text": "Invite User"},
+        "submit": {"type": "plain_text", "text": "Send Invite"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "Creates a pending account and DMs the person a link to set their own "
+                            "password. The account stays inactive until they complete it.",
+                },
+            },
+            {
+                "type": "input",
+                "block_id": "slack_user_block",
+                "label": {"type": "plain_text", "text": "Slack user to invite"},
+                "element": {"type": "users_select", "action_id": "slack_user"},
+            },
+            {
+                "type": "input",
+                "block_id": "username_block",
+                "label": {"type": "plain_text", "text": "Username (for logging in)"},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "username",
+                    "placeholder": {"type": "plain_text", "text": "e.g. jsmith"},
+                },
+            },
+            {
+                "type": "input",
+                "block_id": "name_block",
+                "label": {"type": "plain_text", "text": "Display name"},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "name",
+                    "placeholder": {"type": "plain_text", "text": "e.g. John Smith"},
+                },
+            },
+            {
+                "type": "input",
+                "block_id": "role_block",
+                "label": {"type": "plain_text", "text": "Role"},
+                "element": {
+                    "type": "static_select",
+                    "action_id": "role",
+                    "initial_option": {"text": {"type": "plain_text", "text": "driver"}, "value": "driver"},
+                    "options": [{"text": {"type": "plain_text", "text": r}, "value": r} for r in ROLE_OPTIONS],
+                },
+            },
+        ],
+    }
+
+
+def _handle_dispatch_invite_user_button(payload: dict, db: Session) -> None:
+    user_id = payload.get("user", {}).get("id", "")
+    if not is_dispatch_staff(user_id, db):
+        logger.warning("Non-dispatch user %s attempted dispatch_invite_user_button", user_id)
+        return
+    trigger_id = payload.get("trigger_id")
+    client = _client()
+    if not client or not trigger_id:
+        return
+    try:
+        client.views_open(trigger_id=trigger_id, view=_invite_user_modal())
+    except Exception as exc:
+        logger.warning("views_open failed for invite-user modal: %s", exc)
+
+
+def _handle_dispatch_invite_user_submit(payload: dict, db: Session) -> dict:
+    clicker_id = payload.get("user", {}).get("id", "")
+    if not is_dispatch_staff(clicker_id, db):
+        logger.warning("Non-dispatch user %s attempted dispatch_invite_user_submit", clicker_id)
+        return {"response_action": "clear"}
+
+    values = payload.get("view", {}).get("state", {}).get("values", {})
+    slack_user_id = values.get("slack_user_block", {}).get("slack_user", {}).get("selected_user")
+    username = (values.get("username_block", {}).get("username", {}).get("value") or "").strip().lower()
+    name = (values.get("name_block", {}).get("name", {}).get("value") or "").strip()
+    role = values.get("role_block", {}).get("role", {}).get("selected_option", {}).get("value", "driver")
+
+    if not username or len(username) < 3:
+        return {"response_action": "errors", "errors": {"username_block": "Username must be at least 3 characters."}}
+
+    try:
+        user, token = auth_routes.create_invite(db, username, name, role, slack_user_id)
+    except ValueError as exc:
+        return {"response_action": "errors", "errors": {"username_block": str(exc)}}
+
+    link = auth_routes.set_password_url(token)
+    client = _client()
+
+    dm_sent = False
+    if client and slack_user_id:
+        try:
+            _dm_driver(
+                client, slack_user_id,
+                f":wave: You've been invited to New Day Logistics Route Manager as *{username}* ({role}).\n"
+                f"👉 <{link}|Set your password> to activate your account.",
+            )
+            dm_sent = True
+        except Exception as exc:
+            logger.warning("Invite DM to %s failed: %s", slack_user_id, exc)
+
+    summary = (
+        f"➕ *Invite sent* — *{username}* ({role})"
+        + (f", DM sent to <@{slack_user_id}>" if dm_sent else ", DM NOT sent — share this link directly")
+        + f"\n{link}"
+    )
+    if client:
+        try:
+            _dm_driver(client, clicker_id, summary)
+        except Exception as exc:
+            logger.warning("Invite confirmation DM to clicker failed: %s", exc)
+        try:
+            client.chat_postMessage(
+                channel=DISPATCH_HOME_CHANNEL_ID,
+                text=f"➕ *Invite sent* — *{username}* ({role}), DM {'sent' if dm_sent else 'failed'}",
+            )
+        except Exception as exc:
+            logger.warning("Invite audit log post failed: %s", exc)
+
+    return {"response_action": "clear"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Reset Password — generates a one-time set-password link for an existing
+# user and DMs it via Slack. Same underlying token mechanism as Invite User
+# (auth.py's complete_token()) — a reset is really just "set a password on
+# an already-active account" using the same link/page.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _reset_password_modal(db: Session) -> dict:
+    users = db.query(User).order_by(User.username).all()
+    if not users:
+        return {
+            "type": "modal",
+            "title": {"type": "plain_text", "text": "Reset Password"},
+            "close": {"type": "plain_text", "text": "Close"},
+            "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": "No users found."}}],
+        }
+
+    options = [
+        {"text": {"type": "plain_text", "text": f"{u.name or u.username} ({u.username})"[:75]}, "value": u.username}
+        for u in users[:100]  # static_select's practical option-count ceiling
+    ]
+
+    return {
+        "type": "modal",
+        "callback_id": RESET_PASSWORD_CALLBACK_ID,
+        "title": {"type": "plain_text", "text": "Reset Password"},
+        "submit": {"type": "plain_text", "text": "Send Reset Link"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "Generates a one-time link for the user to set a new password. DMs it to "
+                            "them via Slack if we have their Slack account on file.",
+                },
+            },
+            {
+                "type": "input",
+                "block_id": "user_block",
+                "label": {"type": "plain_text", "text": "User"},
+                "element": {"type": "static_select", "action_id": "username", "options": options},
+            },
+            {
+                "type": "input",
+                "block_id": "slack_user_block",
+                "optional": True,
+                "label": {"type": "plain_text", "text": "Re-confirm Slack user (only if not already linked)"},
+                "element": {"type": "users_select", "action_id": "slack_user"},
+            },
+        ],
+    }
+
+
+def _handle_dispatch_reset_password_button(payload: dict, db: Session) -> None:
+    user_id = payload.get("user", {}).get("id", "")
+    if not is_dispatch_staff(user_id, db):
+        logger.warning("Non-dispatch user %s attempted dispatch_reset_password_button", user_id)
+        return
+    trigger_id = payload.get("trigger_id")
+    client = _client()
+    if not client or not trigger_id:
+        return
+    try:
+        client.views_open(trigger_id=trigger_id, view=_reset_password_modal(db))
+    except Exception as exc:
+        logger.warning("views_open failed for reset-password modal: %s", exc)
+
+
+def _handle_dispatch_reset_password_submit(payload: dict, db: Session) -> dict:
+    clicker_id = payload.get("user", {}).get("id", "")
+    if not is_dispatch_staff(clicker_id, db):
+        logger.warning("Non-dispatch user %s attempted dispatch_reset_password_submit", clicker_id)
+        return {"response_action": "clear"}
+
+    values = payload.get("view", {}).get("state", {}).get("values", {})
+    username = values.get("user_block", {}).get("username", {}).get("selected_option", {}).get("value")
+    slack_user_override = values.get("slack_user_block", {}).get("slack_user", {}).get("selected_user")
+
+    if not username:
+        return {"response_action": "clear"}
+
+    try:
+        user, token = auth_routes.create_password_reset(db, username, slack_user_id=slack_user_override)
+    except ValueError as exc:
+        logger.warning("Reset-password failed for %s: %s", username, exc)
+        return {"response_action": "clear"}
+
+    link = auth_routes.set_password_url(token)
+    client = _client()
+
+    dm_sent = False
+    target_slack_id = slack_user_override or user.slack_user_id
+    if client and target_slack_id:
+        try:
+            _dm_driver(
+                client, target_slack_id,
+                f":key: Your New Day Logistics Route Manager password reset was requested.\n"
+                f"👉 <{link}|Set a new password>. If you didn't request this, contact dispatch.",
+            )
+            dm_sent = True
+        except Exception as exc:
+            logger.warning("Reset DM to %s failed: %s", target_slack_id, exc)
+
+    summary = (
+        f"🔑 *Password reset* — *{username}*"
+        + (", DM sent" if dm_sent else ", DM NOT sent — share this link directly")
+        + f"\n{link}"
+    )
+    if client:
+        try:
+            _dm_driver(client, clicker_id, summary)
+        except Exception as exc:
+            logger.warning("Reset confirmation DM to clicker failed: %s", exc)
+        try:
+            client.chat_postMessage(
+                channel=DISPATCH_HOME_CHANNEL_ID,
+                text=f"🔑 *Password reset* — *{username}*, DM {'sent' if dm_sent else 'failed'}",
+            )
+        except Exception as exc:
+            logger.warning("Reset audit log post failed: %s", exc)
 
     return {"response_action": "clear"}

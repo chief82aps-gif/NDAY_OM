@@ -56,8 +56,9 @@ from __future__ import annotations
 import logging
 import math
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -70,6 +71,16 @@ router = APIRouter(prefix="/okami-capacity", tags=["okami-capacity"])
 
 MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")     # #nday-mgt
 FLEET_CHANNEL = os.getenv("SLACK_FLEET_CHANNEL", "C0BJ8J5LGAU")  # #nday-fleet
+PT = ZoneInfo("America/Los_Angeles")
+
+
+def _fmt_time(dt: Optional[datetime]) -> str:
+    """UTC-naive DB timestamp -> Pacific 'h:mm AM/PM', matching the
+    dashboard's display format (see frontend/pages/okami-capacity.tsx)."""
+    if not dt:
+        return "—"
+    local = dt.replace(tzinfo=timezone.utc).astimezone(PT)
+    return local.strftime("%I:%M %p").lstrip("0")
 
 
 class OkamiCapacitySubmission(BaseModel):
@@ -306,27 +317,110 @@ def finalize(payload: FinalizeRequest, db: Session = Depends(get_db)):
         # Only da_count < capacity_total means today's routes themselves
         # are short a driver.
         real_da_shortfall = bool(row.da_count is not None and row.da_count < row.capacity_total)
-        summary_lines = [
-            f":clipboard: *Okami Capacity finalized* for {row.log_date.isoformat()} (by {row.finalized_by or 'ops'})",
-            f"DAs: {row.da_count}   Okami: {row.okami_count}   Capacity: {row.capacity_total}   "
-            f"Vans: {row.van_count} (need {required_van} — {van_status.upper()})",
+
+        # ── "Logged today" card — green bar, mirrors the dashboard's own
+        # post-submit confirmation box (frontend/pages/okami-capacity.tsx) ──
+        logged_fields = [
+            {"type": "mrkdwn", "text": f"*DAs:* {row.da_count}"},
+            {"type": "mrkdwn", "text": f"*Okami:* {row.okami_count}"},
+            {"type": "mrkdwn", "text": f"*Capacity:* {row.capacity_total}"},
+            {"type": "mrkdwn", "text": f"*Vans:* {row.van_count}"},
+        ]
+        if row.frt is not None:
+            logged_fields.append({"type": "mrkdwn", "text": f"*FRT:* {row.frt}"})
+        logged_blocks = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f":white_check_mark: *Logged today at {_fmt_time(row.created_at)} by "
+                            f"{row.submitted_by or 'ops'}*",
+                },
+            },
+            {"type": "section", "fields": logged_fields},
+            {
+                "type": "context",
+                "elements": [{
+                    "type": "mrkdwn",
+                    "text": "Need to correct a number? Submit again — the latest entry is what counts.",
+                }],
+            },
+        ]
+
+        # ── "Finalized" card — neutral bar, warning banner + OK/MET badges ──
+        finalized_blocks = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f":lock: *Finalized at {_fmt_time(row.finalized_at)} by "
+                            f"{row.finalized_by or 'ops'}*",
+                },
+            },
         ]
         if real_da_shortfall:
-            summary_lines.append(
-                f":rotating_light: *DA shortfall* — only {row.da_count} drivers for {row.capacity_total} routes today."
-            )
+            finalized_blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f":rotating_light: *DA shortfall* — only {row.da_count} drivers for "
+                            f"{row.capacity_total} routes today.",
+                },
+            })
         elif da_status == "short":
             spare = required_da - row.da_count if row.da_count is not None else None
-            summary_lines.append(
-                f":large_orange_diamond: Driver buffer is thin — {row.da_count} on hand covers today's "
-                f"{row.capacity_total} routes"
-                f"{f', but only {spare} spare' if spare is not None else ''}. "
-                f"If a driver calls out, office staff may need to cover a route."
-            )
+            finalized_blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f":large_orange_diamond: *Driver buffer is thin* — {row.da_count} on hand "
+                            f"covers today's {row.capacity_total} routes"
+                            f"{f', but only {spare} spare' if spare is not None else ''}. "
+                            f"If a driver calls out, office staff may need to cover a route.",
+                },
+            })
+
+        van_badge = ":white_check_mark: `OK`" if van_status == "ok" else ":red_circle: `SHORT`"
+        finalized_blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"Van coverage — need {required_van}, effectively have "
+                        f"{effective_available} {van_badge}",
+            },
+        })
         if row.frt is not None:
-            summary_lines.append(f"FRT: {row.frt} — {'BREACHED' if frt_breached else 'met'}")
+            frt_badge = ":red_circle: `BREACHED`" if frt_breached else ":white_check_mark: `MET`"
+            finalized_blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"FRT (Flex Up Target) — {row.frt} {frt_badge}",
+                },
+            })
+        finalized_blocks.append({
+            "type": "context",
+            "elements": [{
+                "type": "mrkdwn",
+                "text": "Corrected a number above? Finalizing again re-runs these checks and re-sends notifications.",
+            }],
+        })
+
+        fallback_text = (
+            f"Okami Capacity finalized for {row.log_date.isoformat()} (by {row.finalized_by or 'ops'}) — "
+            f"DAs: {row.da_count}, Okami: {row.okami_count}, Capacity: {row.capacity_total}, "
+            f"Vans: {row.van_count}, Van coverage: {van_status.upper()}"
+            + (f", FRT: {'BREACHED' if frt_breached else 'met'}" if row.frt is not None else "")
+        )
         try:
-            client.chat_postMessage(channel=MGT_CHANNEL, text="\n".join(summary_lines))
+            client.chat_postMessage(
+                channel=MGT_CHANNEL,
+                text=fallback_text,
+                attachments=[
+                    {"color": "#2eb67d", "blocks": logged_blocks},
+                    {"color": "#dddddd", "blocks": finalized_blocks},
+                ],
+            )
             notifications["mgt_summary_sent"] = True
         except Exception as exc:
             logger.warning("okami_capacity: mgt summary post failed: %s", exc)

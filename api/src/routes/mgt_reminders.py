@@ -24,6 +24,12 @@ closes — and resets automatically at midnight Pacific (state keyed by
 date). Reminder #7 additionally only ever checks on Fridays (weekday=4);
 every other day it's a no-op regardless of time.
 
+Every reminder DM includes a direct link to the frontend page where the
+action actually happens (the `/upload` tab for that file type, the Okami
+form, the driver-schedule uploader, or `/ops-ingest` when no dedicated
+upload tab exists yet) — same pattern as the EOD survey link sent to
+drivers, so the recipient doesn't have to go find the right page.
+
 Endpoints:
   POST /mgt-reminders/check   Manual trigger (same call the background loop makes)
 """
@@ -44,24 +50,29 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/mgt-reminders", tags=["mgt-reminders"])
 
 MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
+APP_URL = os.getenv("APP_URL", "https://nday-om.vercel.app")
 PT = ZoneInfo("America/Los_Angeles")
 
 REMINDER_INTERVAL_SECONDS = 5 * 60
 
 # window = (start_hour, start_minute, end_hour, end_minute) in Pacific time —
 # checked against our own server clock, never a Slack message timestamp.
+# "page" is the frontend route where the reminded-of action actually happens
+# (direct upload, or the ops-ingest monitor when no dedicated upload tab
+# exists yet) — same pattern as the EOD survey link sent to drivers.
 _REMINDERS = {
-    "dop":          {"detected_type": "dop",          "label": "DOP file",                   "window": (9, 0, 10, 0)},
-    "route_sheets": {"detected_type": "route_sheets", "label": "Route Sheets file",           "window": (9, 0, 10, 0)},
-    "cortex":       {"detected_type": "cortex",       "label": "Cortex Routes file",          "window": (9, 0, 10, 0)},
-    "fleet":        {"detected_type": "fleet",        "label": "Fleet / Vehicle Data file",   "window": (9, 0, 10, 0)},
-    "okami":        {"detected_type": "okami_capacity","label": "Okami capacity forecast",    "window": (15, 30, 21, 0)},
-    "schedule":     {"detected_type": "driver_schedule","label": "Driver schedule",           "window": (17, 0, 20, 0)},
+    "dop":          {"detected_type": "dop",          "label": "DOP file",                   "window": (9, 0, 10, 0), "page": "/upload?view=daily"},
+    "route_sheets": {"detected_type": "route_sheets", "label": "Route Sheets file",           "window": (9, 0, 10, 0), "page": "/upload?view=daily"},
+    "cortex":       {"detected_type": "cortex",       "label": "Cortex Routes file",          "window": (9, 0, 10, 0), "page": "/upload?view=daily"},
+    "fleet":        {"detected_type": "fleet",        "label": "Fleet / Vehicle Data file",   "window": (9, 0, 10, 0), "page": "/upload?view=daily"},
+    "okami":        {"detected_type": "okami_capacity","label": "Okami capacity forecast",    "window": (15, 30, 21, 0), "page": "/okami-capacity"},
+    "schedule":     {"detected_type": "driver_schedule","label": "Driver schedule",           "window": (17, 0, 20, 0), "page": "/driver-schedule"},
     "tenured_workforce": {
         "detected_type": "tenured_workforce",
         "label": "Tenured Workforce DAs Report",
         "window": (17, 0, 23, 59),
         "weekday": 4,  # Friday only (Monday=0 ... Sunday=6) -- "by COB each Friday"
+        "page": "/ops-ingest",
         "hint": (
             "Find it at logistics.amazon.com -> Performance -> Interactive Report -> "
             "Supplementary Reports -> *TWF Dashboard*. Export via the three-stacked-dots "
@@ -197,10 +208,12 @@ def _check_one(key: str, db: Session, client, now) -> dict:
     sent = 0
     send_errors: list[str] = []
     hint = cfg.get("hint")
+    page_url = f"{APP_URL}{cfg['page']}"
     message = (
         f":alarm_clock: *{cfg['label']} reminder* — this hasn't been posted "
         f"yet today. Please post it as soon as it's available."
         + (f"\n{hint}" if hint else "")
+        + f"\n👉 *<{page_url}|Open {cfg['label']}>*"
     )
     for uid in recipients:
         try:

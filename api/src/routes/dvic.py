@@ -450,7 +450,8 @@ def run_dvic_upload_reminder() -> None:
                 _post(
                     NDAY_MGT_CHANNEL,
                     ":information_source: *DVIC Under-90 Report* — No file received from Amazon by 6:00 PM today. "
-                    "No further reminders will be sent. Upload manually via `/ops-ingest` if it becomes available.",
+                    "No further reminders will be sent. Upload manually via "
+                    f"<{APP_URL}/ops-ingest|Ops Ingest Monitor> if it becomes available.",
                 )
         return
 
@@ -492,17 +493,20 @@ def run_dvic_upload_reminder() -> None:
     _reminder_state["last_reminded_at"] = now
     _save_reminder_state(_reminder_state)
 
+    page_link = f"👉 *<{APP_URL}/ops-ingest|Open Ops Ingest Monitor>*"
     if count == 1:
         msg = (
             ":bell: *DVIC Pre-Trip Under-90 Report* — Please upload this week's file to "
             f"<#{OPS_CHANNEL}|nday-operations-management>.\n"
             "This report tracks drivers who completed their vehicle inspection in under 90 seconds. "
-            "Reminders will continue every 5 minutes until uploaded."
+            "Reminders will continue every 5 minutes until uploaded.\n"
+            f"{page_link}"
         )
     else:
         msg = (
             f":bell: *(Reminder #{count})* DVIC Pre-Trip Under-90 Report not yet uploaded. "
-            f"Please drop it in <#{OPS_CHANNEL}|nday-operations-management>."
+            f"Please drop it in <#{OPS_CHANNEL}|nday-operations-management>.\n"
+            f"{page_link}"
         )
     _post(NDAY_MGT_CHANNEL, msg)
     logger.info("DVIC upload reminder #%d sent to #nday-mgt", count)

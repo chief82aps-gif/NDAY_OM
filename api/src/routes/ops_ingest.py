@@ -174,7 +174,7 @@ def _classify(filename: str, message: str, channel_id: str = "") -> str:
         return "wst_zip"
 
     if ext == ".csv":
-        if any(k in combined for k in ("tenured_workforce", "tenured workforce", "twf dashboard", "twf_dashboard", "twf")):
+        if any(k in combined for k in ("tenured_workforce", "tenured workforce", "twf dashboard", "twf_dashboard")):
             return "tenured_workforce"
         if any(k in combined for k in ("okami", "capacity forecast", "capacity_forecast", "next day capacity")):
             return "okami_capacity"
@@ -196,7 +196,7 @@ def _classify(filename: str, message: str, channel_id: str = "") -> str:
         return "unknown"
 
     if ext in (".xlsx", ".xls"):
-        if any(k in combined for k in ("tenured_workforce", "tenured workforce", "twf dashboard", "twf_dashboard", "twf")):
+        if any(k in combined for k in ("tenured_workforce", "tenured workforce", "twf dashboard", "twf_dashboard")):
             return "tenured_workforce"
         if any(k in combined for k in ("okami", "capacity forecast", "capacity_forecast", "next day capacity")):
             return "okami_capacity"

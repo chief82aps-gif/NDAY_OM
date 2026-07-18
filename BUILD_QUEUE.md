@@ -42,6 +42,22 @@ rather than re-deriving status from scratch each session.
   `C0BHGL7DLLC` returns `channel_not_found`, blocking the Dispatch Home
   audit-log post step. Needs the correct channel ID confirmed and the
   bot invited as a member before it'll post.
+- **Fixed 2026-07-17 — root cause of "usernames don't seem to be
+  working" found and fixed.** `api/users.json` (the real staff account
+  store) was `.gitignore`'d and not part of any commit in `main`, so it
+  never shipped with a Render deploy — any account only living there
+  vanished on the next redeploy, and the hardcoded admin fallback
+  password didn't match `LOGIN.md`. `auth.py` now reads/writes the DB's
+  existing (previously unused) `User` table with bcrypt-hashed
+  passwords; a one-time seed migrates every account that used to live in
+  the JSON file. Added Invite User / Reset Password buttons on Slack
+  Dispatch Home (tokenized set-password links via
+  `frontend/pages/set-password.tsx`) — same `im:write` scope gap above
+  blocks the DM-to-invitee step until that scope is added, but the
+  audit-log post + DM-to-clicker fallback always carries the link.
+- **Fixed 2026-07-17 — Okami finalize Slack message reformatted** to
+  match the dashboard's own card layout (green "Logged" card + neutral
+  "Finalized" card with OK/MET badges), per user request.
 
 - **Driver Slack-linking: 84 of 104 active drivers linked** (verified live
   2026-07-16). Up from 61/102. A deterministic email-bridge matcher

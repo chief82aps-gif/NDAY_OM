@@ -71,3 +71,4 @@ Use this index to quickly locate governing standards, ingest rules, audit rules,
 | Safety Events (Netradyne) | `routes/safety_events.py` | *(no page yet — API only)* | ✅ 2026-07-14 |
 | Tenured Workforce Ingest | `routes/tenured_workforce.py` | *(no page yet — API only)* | ✅ 2026-07-17 |
 | Driver Individual Scoring | `routes/driver_scoring.py` | *(no page yet — API only)* | ✅ 2026-07-17 |
+| Auth (DB-backed) + Invite/Reset | `routes/auth.py` | `/login`, `/admin`, `/set-password` | ✅ 2026-07-17 |

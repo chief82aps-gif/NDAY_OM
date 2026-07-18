@@ -18,7 +18,7 @@ import logging
 import os
 import re
 import tempfile
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Optional
 
 import requests
@@ -174,7 +174,7 @@ def _classify(filename: str, message: str, channel_id: str = "") -> str:
         return "wst_zip"
 
     if ext == ".csv":
-        if any(k in combined for k in ("tenured_workforce", "tenured workforce", "twf dashboard", "twf_dashboard")):
+        if any(k in combined for k in ("tenured_workforce", "tenured workforce", "twf dashboard", "twf_dashboard", "twf")):
             return "tenured_workforce"
         if any(k in combined for k in ("okami", "capacity forecast", "capacity_forecast", "next day capacity")):
             return "okami_capacity"
@@ -196,6 +196,8 @@ def _classify(filename: str, message: str, channel_id: str = "") -> str:
         return "unknown"
 
     if ext in (".xlsx", ".xls"):
+        if any(k in combined for k in ("tenured_workforce", "tenured workforce", "twf dashboard", "twf_dashboard", "twf")):
+            return "tenured_workforce"
         if any(k in combined for k in ("okami", "capacity forecast", "capacity_forecast", "next day capacity")):
             return "okami_capacity"
         if any(k in combined for k in ("dvic", "pre_trip", "pre-trip", "under90", "under 90", "pretrip")):
@@ -905,6 +907,26 @@ def run_ops_auto_ingest(db: Session) -> dict:
             _post_confirmation(f":warning: `{job.file_name}` queued but no handler built yet for type `{job.detected_type}`.")
 
     return {"status": "checked", "ingested": ingested, "errors": errors, "total_pending": len(jobs), "by_type": by_type}
+
+
+def is_type_ingested_today(db: Session, detected_type: str, today: date) -> bool:
+    """True only if an OpsIngestJob of this type reached status=='complete'
+    today (Pacific midnight, converted to UTC to match detected_at's storage
+    — same boundary logic as mgt_reminders.py's date checks). Mere row
+    existence isn't enough: a job can sit 'pending' or 'error' forever for
+    types excluded from auto-ingest (dop/cortex/route_sheets), and even an
+    auto-ingested type (fleet, driver_schedule, ...) can fail mid-run.
+    Single source of truth so mgt_reminders.py's reminder-resolution check
+    and slack_dispatch_home.py's Re-Run missing-doc report agree."""
+    from zoneinfo import ZoneInfo
+    start_local = datetime(today.year, today.month, today.day, tzinfo=ZoneInfo("America/Los_Angeles"))
+    start_utc = start_local.astimezone(timezone.utc)
+    return (
+        db.query(OpsIngestJob)
+        .filter(OpsIngestJob.detected_type == detected_type, OpsIngestJob.status == "complete")
+        .filter(OpsIngestJob.detected_at >= start_utc)
+        .first() is not None
+    )
 
 
 @router.post("/auto-ingest")

@@ -105,6 +105,30 @@ never a module-level dict or variable.** This is the same root problem
 as the `DailyRouteAssignment` duplication above — no durable state to
 prevent an uncoordinated repeat trigger — just a different symptom.
 
+## Always use Pacific local time for "today" — never the server clock
+
+Real bug, found 2026-07-17/18: `okami_capacity.py`'s submit/finalize/`/today`
+endpoints defaulted a missing date to `date.today()` / `datetime.utcnow()`.
+Render's server clock runs UTC, and Okami is submitted in the 3:30-9:00 PM
+Pacific window — which is already the *next* UTC calendar day for most of
+that window. A submission with no explicit date got silently stamped
+"tomorrow," so `has_submission_today()` (correctly checked against Pacific
+"today") never found it, and the mgt_reminders.py nag kept firing all
+evening despite a real submission existing. Confirmed live: a 2026-07-17
+5:35 PM Pacific submission landed with `log_date: "2026-07-18"`.
+
+**Rule: every "what date/time is it right now" check in this codebase must
+resolve against `datetime.now(ZoneInfo("America/Los_Angeles"))`, never
+`date.today()`, `datetime.now()` (naive), or `datetime.utcnow().date()`.**
+This project's actual operations — DOP/Cortex windows, rostering, Okami,
+reminders — all run on Pacific business hours; the server's own system
+timezone is an implementation detail that must never leak into business-date
+logic. `mgt_reminders.py`'s `_file_detected_today()` already does this
+conversion correctly (Pacific midnight → UTC, not UTC midnight) — copy that
+pattern, don't reinvent it. When in doubt, grep for `PT = ZoneInfo(...)` —
+several files already define this constant; reuse it rather than adding a
+new naive date call.
+
 ## Production safety gates — do not flip without explicit sign-off
 
 Full detail: `Governance/ROSTERING_DM_RULES.md`.

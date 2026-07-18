@@ -201,7 +201,13 @@ def _dm_many(client, slack_ids: list[str], text: str) -> int:
 @router.post("")
 def submit_okami_capacity(payload: OkamiCapacitySubmission, db: Session = Depends(get_db)):
     try:
-        log_date = date.fromisoformat(payload.log_date) if payload.log_date else date.today()
+        # date.today() is the server's system clock (Render runs UTC) —
+        # Okami is submitted 3:30-9PM Pacific, which is already the next
+        # UTC calendar day for most of that window. A submission with no
+        # explicit log_date used to get silently stamped "tomorrow", so
+        # has_submission_today() (checked against Pacific "today") never
+        # found it and the reminder kept firing despite a real submission.
+        log_date = date.fromisoformat(payload.log_date) if payload.log_date else datetime.now(PT).date()
     except ValueError:
         raise HTTPException(400, "log_date must be YYYY-MM-DD")
 
@@ -228,8 +234,9 @@ def submit_okami_capacity(payload: OkamiCapacitySubmission, db: Session = Depend
 
 @router.get("/today")
 def get_today(db: Session = Depends(get_db)):
-    row = get_latest_for_date(db, date.today())
-    return {"log_date": date.today().isoformat(), "submission": _serialize(row) if row else None}
+    pt_today = datetime.now(PT).date()
+    row = get_latest_for_date(db, pt_today)
+    return {"log_date": pt_today.isoformat(), "submission": _serialize(row) if row else None}
 
 
 @router.get("")
@@ -273,7 +280,7 @@ def update_settings(payload: OkamiSettingsUpdate, db: Session = Depends(get_db))
 def finalize(payload: FinalizeRequest, db: Session = Depends(get_db)):
     row = (
         db.query(OkamiCapacityLog).filter(OkamiCapacityLog.id == payload.log_id).first()
-        if payload.log_id else get_latest_for_date(db, date.today())
+        if payload.log_id else get_latest_for_date(db, datetime.now(PT).date())
     )
     if not row:
         raise HTTPException(404, "No Okami capacity submission to finalize — submit numbers first.")

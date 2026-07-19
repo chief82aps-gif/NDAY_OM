@@ -174,7 +174,17 @@ def _classify(filename: str, message: str, channel_id: str = "") -> str:
         return "wst_zip"
 
     if ext == ".csv":
-        if any(k in combined for k in ("tenured_workforce", "tenured workforce", "twf dashboard", "twf_dashboard")):
+        if any(k in combined for k in (
+            "tenured_workforce", "tenured workforce", "twf dashboard", "twf_dashboard",
+            # Amazon's TWF Dashboard portal has two tabs — "Tenured Workforce
+            # Calculation Report" and "Tenured Workforce DAs Report" — and
+            # exporting from the wrong one (the Calculation Report) produces
+            # this specific canned filename/caption. Matched narrowly (not a
+            # bare "twf") so it still routes to _store_tenured_workforce(),
+            # which now gives a clear "wrong tab" error instead of silently
+            # falling to "unknown" where nothing would ever flag it.
+            "twf_raw_and_twf", "tenured work force",
+        )):
             return "tenured_workforce"
         if any(k in combined for k in ("okami", "capacity forecast", "capacity_forecast", "next day capacity")):
             return "okami_capacity"
@@ -196,7 +206,17 @@ def _classify(filename: str, message: str, channel_id: str = "") -> str:
         return "unknown"
 
     if ext in (".xlsx", ".xls"):
-        if any(k in combined for k in ("tenured_workforce", "tenured workforce", "twf dashboard", "twf_dashboard")):
+        if any(k in combined for k in (
+            "tenured_workforce", "tenured workforce", "twf dashboard", "twf_dashboard",
+            # Amazon's TWF Dashboard portal has two tabs — "Tenured Workforce
+            # Calculation Report" and "Tenured Workforce DAs Report" — and
+            # exporting from the wrong one (the Calculation Report) produces
+            # this specific canned filename/caption. Matched narrowly (not a
+            # bare "twf") so it still routes to _store_tenured_workforce(),
+            # which now gives a clear "wrong tab" error instead of silently
+            # falling to "unknown" where nothing would ever flag it.
+            "twf_raw_and_twf", "tenured work force",
+        )):
             return "tenured_workforce"
         if any(k in combined for k in ("okami", "capacity forecast", "capacity_forecast", "next day capacity")):
             return "okami_capacity"
@@ -883,6 +903,8 @@ def run_ops_auto_ingest(db: Session) -> dict:
             job.result_json = None
             db.commit()
             errors += 1
+            label = _TYPE_LABELS.get(job.detected_type, job.detected_type)
+            _post_confirmation(f":x: *{label} auto-ingest failed* — `{job.file_name}`\n{str(exc)[:500]}")
             continue
 
         job.status = "complete" if result.get("status") not in ("error", "unsupported") else result["status"]
@@ -905,6 +927,13 @@ def run_ops_auto_ingest(db: Session) -> dict:
             _post_confirmation(f":repeat: `{job.file_name}` was already ingested (skipped duplicate).")
         elif result.get("status") == "unsupported":
             _post_confirmation(f":warning: `{job.file_name}` queued but no handler built yet for type `{job.detected_type}`.")
+        elif result.get("status") == "error":
+            # Previously silent — a failed auto-ingest (e.g. wrong-tab TWF
+            # export, unparseable file) sat invisibly in the ops-ingest
+            # monitor with no Slack signal at all, so nobody knew to fix and
+            # re-upload until someone happened to check the dashboard.
+            errors += 1
+            _post_confirmation(f":x: *{label} auto-ingest failed* — `{job.file_name}`\n{result.get('message', 'Unknown error')}")
 
     return {"status": "checked", "ingested": ingested, "errors": errors, "total_pending": len(jobs), "by_type": by_type}
 

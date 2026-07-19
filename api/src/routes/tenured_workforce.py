@@ -65,7 +65,21 @@ def _store_tenured_workforce(content: bytes, filename: str, slack_file_id: Optio
         required = {"Trabsporter ID", "Year", "Week"}
         missing = required - set(df.columns)
         if missing:
-            return {"status": "error", "message": f"Missing expected columns: {sorted(missing)}"}
+            # By far the most common cause (confirmed 2026-07-18): Amazon's
+            # TWF Dashboard portal has two tabs -- "Tenured Workforce
+            # Calculation Report" and "Tenured Workforce DAs Report" -- and
+            # exporting from the wrong one silently produces a differently-
+            # shaped file. Name the likely fix, don't just report columns.
+            return {
+                "status": "error",
+                "message": (
+                    f"Missing expected columns {sorted(missing)} — this looks like the wrong "
+                    "export from Amazon's TWF Dashboard. The portal has two tabs: "
+                    "'Tenured Workforce Calculation Report' and 'Tenured Workforce DAs Report'. "
+                    "Make sure the 'Tenured Workforce DAs Report' tab is selected (bold/highlighted) "
+                    "before using Export to CSV, then re-upload."
+                ),
+            }
 
         existing_keys = {
             (r.transporter_id, r.year, r.week)

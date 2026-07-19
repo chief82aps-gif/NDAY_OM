@@ -106,6 +106,11 @@ def build_dispatch_home_view_blocks(db: Session) -> list:
                     "action_id": "dispatch_republish_showtime",
                     "text": {"type": "plain_text", "text": "🔁 Re-Publish Showtime Matrix", "emoji": True},
                 },
+                {
+                    "type": "button",
+                    "action_id": "dispatch_send_route_matrix",
+                    "text": {"type": "plain_text", "text": "📤 Send Route Matrix", "emoji": True},
+                },
             ],
         },
         {
@@ -329,6 +334,47 @@ def _handle_dispatch_republish_showtime(payload: dict, db: Session) -> None:
         _dm_driver(client, user_id, summary)
     except Exception as exc:
         logger.warning("Republish showtime summary DM failed for %s: %s", user_id, exc)
+
+
+ROUTE_MATRIX_TARGET_CHANNEL = os.getenv("ROUTE_MATRIX_TARGET_CHANNEL", "C0BAQAYKANS")
+
+
+def _handle_dispatch_send_route_matrix(payload: dict, db: Session) -> None:
+    """Send Route Matrix — manual, on-demand send of today's assignment
+    matrix to ROUTE_MATRIX_TARGET_CHANNEL, separate from the automatic
+    #nday-mgt post (post_assignment_matrix()). No idempotency guard —
+    every click sends a fresh copy, same as Re-Publish Showtime Matrix."""
+    user_id = payload.get("user", {}).get("id", "")
+    if not is_dispatch_staff(user_id, db):
+        logger.warning("Non-dispatch user %s attempted dispatch_send_route_matrix", user_id)
+        return
+
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo
+    from api.src.routes.rostering import send_assignment_matrix_to_channel
+
+    today = _dt.now(ZoneInfo("America/Los_Angeles")).date()
+    try:
+        result = send_assignment_matrix_to_channel(today, db, ROUTE_MATRIX_TARGET_CHANNEL)
+    except Exception as exc:
+        logger.exception("Send route matrix failed")
+        result = {"status": "error", "detail": str(exc)}
+
+    client = _client()
+    if not client:
+        return
+    if result.get("status") == "posted":
+        summary = f":white_check_mark: Route matrix sent to <#{ROUTE_MATRIX_TARGET_CHANNEL}> for {today.isoformat()} ({result.get('drivers')} drivers)."
+    elif result.get("status") == "no_assignments":
+        summary = f":warning: No route assignments found for {today.isoformat()} — nothing sent."
+    elif result.get("status") == "no_slack_token":
+        summary = ":warning: No Slack bot token configured — nothing sent."
+    else:
+        summary = f":x: Send route matrix failed: {result}"
+    try:
+        _dm_driver(client, user_id, summary)
+    except Exception as exc:
+        logger.warning("Send-route-matrix summary DM failed for %s: %s", user_id, exc)
 
 
 def _handle_dispatch_back_from_preview(payload: dict, db: Session) -> None:

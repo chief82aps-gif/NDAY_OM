@@ -908,48 +908,15 @@ def _truncate(s: str, width: int) -> str:
     return s[: width - 1].rstrip() + "…"
 
 
-def post_assignment_matrix(shift_date: date, db: Session, force: bool = False) -> dict:
-    """
-    Post the day-of assignment matrix to #nday-mgt: every driver's route, van,
-    and estimated return time — the same data sent in each driver's DM —
-    grouped and sorted by wave, then by driver first name within each wave.
-
-    Idempotent per shift_date (via a synthetic SlackIngestLog entry) so it's
-    safe to call from multiple trigger points (post-Cortex-ingest, post-finalize)
-    without double-posting.
-    """
-    if not _ACTIVE:
-        return {"status": "inactive", "note": "Set ROSTERING_ACTIVE=true on Render to enable"}
-
-    fake_id = f"assignment_matrix_{shift_date.isoformat()}"
-    existing_log = db.query(SlackIngestLog).filter(SlackIngestLog.slack_file_id == fake_id).first()
-    if existing_log:
-        if not force:
-            return {"status": "already_posted", "date": shift_date.isoformat()}
-        db.delete(existing_log)
-        db.commit()
-
-    assignments = (
-        db.query(DailyRouteAssignment)
-        .filter(
-            DailyRouteAssignment.assignment_date == shift_date,
-            DailyRouteAssignment.driver_name != None,
-            DailyRouteAssignment.driver_name != "",
-        )
-        .all()
-    )
-    if not assignments:
-        return {"status": "no_assignments", "date": shift_date.isoformat()}
-
+def _build_assignment_matrix_blocks(shift_date: date, assignments: list, db: Session) -> tuple[list, str]:
+    """Pure block builder shared by post_assignment_matrix() (#nday-mgt,
+    idempotent) and send_assignment_matrix_to_channel() (manual, any
+    channel, always fresh) — same table content either way."""
     def _sort_key(a):
         wave_dt = _parse_wave_dt(a.wave or "")
         return (wave_dt is None, wave_dt or datetime.max, _first_name(a.driver_name).lower())
 
-    assignments.sort(key=_sort_key)
-
-    client = _slack_client()
-    if not client:
-        return {"status": "no_slack_token"}
+    assignments = sorted(assignments, key=_sort_key)
 
     quality_map = _latest_quality_map(db)
 
@@ -1048,6 +1015,48 @@ def post_assignment_matrix(shift_date: date, db: Session, force: bool = False) -
         "elements": [{"type": "mrkdwn", "text": f"_Posted by NDAY Route Manager · {datetime.utcnow().strftime('%H:%M UTC')}_"}],
     })
 
+    return blocks, date_str
+
+
+def post_assignment_matrix(shift_date: date, db: Session, force: bool = False) -> dict:
+    """
+    Post the day-of assignment matrix to #nday-mgt: every driver's route, van,
+    and estimated return time — the same data sent in each driver's DM —
+    grouped and sorted by wave, then by driver first name within each wave.
+
+    Idempotent per shift_date (via a synthetic SlackIngestLog entry) so it's
+    safe to call from multiple trigger points (post-Cortex-ingest, post-finalize)
+    without double-posting.
+    """
+    if not _ACTIVE:
+        return {"status": "inactive", "note": "Set ROSTERING_ACTIVE=true on Render to enable"}
+
+    fake_id = f"assignment_matrix_{shift_date.isoformat()}"
+    existing_log = db.query(SlackIngestLog).filter(SlackIngestLog.slack_file_id == fake_id).first()
+    if existing_log:
+        if not force:
+            return {"status": "already_posted", "date": shift_date.isoformat()}
+        db.delete(existing_log)
+        db.commit()
+
+    assignments = (
+        db.query(DailyRouteAssignment)
+        .filter(
+            DailyRouteAssignment.assignment_date == shift_date,
+            DailyRouteAssignment.driver_name != None,
+            DailyRouteAssignment.driver_name != "",
+        )
+        .all()
+    )
+    if not assignments:
+        return {"status": "no_assignments", "date": shift_date.isoformat()}
+
+    client = _slack_client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    blocks, date_str = _build_assignment_matrix_blocks(shift_date, assignments, db)
+
     try:
         client.chat_postMessage(
             channel=MGT_CHANNEL,
@@ -1065,6 +1074,42 @@ def post_assignment_matrix(shift_date: date, db: Session, force: bool = False) -
         return {"status": "posted", "date": shift_date.isoformat(), "drivers": len(assignments)}
     except Exception as exc:
         logger.error("Assignment matrix post failed: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+
+def send_assignment_matrix_to_channel(shift_date: date, db: Session, channel_id: str) -> dict:
+    """Manual, on-demand send of the same assignment matrix to an arbitrary
+    channel (e.g. the Dispatch Home 'Send Route Matrix' button) — always
+    posts fresh, no idempotency guard, since this is an explicit per-click
+    action rather than an automatic per-day trigger like
+    post_assignment_matrix()."""
+    assignments = (
+        db.query(DailyRouteAssignment)
+        .filter(
+            DailyRouteAssignment.assignment_date == shift_date,
+            DailyRouteAssignment.driver_name != None,
+            DailyRouteAssignment.driver_name != "",
+        )
+        .all()
+    )
+    if not assignments:
+        return {"status": "no_assignments", "date": shift_date.isoformat()}
+
+    client = _slack_client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    blocks, date_str = _build_assignment_matrix_blocks(shift_date, assignments, db)
+
+    try:
+        client.chat_postMessage(
+            channel=channel_id,
+            text=f"Assignment Matrix — {date_str}",
+            blocks=blocks,
+        )
+        return {"status": "posted", "date": shift_date.isoformat(), "drivers": len(assignments), "channel": channel_id}
+    except Exception as exc:
+        logger.error("Assignment matrix send-to-channel failed: %s", exc)
         return {"status": "error", "detail": str(exc)}
 
 

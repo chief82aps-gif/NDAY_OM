@@ -992,6 +992,33 @@ def post_assignment_matrix(shift_date: date, db: Session, force: bool = False) -
         )
     _flush(active_wave, wave_rows)
 
+    # ── Sweepers — scheduled today but no fixed route yet ────────────────
+    # Pulled from DriverScheduleEntry.is_sweeper (set explicitly from the
+    # schedule file), not DailyRouteAssignment — sweepers have no route/van
+    # by definition, so they'd otherwise never appear in this matrix at all.
+    assigned_lower = {(a.driver_name or "").lower() for a in assignments}
+    sweepers = (
+        db.query(DriverScheduleEntry)
+        .filter(
+            DriverScheduleEntry.schedule_date == shift_date,
+            DriverScheduleEntry.is_sweeper == True,  # noqa: E712
+        )
+        .order_by(DriverScheduleEntry.driver_name)
+        .all()
+    )
+    sweeper_rows = [
+        f"{_truncate(_full_name(s.driver_name), 22):<22} {s.show_time or '—':<10} standing by for dispatch"
+        for s in sweepers
+        if (s.driver_name or "").lower() not in assigned_lower
+    ]
+    if sweeper_rows:
+        sweeper_header = f"{'Driver':<22} {'Show':<10}"
+        sweeper_table = "\n".join([sweeper_header, "-" * len(sweeper_header)] + sweeper_rows)
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*🧹 Sweepers*\n```{sweeper_table}```"},
+        })
+
     # ── Team-aggregate performance line ──────────────────────────────────
     scored = [quality_map[a.driver_name]["score"] for a in assignments if a.driver_name in quality_map]
     standings = [quality_map[a.driver_name]["standing"] for a in assignments if a.driver_name in quality_map]

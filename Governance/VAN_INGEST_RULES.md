@@ -203,9 +203,30 @@ Errors:
 **This document governs**:
 - Fleet file parsing rules (ingest_fleet.py)
 - Vehicle eligibility filtering (operational status, service type)
-- Auto-assignment fallback chains (assignment.py FALLBACK_CHAIN)
+- Auto-assignment fallback chains (assignment.py FALLBACK_CHAIN — legacy
+  in-memory/file-based engine, still used by the older Route Assignment
+  Board upload flow)
 - Electric van constraints (assignment.py electric constraint logic)
 - Manual assignment rules (orchestrator.py _get_available_vehicles_for_route)
+- **The live, DB-native van auto-assignment actually driving the daily
+  matrix** (added 2026-07-19): `api/src/routes/route_assignment.py`'s
+  `_load_van_affinity()` / `_load_fleet()` / `_assign_van()`, exposed via
+  the public `assign_vans_for_routes()` for other modules. Called from
+  `daily_notify.py`'s `build_daily_assignments()` for any route that
+  doesn't already have a van — this is now the real source of
+  `DailyRouteAssignment.van_number`, not the Route Sheet PDF. **Amazon's
+  Route Sheet PDF template no longer contains a van/unit number at all**
+  (confirmed 2026-07-19 by reading a real file — every page shows stage
+  location, route code, and a required *vehicle class* like "4WD P31
+  Delivery Truck" or "Extra Large Van - US", never a specific unit
+  number). Driver-van affinity is queried live from `DailyRouteAssignment`
+  itself (last 7 days, excluding today) — no separate file or cache, so
+  it survives redeploys, unlike `driver_van_affinity.py`'s JSON-file
+  tracker (which the legacy `assignment.py` engine still uses and which
+  resets on every Render redeploy — a known risk, not used by the daily
+  pipeline). Deliberately skips any route that already has a van, so a
+  scheduler re-run minutes later never reshuffles an already-assigned
+  vehicle.
 
 **Any changes to these rules must**:
 1. Update this document

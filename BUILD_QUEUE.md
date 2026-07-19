@@ -393,3 +393,64 @@ scores besides calling the raw endpoint.
 
 **Decision:** ⚪
 **Notes:**
+
+---
+
+## 11. Route Bands, Roster Priority Lists, Auto-Assign Refinement, Coaching DMs
+
+**Context (2026-07-19):** user wants to eventually recommend which
+performance "band" a driver belongs in and refine auto-assignment using
+area-level route history, get driver DMs turned on (the stated primary
+goal), and build encouragement-only coaching messaging — plus a not-yet-
+revealed pay idea. Explicit sequencing decision: route-band tracking
+first, everything else after.
+
+- [x] **Route Bands (`route_bands.py`)** — built and deployed-pending.
+      Calibrates geographic-proximity clusters from gaps in route-code
+      numbers (no real lat/long data exists anywhere in this system —
+      `Cortex.zone` is always `None`). `POST /route-bands/calibrate`,
+      `GET /route-bands`, `GET /route-bands/report` (band → drivers who
+      ran it → their latest quality score). Uses already-accumulated
+      Cortex history, not a fresh week of new data.
+- [ ] **Validate the calibration against real geography** — once
+      deployed, run `/route-bands/calibrate` against real production
+      Cortex history and sanity-check the resulting bands against an
+      actual station route map (user mentioned possibly screenshotting
+      the map to cross-check). Tune `gap_multiplier`/`lookback_days` if
+      the bands don't look right.
+- [ ] **Per-week attribution** (deferred, not per-driver-latest-score) —
+      the report currently uses each driver's *most recent* quality score
+      regardless of which week they ran a given band. A real per-week
+      join needs Amazon's own week-label boundaries reconciled against
+      calendar dates first (`QualityMetricDriver.week` is a string like
+      `"2026-W28"`, not derived from a date anywhere in this codebase).
+- [ ] **Roster priority list** — not started. The system recommends which
+      band/tier a driver belongs in based on overall historical
+      performance. Needs `route_bands.py`'s data to mature first before
+      the actual recommendation logic can be designed meaningfully.
+- [ ] **Auto-assignment refinement** — `route_assignment.py`'s
+      `_auto_assign()` today ranks purely by quality standing/score (no
+      area signal). Wiring in route-band history is a future pass, not
+      started.
+- [ ] **Driver coaching DMs — encouragement-only, never negative.**
+      Confirms/extends the already-documented-as-"planned, not built"
+      Performance Coaching Message
+      (`Governance/DRIVER_DM_CONTENT_RULES.md`). New explicit constraint
+      from this session: framing must always mentor/encourage, never
+      read as a penalty — needs concrete message-criteria design before
+      building, not started.
+- [ ] **Getting `DRIVER_DM_ACTIVE` turned on is the stated primary goal**
+      — this is the same still-open item tracked in section 2 above
+      (end-to-end test with real linked drivers, then explicit sign-off)
+      — not a new item, just re-confirmed as the priority.
+- [ ] **$1/hour bonus-rate idea — logged only, not built.** Per explicit
+      2026-07-19 decision: drivers who'd earn the driver-scoring
+      high-performer bonus (see `Governance/DRIVER_SCORING_RULES.md`)
+      would eventually get a $1/hour bump to their base rate. User does
+      **not** want this communicated to drivers yet ("we won't tell them
+      that yet") and asked to log it as a roadmap item rather than build
+      the calculation now — this is intentionally not implemented
+      anywhere. Revisit deliberately later; this touches real pay.
+
+**Decision:** 🟢 (route bands — built) / ⚪ (everything else in this section)
+**Notes:**

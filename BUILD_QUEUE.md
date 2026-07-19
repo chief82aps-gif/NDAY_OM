@@ -10,7 +10,22 @@ rather than re-deriving status from scratch each session.
 
 ---
 
-## Cross-cutting facts (checked 2026-07-17, don't re-derive from stale memory)
+## Cross-cutting facts (checked 2026-07-19, don't re-derive from stale memory)
+
+- **Fixed 2026-07-19 — van assignments hardwired for real.** Root cause:
+  Amazon's Route Sheet PDF no longer contains a van/unit number at all
+  (confirmed by reading a real file — only a required vehicle class per
+  route). `daily_notify.py`'s `build_daily_assignments()` now calls a new
+  public `route_assignment.assign_vans_for_routes()` for any route
+  missing a van — real Fleet data, 7-day driver-van affinity (queried
+  live from `DailyRouteAssignment`, survives redeploys), the
+  CDV14→CDV16→XL / electric-no-fallback chain, GROUNDED vehicles
+  excluded. Only fills gaps — never reshuffles an already-assigned van on
+  a scheduler re-run. Also added: loud `#nday-mgt` alerts for any DOP/
+  Route Sheet/Cortex ingest failure (previously silent), a Sweepers
+  section in the assignment matrix, and a "Send Route Matrix" Dispatch
+  Home button (posts to `C0BAQAYKANS`). See `Governance/VAN_INGEST_RULES.md`
+  §8 and `van_assignment_rules.md` memory for full detail.
 
 - **Session of 2026-07-16/17 shipped**: generalized auto-ingest (no more
   manual "click ingest" for 7 safe file types — `dvic`, `driver_schedule`,

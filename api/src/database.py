@@ -3065,6 +3065,28 @@ class DriverRoutePerformance(Base):
     )
 
 
+class RouteBandDefinition(Base):
+    """Calibrated route-code-number bands — added 2026-07-19 as a proxy for
+    geographic clustering, since nearby route numbers tend to be
+    geographically close on this DSP and no real lat/long data exists
+    anywhere in this system (Cortex.zone is always None — never populated
+    by the ingest parser). Bands are inferred by finding unusually large
+    gaps between consecutive distinct route numbers actually run
+    (route_bands.py's calibrate_bands()) rather than a fixed width, per
+    explicit 2026-07-19 decision to learn boundaries from real data instead
+    of guessing a width. Re-calibrating replaces all existing rows wholesale
+    (same pattern as OkamiSettings) — this is a periodically-refreshed
+    config, not per-day data."""
+    __tablename__ = "route_band_definitions"
+
+    id = Column(Integer, primary_key=True)
+    band_label = Column(String(20), nullable=False)   # e.g. "121-155"
+    range_start = Column(Integer, nullable=False)
+    range_end = Column(Integer, nullable=False)
+    calibrated_at = Column(DateTime, default=datetime.utcnow)
+    distinct_routes_used = Column(Integer)   # how many distinct route numbers informed this calibration
+
+
 def get_db():
     """Get database session"""
     db = SessionLocal()

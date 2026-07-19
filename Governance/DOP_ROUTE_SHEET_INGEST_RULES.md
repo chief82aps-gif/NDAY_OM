@@ -101,10 +101,36 @@ pipeline the symptom is actually in before diagnosing.
 
 `mgt_reminders.py` DMs every `#nday-mgt` member, every 5 minutes, from
 **9:00–10:00 AM PT**, for any of: DOP file, Route Sheets file, Cortex
-Routes file, Fleet/Vehicle Data — until a matching `OpsIngestJob` row
-appears (i.e. until `ops_ingest.py`'s pipeline, not `daily_notify.py`'s,
-sees it). Always active, no feature flag. Manual trigger:
-`POST /mgt-reminders/check`.
+Routes file, Fleet/Vehicle Data. Always active, no feature flag. Manual
+trigger: `POST /mgt-reminders/check`.
+
+**Updated 2026-07-17 — resolution semantics changed.** This reminder used
+to resolve (go silent for the day) the instant *any* `OpsIngestJob` row of
+the relevant type existed — which for `dop`/`cortex`/`route_sheets`
+happens within ~60s of the file merely landing (the always-on
+`ops_ingest.py` scanner creates that row regardless of whether
+`daily_notify.py`'s separate pipeline ever successfully parses it — see
+§3A). That let a real miss go unnoticed on 2026-07-17: DOP and Route
+Sheet landed on time in `#dlv3-nday-info`, `OpsIngestJob` rows were
+created (silencing the reminder), but `daily_notify.py`'s own parse never
+produced usable `DailyRouteAssignment`/`RouteSheetEntry` data, and nothing
+else was watching.
+
+Fixed: for `dop`/`route_sheets`/`cortex`, resolution now checks the real
+data each type is meant to land in — `get_latest_dop_rows()` /
+`get_latest_route_sheet_rows()` / `get_latest_cortex_rows()`
+(`api/src/database.py`), via `_REAL_DATA_CHECKS` in `mgt_reminders.py`.
+For `fleet`/`schedule`/`tenured_workforce` (real `ops_ingest.py`
+auto-ingest members that can genuinely fail mid-run), resolution now
+requires `OpsIngestJob.status == "complete"`, not mere existence, via the
+new `is_type_ingested_today()` (`api/src/routes/ops_ingest.py`) — same
+single-source-of-truth function the Re-Run Route Assignments button uses
+(see §6).
+
+**Also added**: a one-time "window closed, still missing" escalation,
+posted to `#nday-mgt` (the channel, not just individual DMs) if a
+reminder's window closes still unresolved — previously the reminder just
+went silent with no distinction between "resolved" and "never showed up."
 
 ---
 
@@ -149,6 +175,17 @@ sees it). Always active, no feature flag. Manual trigger:
   DOP/Cortex already are — see `get_latest_route_sheet_rows()`.
   `build_daily_assignments()` now merges from this table instead of
   relying solely on the same-call `pdf_data` parameter.
+- **Fixed 2026-07-17: Route Sheet ingest logged `status="success"` in
+  `SlackIngestLog` even when `parse_route_sheet_pdf()` extracted zero
+  rows** — a chronic parser failure would have read as quiet success
+  indefinitely, with no visible signal anywhere (including in the fix
+  above's own diagnostics). Now mirrors the DOP branch: `status="success"`
+  only if rows were actually extracted, `"failed"` with an `error` message
+  otherwise. Discovered because `van_number` was found at or near 0% fill
+  rate across the last several days, in both a local dev DB and
+  production — worth a follow-up pass on `parse_route_sheet_pdf()` itself
+  (`api/src/routes/daily_notify.py`) if this keeps failing now that it's
+  visible.
 
 ---
 
@@ -161,10 +198,18 @@ sees it). Always active, no feature flag. Manual trigger:
 - Route Sheet persistence: `RouteSheetEntry` / `get_latest_route_sheet_rows()` (`api/src/database.py`)
 - The automatic scan window: `_daily_notify_loop()` (`api/main.py`)
 - The 9 AM reminder: `mgt_reminders.py`
+- Real-ingested-data checks (§3B): `get_missing_docs_today()`
+  (`api/src/routes/daily_notify.py`, owns dop/route_sheets/cortex) and
+  `is_type_ingested_today()` (`api/src/routes/ops_ingest.py`, owns
+  everything in `_AUTO_INGEST_TYPES`) — the two single sources of truth
+  for "is today's data actually in," shared by `mgt_reminders.py` and the
+  Re-Run Route Assignments button so neither re-derives its own definition
 - Cross-validation (§4): `check_route_code_reconciliation()` (`api/src/routes/daily_notify.py`)
 - Manual "Re-Run Route Assignments" (covers post-initial-run corrections,
-  notifies drivers of new/changed/removed assignments): `rerun_route_assignments()`
-  (`api/src/routes/daily_notify.py`), Dispatch Home button
+  notifies drivers of new/changed/removed assignments, and since
+  2026-07-17 reports any of DOP/Route Sheet/Cortex/Fleet still missing for
+  the day): `rerun_route_assignments()` (`api/src/routes/daily_notify.py`),
+  Dispatch Home button (`api/src/routes/slack_dispatch_home.py`)
 - Generalized auto-ingest (a file only needs to be *placed* in the right
   channel, no separate confirmation click): `run_ops_auto_ingest()`
   (`api/src/routes/ops_ingest.py`) — covers `dvic`/`driver_schedule`/
@@ -186,6 +231,8 @@ sees it). Always active, no feature flag. Manual trigger:
 - [ ] Route Sheet: PDF only
 - [ ] Detection scoped to `#dlv3-nday-info`, not `#nday-operations-management`
 - [ ] Automatic scan runs 8:00–10:00 AM Pacific, every 10 min; manual rerun available outside that window
-- [ ] 9 AM reminder (mgt_reminders.py) already covers "not received in time" nagging — don't build a duplicate
+- [ ] 9 AM reminder (mgt_reminders.py) already covers "not received in time" nagging — don't build a duplicate; it resolves on real ingested data for dop/route_sheets/cortex (not `OpsIngestJob` existence) and on `status=="complete"` for fleet/schedule/tenured_workforce
+- [ ] A reminder that closes its window still unresolved posts one final notice to `#nday-mgt` — don't let a miss go silent with no distinguishing signal from a real resolution
+- [ ] Re-Run Route Assignments reports missing DOP/Route Sheet/Cortex/Fleet for the day — check that report before assuming a zero-new-assignments result means nothing changed
 - [ ] Cortex route codes are authoritative — DOP/Route Sheet are presumed wrong on disagreement, never Cortex
 - [ ] >10% route-code mismatch (DOP vs. Cortex, or Route Sheet vs. Cortex) → kick back a prompt naming the bad file, don't proceed silently *(not yet implemented)*

@@ -83,6 +83,27 @@ def _slack_client():
     return WebClient(token=token)
 
 
+def _post_ingest_error(label: str, filename: str, message: str) -> None:
+    """Loud, immediate #nday-mgt alert for a DOP/Route Sheet/Cortex ingest
+    failure — these used to only be recorded silently in SlackIngestLog
+    (status/error fields), discoverable only by someone happening to check
+    the dashboard. Per explicit 2026-07-19 decision: a daily-pipeline miss
+    must never go unnoticed."""
+    client = _slack_client()
+    if not client:
+        return
+    try:
+        client.chat_postMessage(
+            channel=MGT_CHANNEL,
+            text=(
+                f":x: *{label} ingest failed* — `{filename}`\n{message}\n"
+                "This file was detected but did not load correctly — please check it."
+            ),
+        )
+    except Exception as exc:
+        logger.warning("Ingest-error Slack post failed for %s: %s", label, exc)
+
+
 def _download_slack_file(url: str) -> Optional[bytes]:
     token = os.getenv("SLACK_BOT_TOKEN")
     if not token:
@@ -558,6 +579,19 @@ def build_daily_assignments(
         logger.warning("build_daily_assignments: commit failed for %s, likely a concurrent rebuild — rolled back: %s", for_date, exc)
         return 0
     return count
+
+
+def get_missing_docs_today(for_date: date, db: Session) -> dict:
+    """Real-ingested-data presence for the three tables this module owns —
+    answers 'is there actually parsed data for for_date', not 'was a file
+    merely detected'. True = missing. Used by mgt_reminders.py's reminder
+    resolution check and the Re-Run Route Assignments button's missing-doc
+    report, so both agree on one definition instead of re-deriving it."""
+    return {
+        "dop": len(get_latest_dop_rows(db, for_date)) == 0,
+        "route_sheets": len(get_latest_route_sheet_rows(db, for_date)) == 0,
+        "cortex": len(get_latest_cortex_rows(db, for_date)) == 0,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1095,6 +1129,8 @@ def check_and_notify(
                 ))
                 db.commit()
                 result["ingest"]["cortex"] = {"records": count, "error": err}
+                if err:
+                    _post_ingest_error("Cortex", cortex_file["name"], err)
 
     files = scan_channel_for_files(for_date)
     result["files_found"]["dop"] = files["dop"]["name"] if files["dop"] else None
@@ -1131,6 +1167,10 @@ def check_and_notify(
                 if not err and count:
                     result["ops_prompt_sent"] = _ops_manager_prompt(for_date, count, db)
                     result["fleet_prompt_sent"] = _fleet_manager_prompt(for_date, db)
+                elif err:
+                    _post_ingest_error("DOP", dop_file["name"], err)
+                else:
+                    _post_ingest_error("DOP", dop_file["name"], "No rows extracted from DOP file.")
 
     # ── 3. Ingest Route Sheet ─────────────────────────────────────────────────
     rs_file = files.get("route_sheet")
@@ -1170,11 +1210,24 @@ def check_and_notify(
                     slack_file_id=rs_file["id"],
                     filename=rs_file["name"],
                     processed_at=datetime.utcnow(),
-                    status="success",
+                    # Was unconditionally "success" regardless of whether the
+                    # PDF actually parsed into any rows — masked chronic
+                    # parser failures as quiet successes. Mirror the DOP
+                    # branch above: empty pdf_data is a real failure.
+                    status="success" if pdf_data else "failed",
+                    error=None if pdf_data else "No rows extracted from Route Sheet PDF",
                     records_processed=len(pdf_data),
                 ))
                 db.commit()
                 result["ingest"]["route_sheet"] = {"records": len(pdf_data)}
+                if not pdf_data:
+                    _post_ingest_error(
+                        "Route Sheet", rs_file["name"],
+                        "No rows extracted — van/wave/stage data will be missing from today's "
+                        "assignment matrix until this is resolved. If Amazon's PDF layout changed "
+                        "(e.g. no longer lists a van number, only a vehicle class), the parser "
+                        "needs to be updated for the new format.",
+                    )
 
     # ── 4. Build assignments (DOP + Cortex + PDF) ─────────────────────────────
     has_dop = db.query(DOP).filter(DOP.schedule_date == for_date).count() > 0

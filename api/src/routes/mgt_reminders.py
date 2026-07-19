@@ -37,14 +37,17 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, date, timezone
+from datetime import datetime, date
 from typing import Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from api.src.database import get_db, SessionLocal, OpsIngestJob, get_reminder_state, set_reminder_state
+from api.src.database import (
+    get_db, SessionLocal, OpsIngestJob, get_reminder_state, set_reminder_state,
+    get_latest_dop_rows, get_latest_route_sheet_rows, get_latest_cortex_rows,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/mgt-reminders", tags=["mgt-reminders"])
@@ -92,6 +95,7 @@ def _load_state(db: Session, key: str) -> dict:
     return {
         "last_sent_at": datetime.fromisoformat(raw["last_sent_at"]) if raw.get("last_sent_at") else None,
         "resolved_date": date.fromisoformat(raw["resolved_date"]) if raw.get("resolved_date") else None,
+        "sent_final": date.fromisoformat(raw["sent_final"]) if raw.get("sent_final") else None,
     }
 
 
@@ -99,6 +103,7 @@ def _save_state(db: Session, key: str, state: dict) -> None:
     set_reminder_state(db, f"mgt_reminder_{key}", {
         "last_sent_at": state["last_sent_at"].isoformat() if state.get("last_sent_at") else None,
         "resolved_date": state["resolved_date"].isoformat() if state.get("resolved_date") else None,
+        "sent_final": state["sent_final"].isoformat() if state.get("sent_final") else None,
     })
 
 
@@ -129,29 +134,42 @@ def _mgt_member_ids(client) -> tuple[list[str], Optional[str]]:
     return [m for m in members if m != bot_id], None
 
 
-def _file_detected_today(db: Session, detected_type: str, today) -> bool:
-    # Midnight *Pacific*, converted to UTC — not midnight UTC on the same
-    # calendar-day numbers, which is 7-8 hours too early and would count a
-    # file posted late the previous Pacific evening as "detected today".
-    start_local = datetime(today.year, today.month, today.day, tzinfo=PT)
-    start_utc = start_local.astimezone(timezone.utc)
-    return (
-        db.query(OpsIngestJob)
-        .filter(OpsIngestJob.detected_type == detected_type)
-        .filter(OpsIngestJob.detected_at >= start_utc)
-        .first()
-        is not None
-    )
+# For dop/route_sheets/cortex: check the real table each type is meant to
+# land in, not OpsIngestJob existence. Those three are deliberately excluded
+# from ops_ingest.py's auto-ingest (separate pipeline, daily_notify.py owns
+# them — see Governance/DOP_ROUTE_SHEET_INGEST_RULES.md), so their
+# OpsIngestJob rows sit "pending" forever by design; a mere row appearing
+# there (created within ~60s of the file landing, by the always-on
+# ops_ingest.py scanner) used to be treated as "resolved" here even though
+# daily_notify.py's own parse never ran or never succeeded — this is what
+# let DOP/Route Sheet/Cortex misses go unnoticed on 2026-07-17 despite the
+# files arriving on time. Fixed by checking real ingested data instead.
+_REAL_DATA_CHECKS = {
+    "dop": get_latest_dop_rows,
+    "route_sheets": get_latest_route_sheet_rows,
+    "cortex": get_latest_cortex_rows,
+}
 
 
 def _resolved_today(db: Session, key: str, cfg: dict, today) -> bool:
     """Okami isn't a file — it's entered directly via the dashboard form
     (api/src/routes/okami_capacity.py), so it's resolved by a DB
-    submission for the day, not an OpsIngestJob row."""
+    submission for the day, not an OpsIngestJob row.
+
+    dop/route_sheets/cortex are resolved by real ingested data (see
+    _REAL_DATA_CHECKS above), not by OpsIngestJob existence.
+
+    Everything else (fleet, schedule, tenured_workforce) genuinely goes
+    through ops_ingest.py's auto-ingest and can fail mid-run (download
+    error, dispatch exception) — require status=='complete', not mere
+    existence, via ops_ingest.py's own single source of truth for that."""
     if key == "okami":
         from api.src.routes.okami_capacity import has_submission_today
         return has_submission_today(db, today)
-    return _file_detected_today(db, cfg["detected_type"], today)
+    if key in _REAL_DATA_CHECKS:
+        return len(_REAL_DATA_CHECKS[key](db, today)) > 0
+    from api.src.routes.ops_ingest import is_type_ingested_today
+    return is_type_ingested_today(db, cfg["detected_type"], today)
 
 
 def _check_one(key: str, db: Session, client, now) -> dict:
@@ -176,7 +194,38 @@ def _check_one(key: str, db: Session, client, now) -> dict:
     past_start = (now.hour, now.minute) >= (start_h, start_m)
     past_end = (now.hour, now.minute) >= (end_h, end_m)
 
-    if not past_start or past_end:
+    if not past_start:
+        result["reason"] = "outside_window"
+        return result
+
+    if past_end:
+        # Previously just went silent once the window closed, with no
+        # distinction between "resolved during the window" and "never
+        # showed up" — a dispatcher had no way to tell the two apart short
+        # of reading logs. One clear channel post, once per key per day,
+        # closes that gap; modeled on dvic.py's existing final-notice
+        # pattern (its own separate reminder for the weekly DVIC file).
+        if state.get("resolved_date") != today and state.get("sent_final") != today:
+            if _resolved_today(db, key, cfg, today):
+                state["resolved_date"] = today
+                _save_state(db, key, state)
+            else:
+                state["sent_final"] = today
+                _save_state(db, key, state)
+                try:
+                    client.chat_postMessage(
+                        channel=MGT_CHANNEL,
+                        text=(
+                            f":warning: *{cfg['label']}* — window closed with no file received today. "
+                            f"No further reminders will be sent for this today."
+                        ),
+                    )
+                    result["reason"] = "window_closed_final_notice_sent"
+                except Exception as exc:
+                    logger.warning("mgt_reminders: final notice post failed for %s: %s", cfg["label"], exc)
+                    result["reason"] = "window_closed_final_notice_failed"
+                    result["error"] = str(exc)
+                return result
         result["reason"] = "outside_window"
         return result
 

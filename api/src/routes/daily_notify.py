@@ -528,6 +528,31 @@ def build_daily_assignments(
         if a.route_code
     }
 
+    # Van auto-assignment (Governance/VAN_INGEST_RULES.md) — now the primary
+    # source of van_number. The Route Sheet PDF used to carry it, but
+    # Amazon's template no longer includes a van/unit number at all
+    # (confirmed 2026-07-19 — only a required vehicle class per route), so
+    # pdf-sourced van_number is expected to be empty going forward. Uses
+    # real Fleet availability + 7-day driver-van affinity (queried from
+    # DailyRouteAssignment itself, so "same van as yesterday" survives
+    # redeploys — no separate file/cache). Only computed for routes that
+    # don't already have a van, so a scheduler re-run 10 minutes later
+    # doesn't reshuffle an already-assigned van.
+    routes_needing_vans = []
+    for dop in dop_rows:
+        rc = (dop.route_code or "").upper()
+        existing = existing_by_route.get(rc)
+        if existing and existing.van_number:
+            continue
+        if (pdf_by_route.get(rc) or {}).get("van_number"):
+            continue
+        driver_for_van = cortex_by_route.get(rc) or dop.driver_name or ""
+        if driver_for_van:
+            routes_needing_vans.append((dop.route_code, driver_for_van, dop.service_type or ""))
+
+    from api.src.routes.route_assignment import assign_vans_for_routes
+    auto_van_by_route = assign_vans_for_routes(for_date, db, routes_needing_vans)
+
     count = 0
     for dop in dop_rows:
         rc = (dop.route_code or "").upper()
@@ -540,7 +565,7 @@ def build_daily_assignments(
 
         pdf = pdf_by_route.get(rc) or pdf_by_driver.get(driver.lower(), {})
         driver_name = driver or pdf.get("driver_name", "")
-        van_number = pdf.get("van_number") or ""
+        van_number = pdf.get("van_number") or auto_van_by_route.get(dop.route_code) or ""
         stage_location = dop.station or pdf.get("stage") or ""
         wave = dop.wave or pdf.get("wave_time") or ""
 

@@ -246,6 +246,40 @@ def _assign_van(
 
     return None, None, "no_van_available"
 
+
+def assign_vans_for_routes(
+    target: date,
+    db: Session,
+    routes: list[tuple[str, Optional[str], str]],
+) -> dict[str, str]:
+    """Public entrypoint for other modules (e.g. daily_notify.py) that need
+    van auto-assignment — driver-van affinity + service-type fallback chain
+    + electric constraint, per Governance/VAN_INGEST_RULES.md — without
+    pulling in this module's Cortex/DOP/quality-ranking machinery.
+
+    `routes` is [(route_code, driver_identity, service_type), ...].
+    `driver_identity` should be whatever identity the caller's own
+    DailyRouteAssignment rows use (transporter_id if available, else
+    driver_name) — _load_van_affinity() falls back to driver_name the same
+    way, so as long as both sides are consistent the 7-day lookup lines up.
+
+    Returns {route_code: van_number} for every route a van was found for;
+    routes with no eligible van (or no driver_identity) are simply absent
+    from the result, same as a normal "no match" — callers should leave
+    van_number empty/unassigned in that case rather than raise.
+    """
+    affinity = _load_van_affinity(target, db)
+    fleet = _load_fleet(db)
+    used_vans: set[str] = set()
+    result: dict[str, str] = {}
+    for route_code, driver_identity, service_type in routes:
+        van_name, van_vin, _warning = _assign_van(service_type, driver_identity, affinity, fleet, used_vans)
+        if van_name:
+            result[route_code] = van_name
+            used_vans.add(van_vin or van_name)
+    return result
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Core board builder
 # ─────────────────────────────────────────────────────────────────────────────

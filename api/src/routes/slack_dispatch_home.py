@@ -369,7 +369,16 @@ def _handle_dispatch_republish_showtime(payload: dict, db: Session) -> None:
         logger.warning("Republish showtime summary DM failed for %s: %s", user_id, exc)
 
 
-ROUTE_MATRIX_TARGET_CHANNEL = os.getenv("ROUTE_MATRIX_TARGET_CHANNEL", "C0BAQAYKANS")
+DISPATCHER_MGT_CHANNEL = "C0BCYAW7QP3"  # #nday-mgt
+# Was defaulting to "C0BAQAYKANS" -- the literal channel ID for
+# #nday-team-room (driver-facing) -- so "Send Route Matrix" silently sent
+# the dispatcher-only assignment matrix (van numbers, Perf column) straight
+# into the driver channel every time it was clicked, unrelated to and
+# independent of the TEAM_ROOM_MESSAGES_ACTIVE gate (confirmed live
+# 2026-07-19, message force-deleted from #nday-team-room). Default now
+# points at #nday-mgt; set ROUTE_MATRIX_TARGET_CHANNEL explicitly if a
+# different destination is actually wanted.
+ROUTE_MATRIX_TARGET_CHANNEL = os.getenv("ROUTE_MATRIX_TARGET_CHANNEL", DISPATCHER_MGT_CHANNEL)
 
 
 def _handle_dispatch_send_route_matrix(payload: dict, db: Session) -> None:

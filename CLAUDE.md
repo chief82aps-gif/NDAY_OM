@@ -158,6 +158,15 @@ Full detail: `Governance/ROSTERING_DM_RULES.md`.
 - **Any Slack-visible action** (posting to a channel, DMing a driver or
   manager) should be confirmed with the user first unless they've already
   explicitly approved that exact action in the current conversation.
+- **`TEAM_ROOM_MESSAGES_ACTIVE`** (env var, default `false`) — hard
+  off-switch for all automatic messages to `#nday-team-room`, added
+  2026-07-20 after a run of same-day production bugs (showtime/DVIC/van
+  assignment) made the user decide unreliable info reaching the whole
+  team causes more harm than a missed post. Currently gates
+  `post_showtime_summary()`'s team-room copy only (the sole automatic
+  sender to that channel — verified via full-repo grep). Does not affect
+  `#nday-mgt` or any manually-triggered send (e.g. Send Route Matrix). Do
+  not re-enable without the user's explicit go-ahead.
 
 ## Security — this repo is public
 

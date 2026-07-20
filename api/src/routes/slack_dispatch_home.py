@@ -314,7 +314,7 @@ def _handle_dispatch_republish_showtime(payload: dict, db: Session) -> None:
 
     today = _dt.now(ZoneInfo("America/Los_Angeles")).date()
     try:
-        result = post_showtime_summary(today, db)
+        result = post_showtime_summary(today, db, force=True)
     except Exception as exc:
         logger.exception("Re-publish showtime matrix failed")
         result = {"status": "error", "detail": str(exc)}

@@ -733,7 +733,7 @@ def run_schedule_escalation_check(db: Session) -> dict:
 
 # ─── Showtime summary to #nday-mgt (new, posted once the schedule lands) ────
 
-def post_showtime_summary(shift_date: date, db: Session) -> dict:
+def post_showtime_summary(shift_date: date, db: Session, force: bool = False) -> dict:
     """Post a Showtime-grouped breakdown to #nday-mgt AND #nday-team-room
     (driver-facing): drivers bucketed by show_time, name only — no van,
     service type, or sweeper tag per explicit 2026-07-20 decision (van
@@ -746,9 +746,21 @@ def post_showtime_summary(shift_date: date, db: Session) -> dict:
     Deliberately does NOT include performance/safety metrics (unlike
     post_driver_summary_matrix) — this is the one roster-facing summary
     that's safe to show drivers directly, per explicit 2026-07-16
-    decision to add #nday-team-room as a second destination."""
+    decision to add #nday-team-room as a second destination.
+
+    force=True clears any stored message ts for the day first, so this
+    posts a genuinely NEW message instead of chat_update-ing the existing
+    one in place. Slack does not move an edited message or notify on it,
+    so silently updating something posted hours earlier looks exactly
+    like "nothing happened" to someone expecting a fresh post at the
+    bottom of the channel (confirmed live 2026-07-20 — the Re-Publish
+    button correctly found and updated an old ts from manual testing
+    earlier the same day, invisibly, from the clicker's perspective)."""
     if not _ACTIVE:
         return {"status": "inactive"}
+
+    if force:
+        set_reminder_state(db, f"showtime_summary_{shift_date.isoformat()}", {"mgt_slack_ts": None, "team_slack_ts": None})
 
     suggestions = _build_roster_suggestion(shift_date, db)
     if not suggestions:
@@ -2167,13 +2179,15 @@ def trigger_assignment_matrix(shift_date: str, force: bool = False, db: Session 
 
 
 @router.post("/showtime-summary/{shift_date}")
-def trigger_showtime_summary(shift_date: str, db: Session = Depends(get_db)):
-    """Post (or refresh) the #nday-mgt Showtime-grouped breakdown for shift_date."""
+def trigger_showtime_summary(shift_date: str, force: bool = False, db: Session = Depends(get_db)):
+    """Post (or refresh) the #nday-mgt Showtime-grouped breakdown for
+    shift_date. Pass ?force=true to post a fresh message instead of
+    silently editing an existing one in place."""
     try:
         target = date.fromisoformat(shift_date)
     except ValueError:
         raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
-    return post_showtime_summary(target, db)
+    return post_showtime_summary(target, db, force=force)
 
 
 @router.post("/driver-summary-matrix/{shift_date}")

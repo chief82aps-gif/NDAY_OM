@@ -163,10 +163,19 @@ def upload_dop(file: UploadFile = File(...)):
         db = SessionLocal()
         try:
             upload_date = _infer_file_date(file.filename) or datetime.utcnow().date()
-            # Append-only — same-day uploads can arrive under different
-            # filenames (corrections/re-drops). Readers use
-            # get_latest_dop_rows() to pick the most recent row per
-            # route_code for the date instead of relying on delete-on-ingest.
+            # Append-only across DIFFERENT filenames on the same day
+            # (corrections/re-drops) — readers use get_latest_dop_rows() to
+            # pick the most recent source_file for the date. But this
+            # website upload path has no SlackIngestLog-style protection
+            # against the SAME filename being submitted twice (e.g. someone
+            # re-uploading via the link in a reminder DM after the Slack
+            # pipeline already ingested it) -- found live 2026-07-20, a
+            # second untracked upload here doubled every DOP row for the
+            # day. Delete this exact (date, source_file) first.
+            db.query(DOP).filter(
+                DOP.schedule_date == upload_date,
+                DOP.source_file == file.filename,
+            ).delete(synchronize_session=False)
             for record in orchestrator.status.dop_records:
                 db.add(DOP(
                     schedule_date=upload_date,
@@ -458,7 +467,12 @@ def upload_cortex(file: UploadFile = File(...)):
         try:
             ensure_cortex_driver_name_column()
             upload_date = _infer_file_date(file.filename) or datetime.utcnow().date()
-            # Append-only — see matching comment in upload_dop() above.
+            # Same-filename-twice protection — see matching comment in
+            # upload_dop() above.
+            db.query(Cortex).filter(
+                Cortex.assignment_date == upload_date,
+                Cortex.source_file == file.filename,
+            ).delete(synchronize_session=False)
             for record in orchestrator.status.cortex_records:
                 db.add(Cortex(
                     assignment_date=upload_date,

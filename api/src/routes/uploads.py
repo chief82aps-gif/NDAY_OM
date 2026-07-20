@@ -109,6 +109,55 @@ def debug_dop_state(date_str: str):
         db.close()
 
 
+@router.get("/cortex/debug")
+def debug_cortex_state(date_str: str):
+    """Read-only diagnostic mirroring /dop/debug — added 2026-07-20 while
+    tracking down driver_name corruption in DailyRouteAssignment traced to
+    cortex_by_route (build_daily_assignments() in daily_notify.py)."""
+    from api.src.database import SlackIngestLog
+
+    try:
+        target = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date_str — use YYYY-MM-DD.")
+
+    db = SessionLocal()
+    try:
+        cortex_rows = db.query(Cortex).filter(Cortex.assignment_date == target).all()
+        ingest_logs = (
+            db.query(SlackIngestLog)
+            .filter(SlackIngestLog.file_type == "cortex", SlackIngestLog.ingest_date == target)
+            .order_by(SlackIngestLog.processed_at.desc())
+            .all()
+        )
+        return {
+            "date": date_str,
+            "cortex_row_count": len(cortex_rows),
+            "cortex_sample": [
+                {
+                    "route_code": r.route_code,
+                    "driver_name": r.driver_name,
+                    "source_file": r.source_file,
+                    "service_type": r.service_type,
+                }
+                for r in cortex_rows[:15]
+            ],
+            "cortex_source_files": sorted({r.source_file for r in cortex_rows if r.source_file}),
+            "cortex_ingest_logs": [
+                {
+                    "filename": log.filename,
+                    "status": log.status,
+                    "error": log.error,
+                    "records_processed": log.records_processed,
+                    "processed_at": log.processed_at.isoformat() if log.processed_at else None,
+                }
+                for log in ingest_logs
+            ],
+        }
+    finally:
+        db.close()
+
+
 @router.post("/dop/backfill-duration")
 def backfill_dop_duration(date_str: str):
     """

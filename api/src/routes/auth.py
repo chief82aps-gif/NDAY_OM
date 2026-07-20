@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import jwt
-from passlib.context import CryptContext
+import bcrypt
 
 from api.src.database import get_db, User, get_user_by_username, get_user_by_reset_token
 
@@ -28,18 +28,18 @@ RESET_TTL = timedelta(hours=24)
 # log in until it completes the set-password link.
 PENDING_PASSWORD_HASH = "!pending-invite!"
 
-_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-
 def hash_password(password: str) -> str:
-    return _pwd_context.hash(password)
+    # bcrypt caps input at 72 bytes and raises past that -- truncate rather
+    # than let a long paste crash account creation (matches bcrypt's own
+    # documented behavior in versions that silently truncated).
+    return bcrypt.hashpw(password.encode("utf-8")[:72], bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(password: str, password_hash: str) -> bool:
     if not password_hash or password_hash == PENDING_PASSWORD_HASH:
         return False
     try:
-        return _pwd_context.verify(password, password_hash)
+        return bcrypt.checkpw(password.encode("utf-8")[:72], password_hash.encode("utf-8"))
     except Exception:
         return False
 

@@ -308,30 +308,35 @@ def _handle_dispatch_republish_showtime(payload: dict, db: Session) -> None:
         logger.warning("Non-dispatch user %s attempted dispatch_republish_showtime", user_id)
         return
 
-    from datetime import datetime as _dt
+    from datetime import datetime as _dt, timedelta
     from zoneinfo import ZoneInfo
     from sqlalchemy import func, or_
     from api.src.database import DriverScheduleEntry
     from api.src.routes.rostering import post_showtime_summary
 
     today = _dt.now(ZoneInfo("America/Los_Angeles")).date()
-    # Showtime is a night-before roster for the NEXT shift, not the
-    # calendar day the button happens to be clicked on -- use the EARLIEST
-    # upcoming date that actually has real wave_time/show_time data, not
-    # just MAX(schedule_date). A multi-week schedule upload can create bare
-    # name-only rows for several future dates before DOP enrichment adds
-    # real show times to the nearest one (same reasoning as
-    # _tomorrow_schedule_landed() above) -- taking the max grabbed a later,
-    # unenriched date and made every driver bucket into "TBD" (confirmed
-    # live 2026-07-19, introduced by the first version of this fix).
+    tomorrow = today + timedelta(days=1)
+    # Showtime is a night-before roster for the NEXT shift, never the
+    # calendar day the button happens to be clicked on -- so the date
+    # filter must be strictly > today, not >= today. Today's row still
+    # carries a real show_time (replays no longer wipe it), so >= today
+    # would let MIN() land back on today and reproduce the exact "shows
+    # today instead of tomorrow" bug this whole fix started from. Also
+    # picks the EARLIEST qualifying future date, not MAX -- a multi-week
+    # schedule upload can create bare name-only rows for several future
+    # dates before DOP enrichment adds real wave_time/show_time to the
+    # nearest one (same reasoning as _tomorrow_schedule_landed() above).
+    # If nothing future is enriched yet, fall back to tomorrow's date (not
+    # today's) so the result is an honest "no schedule yet" instead of a
+    # silent repost of last night's already-sent roster.
     target_date = (
         db.query(func.min(DriverScheduleEntry.schedule_date))
         .filter(
-            DriverScheduleEntry.schedule_date >= today,
+            DriverScheduleEntry.schedule_date > today,
             or_(DriverScheduleEntry.wave_time.isnot(None), DriverScheduleEntry.show_time.isnot(None)),
         )
         .scalar()
-    ) or today
+    ) or tomorrow
     try:
         result = post_showtime_summary(target_date, db, force=True)
     except Exception as exc:

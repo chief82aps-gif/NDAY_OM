@@ -54,6 +54,15 @@ router = APIRouter(prefix="/rostering", tags=["rostering"])
 MGT_CHANNEL   = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
 TEAM_CHANNEL  = os.getenv("SLACK_TEAM_CHANNEL", "C0BAQAYKANS")  # #nday-team-room
 
+# Hard off-switch for ALL automatic messages to #nday-team-room, per
+# explicit 2026-07-20 decision made during a run of same-day production
+# bugs (showtime/DVIC/van-assignment) -- unreliable info reaching the
+# whole team causes more harm than a missed post. Default false/off.
+# Does NOT affect #nday-mgt (internal ops channel) or any manually-
+# triggered send (e.g. the Send Route Matrix Dispatch Home button) --
+# only this automatic showtime-summary destination.
+TEAM_ROOM_MESSAGES_ACTIVE = os.getenv("TEAM_ROOM_MESSAGES_ACTIVE", "false").lower() == "true"
+
 SPENCER_ID    = "U0BE493C5K9"
 LUIS_ID       = "U0B36C9R8N4"
 FABIAN_ID     = "U0AJPQALDLL"
@@ -833,10 +842,11 @@ def post_showtime_summary(shift_date: date, db: Session) -> dict:
     try:
         mgt_ts = _post_or_update(MGT_CHANNEL, "mgt_slack_ts")
         team_ts = None
-        try:
-            team_ts = _post_or_update(TEAM_CHANNEL, "team_slack_ts")
-        except Exception as exc:
-            logger.warning("Showtime summary post to #nday-team-room failed: %s", exc)
+        if TEAM_ROOM_MESSAGES_ACTIVE:
+            try:
+                team_ts = _post_or_update(TEAM_CHANNEL, "team_slack_ts")
+            except Exception as exc:
+                logger.warning("Showtime summary post to #nday-team-room failed: %s", exc)
         set_reminder_state(db, state_key, {"mgt_slack_ts": mgt_ts, "team_slack_ts": team_ts})
         return {"status": "posted", "date": shift_date.isoformat(), "mgt_slack_ts": mgt_ts, "team_slack_ts": team_ts}
     except Exception as exc:

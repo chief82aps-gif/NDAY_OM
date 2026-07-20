@@ -804,11 +804,17 @@ def post_showtime_summary(shift_date: date, db: Session, force: bool = False) ->
     # as many section blocks as needed, well under the limit.
     _BLOCK_TEXT_LIMIT = 2800
 
+    def _first_name(driver_name: str) -> str:
+        driver_name = driver_name or ""
+        parts = driver_name.split(",", 1)[1].strip().split() if "," in driver_name else driver_name.split()
+        return parts[0].lower() if parts else ""
+
     for show_time in sorted(buckets, key=_sort_key):
         header_line = f"*Showtime {show_time}* ({len(buckets[show_time])})"
         chunk_lines: list[str] = []
         chunk_len = len(header_line) + 1
         first_chunk = True
+        bucket_drivers = sorted(buckets[show_time], key=lambda s: _first_name(s["driver_name"]))
 
         def _flush():
             nonlocal chunk_lines, chunk_len, first_chunk
@@ -823,7 +829,7 @@ def post_showtime_summary(shift_date: date, db: Session, force: bool = False) ->
             chunk_len = len(header_line) + 1
             first_chunk = False
 
-        for s in buckets[show_time]:
+        for s in bucket_drivers:
             # Name + showtime only, per explicit 2026-07-20 decision — no
             # service type, van, or sweeper tag on this report (that's the
             # assignment matrix's job, a different lens on purpose).

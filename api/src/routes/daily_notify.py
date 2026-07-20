@@ -301,10 +301,20 @@ def ingest_cortex_bytes(
         orchestrator.ingest_cortex(tmp_path)
         os.unlink(tmp_path)
 
-        # Append-only — same-day uploads can arrive under different
-        # filenames (corrections/re-drops). Readers use
-        # get_latest_cortex_rows() to pick the most recent row per
-        # route_code for the date instead of relying on delete-on-ingest.
+        # Append-only across DIFFERENT filenames on the same day (Amazon
+        # corrections/re-drops) — get_latest_cortex_rows() picks the most
+        # recent source_file for the date instead of relying on
+        # delete-on-ingest. But the SAME filename re-uploaded twice (e.g. a
+        # manual re-post during troubleshooting) has no SlackIngestLog
+        # protection here the way file-share detection does elsewhere, so
+        # without this delete it silently doubles every row under that one
+        # source_file (found live 2026-07-20 — 94 rows for a 47-route day).
+        # Scoped to this exact (date, source_file) only — never touches
+        # other source_files for the day.
+        db.query(Cortex).filter(
+            Cortex.assignment_date == for_date,
+            Cortex.source_file == filename,
+        ).delete(synchronize_session=False)
         for record in orchestrator.status.cortex_records:
             db.add(Cortex(
                 assignment_date=for_date,
@@ -366,7 +376,14 @@ def ingest_dop_bytes(
         if not records:
             return 0, "; ".join(errors) if errors else "No DOP rows parsed from file."
 
-        # Append-only — see matching comment in ingest_cortex_bytes() above.
+        # Append-only across DIFFERENT filenames on the same day — see
+        # matching comment in ingest_cortex_bytes() above. The SAME filename
+        # re-uploaded twice has no protection here, so delete this exact
+        # (date, source_file)'s rows first to avoid doubling.
+        db.query(DOP).filter(
+            DOP.schedule_date == for_date,
+            DOP.source_file == filename,
+        ).delete(synchronize_session=False)
         for record in records:
             db.add(DOP(
                 schedule_date=for_date,

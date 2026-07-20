@@ -310,11 +310,24 @@ def _handle_dispatch_republish_showtime(payload: dict, db: Session) -> None:
 
     from datetime import datetime as _dt
     from zoneinfo import ZoneInfo
+    from sqlalchemy import func
+    from api.src.database import DriverScheduleEntry
     from api.src.routes.rostering import post_showtime_summary
 
     today = _dt.now(ZoneInfo("America/Los_Angeles")).date()
+    # Showtime is a night-before roster for the NEXT shift, not the
+    # calendar day the button happens to be clicked on -- use the most
+    # recently ingested schedule date (>= today) so this matches whatever
+    # date the automatic pipeline already posted for, instead of hardcoding
+    # "today" (confirmed live 2026-07-19: republish showed today's data
+    # when tomorrow's schedule had already been ingested).
+    target_date = (
+        db.query(func.max(DriverScheduleEntry.schedule_date))
+        .filter(DriverScheduleEntry.schedule_date >= today)
+        .scalar()
+    ) or today
     try:
-        result = post_showtime_summary(today, db, force=True)
+        result = post_showtime_summary(target_date, db, force=True)
     except Exception as exc:
         logger.exception("Re-publish showtime matrix failed")
         result = {"status": "error", "detail": str(exc)}
@@ -323,9 +336,9 @@ def _handle_dispatch_republish_showtime(payload: dict, db: Session) -> None:
     if not client:
         return
     if result.get("status") == "posted":
-        summary = f":white_check_mark: Showtime matrix republished for {today.isoformat()}."
+        summary = f":white_check_mark: Showtime matrix republished for {target_date.isoformat()}."
     elif result.get("status") == "no_schedule":
-        summary = f":warning: No driver schedule data found for {today.isoformat()} — nothing to publish."
+        summary = f":warning: No driver schedule data found for {target_date.isoformat()} — nothing to publish."
     elif result.get("status") == "inactive":
         summary = ":warning: ROSTERING_ACTIVE is off — nothing was published."
     else:

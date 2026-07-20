@@ -231,7 +231,19 @@ def _assign_van(
                     return v.vehicle_name, v.vin, None
 
     # 2. Match by service-type fallback chain
+    #
+    # BUG (found live 2026-07-20): this used to `return ... "electric_violation"`
+    # on the FIRST type-matching vehicle that happened to be non-electric,
+    # instead of skipping it and continuing to look for one of the real
+    # EDVs elsewhere in the fleet list. Since gas vans commonly sort before
+    # electric ones, this failed nearly every electric route even when
+    # plenty of eligible EDVs existed (confirmed live: 27 real EDVs in
+    # Fleet, 0/28 electric routes got a van). Also added the missing
+    # reverse guard -- a gas route must not consume an electric van either
+    # (Governance/VAN_INGEST_RULES.md §4.2), which only the affinity-van
+    # branch above previously checked.
     chain = _van_fallback_chain(service_type)
+    saw_wrong_power_type = False
     for target_type in chain:
         for v in fleet:
             if v.vin in used_vans:
@@ -239,11 +251,19 @@ def _assign_van(
             vst = (v.service_type or "").lower()
             if target_type.lower() not in vst and vst not in target_type.lower():
                 continue
-            # Electric constraint: electric route → must be electric van
+            # Electric constraint: electric route needs an electric van,
+            # gas route must not take an electric van. Skip and keep
+            # looking rather than bailing on the first mismatch.
             if is_electric and not v.is_electric:
-                return None, None, "electric_violation"
+                saw_wrong_power_type = True
+                continue
+            if not is_electric and v.is_electric:
+                saw_wrong_power_type = True
+                continue
             return v.vehicle_name, v.vin, None
 
+    if saw_wrong_power_type:
+        return None, None, "electric_violation"
     return None, None, "no_van_available"
 
 

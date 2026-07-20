@@ -372,14 +372,29 @@ def ingest_dop_bytes(
 # Route Sheet PDF parsing
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Amazon route codes follow this pattern: DLV3-XXXX-1A  or  D3-XXXX-1
-_ROUTE_RE = re.compile(r"D[A-Z0-9]*-[A-Z]{2,6}-\d+[A-Z]?", re.IGNORECASE)
+# Amazon route codes as they actually appear on the current Route Sheet
+# template: a short uppercase prefix directly followed by 2-5 digits, e.g.
+# "CX115", "CX128" (fixed 2026-07-20 — the old DLV3-XXXX-1A dashed pattern
+# never matched this format, so every route sheet silently extracted zero
+# rows). Anchored to line start so it never matches mid-line tokens like a
+# sort-zone entry.
+_ROUTE_RE = re.compile(r"^([A-Z]{1,4}\d{2,5})\b", re.IGNORECASE)
 
 
 def parse_route_sheet_pdf(content: bytes) -> List[Dict]:
     """
-    Extract driver-to-van assignments from the route sheet PDF.
-    Returns a list of dicts: {route_code, driver_name, van_number, stage, wave_time}.
+    Extract route_code (and stage, where a structured table is present) from
+    the route sheet PDF. Returns a list of dicts: {route_code, stage}.
+
+    Per Governance/Route Sheet Definition.pptx (the authoritative field
+    mapping) and Governance/VAN_INGEST_RULES.md: Amazon's Route Sheet
+    template does NOT contain a van/unit number, and never has since at
+    least 2026-07-19 — van assignment is a separate, DB-native
+    auto-assignment system (route_assignment.py) that has no dependency on
+    this file. This parser must NEVER look for van/vehicle/unit information
+    — that logic was removed 2026-07-20 after being reintroduced more than
+    once. Do not add it back without express permission.
+
     Tries structured table extraction first, then plain text.
     """
     assignments: List[Dict] = []
@@ -389,6 +404,7 @@ def parse_route_sheet_pdf(content: bytes) -> List[Dict]:
             for page in pdf.pages:
 
                 # ── Structured table extraction ──────────────────────────
+                page_found = False
                 tables = page.extract_tables() or []
                 for table in tables:
                     if not table or len(table) < 2:
@@ -401,14 +417,8 @@ def parse_route_sheet_pdf(content: bytes) -> List[Dict]:
                     for i, h in enumerate(headers):
                         if "route" in h:
                             col.setdefault("route", i)
-                        if "van" in h or "vehicle" in h or "unit" in h:
-                            col.setdefault("van", i)
-                        if "driver" in h or "associate" in h or " da" in h:
-                            col.setdefault("driver", i)
                         if "stage" in h:
                             col.setdefault("stage", i)
-                        if "wave" in h:
-                            col.setdefault("wave", i)
 
                     for row in table[1:]:
                         if not row:
@@ -420,27 +430,25 @@ def parse_route_sheet_pdf(content: bytes) -> List[Dict]:
                                 if val:
                                     entry[{
                                         "route": "route_code",
-                                        "van": "van_number",
-                                        "driver": "driver_name",
                                         "stage": "stage",
-                                        "wave": "wave_time",
                                     }[key]] = val
-                        if entry.get("route_code") or entry.get("driver_name"):
+                        if entry.get("route_code"):
                             assignments.append(entry)
+                            page_found = True
 
                 # ── Text extraction fallback ──────────────────────────────
-                if not assignments:
+                # Per-page check, not "has any prior page found something" —
+                # that global check silently skipped every page after the
+                # first one that found a match, so a 48-page route sheet
+                # only ever extracted its first page's row (found 2026-07-20
+                # while fixing the regex above).
+                if not page_found:
                     text = page.extract_text() or ""
                     for line in text.split("\n"):
                         m = _ROUTE_RE.search(line)
                         if not m:
                             continue
-                        entry = {"route_code": m.group(0).upper()}
-                        # Van number: V-101, V101, 1901, 2-digit prefix + 3 digits
-                        van_m = re.search(r"\b([A-Z][-\s]?\d{3,4}|\d{4,5})\b", line)
-                        if van_m:
-                            entry["van_number"] = van_m.group(0)
-                        assignments.append(entry)
+                        assignments.append({"route_code": m.group(1).upper()})
 
     except Exception as exc:
         logger.warning("Route sheet PDF parse error: %s", exc)

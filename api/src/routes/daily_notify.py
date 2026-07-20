@@ -83,12 +83,38 @@ def _slack_client():
     return WebClient(token=token)
 
 
-def _post_ingest_error(label: str, filename: str, message: str) -> None:
+INGEST_ALERTS_MUTE_KEY = "ingest_alerts_muted"
+
+
+def ingest_alerts_muted(db: Session) -> bool:
+    return bool(get_reminder_state(db, INGEST_ALERTS_MUTE_KEY).get("muted"))
+
+
+def set_ingest_alerts_muted(db: Session, muted: bool, by: str = "") -> None:
+    """Backs the Dispatch Home 'Stop Notifications' button (added
+    2026-07-20, PIN-gated) — added after a broken ingest kept re-alerting
+    on every re-upload attempt while the team already knew it was broken
+    and was waiting on a fix, with no way to quiet it without a redeploy."""
+    set_reminder_state(db, INGEST_ALERTS_MUTE_KEY, {
+        "muted": muted, "by": by, "at": datetime.utcnow().isoformat(),
+    })
+
+
+def _post_ingest_error(label: str, filename: str, message: str, db: Optional[Session] = None) -> None:
     """Loud, immediate #nday-mgt alert for a DOP/Route Sheet/Cortex ingest
     failure — these used to only be recorded silently in SlackIngestLog
     (status/error fields), discoverable only by someone happening to check
     the dashboard. Per explicit 2026-07-19 decision: a daily-pipeline miss
-    must never go unnoticed."""
+    must never go unnoticed.
+
+    Silenced by the Dispatch Home 'Stop Notifications' PIN-gated toggle
+    (added 2026-07-20) — intended for a known-broken ingest that's already
+    being fixed, so the channel doesn't get hammered with alerts for
+    something the team can't act on yet. `db` is optional only so existing
+    callers without a session handy don't break; pass it whenever available
+    so the mute actually takes effect."""
+    if db is not None and ingest_alerts_muted(db):
+        return
     client = _slack_client()
     if not client:
         return
@@ -372,88 +398,62 @@ def ingest_dop_bytes(
 # Route Sheet PDF parsing
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Amazon route codes as they actually appear on the current Route Sheet
-# template: a short uppercase prefix directly followed by 2-5 digits, e.g.
-# "CX115", "CX128" (fixed 2026-07-20 — the old DLV3-XXXX-1A dashed pattern
-# never matched this format, so every route sheet silently extracted zero
-# rows). Anchored to line start so it never matches mid-line tokens like a
-# sort-zone entry.
-_ROUTE_RE = re.compile(r"^([A-Z]{1,4}\d{2,5})\b", re.IGNORECASE)
-
-
-def parse_route_sheet_pdf(content: bytes) -> List[Dict]:
+def ingest_route_sheet_bytes(content: bytes, filename: str) -> Tuple[List[Dict], str]:
     """
-    Extract route_code (and stage, where a structured table is present) from
-    the route sheet PDF. Returns a list of dicts: {route_code, stage}.
+    Parse Route Sheet PDF bytes using the shared parser
+    (api.src.ingest.route_sheets.parse_route_sheet_pdf) — the same one
+    Fleet/DOP/Cortex/DVIC/Quality already use, per the same "one parser per
+    source, no duplicates" pattern as ingest_dop_bytes()/ingest_cortex_bytes()
+    above. Retires this file's own separate implementation (2026-07-20)
+    after it drifted from the shared one and silently extracted zero rows
+    for an entire day — see Governance/DOP_ROUTE_SHEET_INGEST_RULES.md.
 
-    Per Governance/Route Sheet Definition.pptx (the authoritative field
-    mapping) and Governance/VAN_INGEST_RULES.md: Amazon's Route Sheet
-    template does NOT contain a van/unit number, and never has since at
-    least 2026-07-19 — van assignment is a separate, DB-native
-    auto-assignment system (route_assignment.py) that has no dependency on
-    this file. This parser must NEVER look for van/vehicle/unit information
-    — that logic was removed 2026-07-20 after being reintroduced more than
-    once. Do not add it back without express permission.
+    Returns (pdf_data, error) where pdf_data is a list of
+    {route_code, stage, wave_time} dicts — the same shape build_daily_
+    assignments()/RouteSheetEntry already expect. The shared parser also
+    extracts service_type, bags, overflow, and total_packages per
+    Governance/Route Sheet Definition.pptx, but none of that is consumed
+    here yet — pulling it into the daily pipeline is a separate change to
+    flag explicitly before making, not something to fold in silently here.
 
-    Tries structured table extraction first, then plain text.
+    Per Governance/Route Sheet Definition.pptx and VAN_INGEST_RULES.md:
+    Amazon's Route Sheet template does NOT contain a van/unit number, and
+    the shared parser has no field for one — do not add van/vehicle/unit
+    lookup to this pipeline without express permission.
     """
-    assignments: List[Dict] = []
+    from api.src.ingest.route_sheets import parse_route_sheet_pdf as _shared_parse
 
+    tmp_path = None
     try:
-        with pdfplumber.open(io.BytesIO(content)) as pdf:
-            for page in pdf.pages:
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
 
-                # ── Structured table extraction ──────────────────────────
-                page_found = False
-                tables = page.extract_tables() or []
-                for table in tables:
-                    if not table or len(table) < 2:
-                        continue
+        records, errors = _shared_parse(tmp_path)
 
-                    headers = [
-                        (str(c).strip().lower() if c else "") for c in table[0]
-                    ]
-                    col: Dict[str, int] = {}
-                    for i, h in enumerate(headers):
-                        if "route" in h:
-                            col.setdefault("route", i)
-                        if "stage" in h:
-                            col.setdefault("stage", i)
+        if errors:
+            logger.warning(
+                "ingest_route_sheet_bytes: %d parse issue(s) for %s: %s",
+                len(errors), filename, "; ".join(errors[:5]),
+            )
 
-                    for row in table[1:]:
-                        if not row:
-                            continue
-                        entry: Dict[str, str] = {}
-                        for key, idx in col.items():
-                            if idx < len(row):
-                                val = _safe_str(row[idx])
-                                if val:
-                                    entry[{
-                                        "route": "route_code",
-                                        "stage": "stage",
-                                    }[key]] = val
-                        if entry.get("route_code"):
-                            assignments.append(entry)
-                            page_found = True
-
-                # ── Text extraction fallback ──────────────────────────────
-                # Per-page check, not "has any prior page found something" —
-                # that global check silently skipped every page after the
-                # first one that found a match, so a 48-page route sheet
-                # only ever extracted its first page's row (found 2026-07-20
-                # while fixing the regex above).
-                if not page_found:
-                    text = page.extract_text() or ""
-                    for line in text.split("\n"):
-                        m = _ROUTE_RE.search(line)
-                        if not m:
-                            continue
-                        assignments.append({"route_code": m.group(1).upper()})
+        pdf_data = [
+            {"route_code": r.route_code, "stage": r.staging_location, "wave_time": r.wave_time}
+            for r in records if r.route_code
+        ]
+        if not pdf_data:
+            return [], "; ".join(errors) if errors else "No rows extracted from Route Sheet PDF"
+        return pdf_data, ""
 
     except Exception as exc:
-        logger.warning("Route sheet PDF parse error: %s", exc)
-
-    return assignments
+        logger.warning("ingest_route_sheet_bytes: failed for %s: %s", filename, exc)
+        return [], str(exc)
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1163,7 +1163,7 @@ def check_and_notify(
                 db.commit()
                 result["ingest"]["cortex"] = {"records": count, "error": err}
                 if err:
-                    _post_ingest_error("Cortex", cortex_file["name"], err)
+                    _post_ingest_error("Cortex", cortex_file["name"], err, db)
 
     files = scan_channel_for_files(for_date)
     result["files_found"]["dop"] = files["dop"]["name"] if files["dop"] else None
@@ -1201,9 +1201,9 @@ def check_and_notify(
                     result["ops_prompt_sent"] = _ops_manager_prompt(for_date, count, db)
                     result["fleet_prompt_sent"] = _fleet_manager_prompt(for_date, db)
                 elif err:
-                    _post_ingest_error("DOP", dop_file["name"], err)
+                    _post_ingest_error("DOP", dop_file["name"], err, db)
                 else:
-                    _post_ingest_error("DOP", dop_file["name"], "No rows extracted from DOP file.")
+                    _post_ingest_error("DOP", dop_file["name"], "No rows extracted from DOP file.", db)
 
     # ── 3. Ingest Route Sheet ─────────────────────────────────────────────────
     rs_file = files.get("route_sheet")
@@ -1216,7 +1216,7 @@ def check_and_notify(
         else:
             content = _download_slack_file(rs_file["url"])
             if content:
-                pdf_data = parse_route_sheet_pdf(content)
+                pdf_data, _rs_err = ingest_route_sheet_bytes(content, rs_file["name"])
                 # Persist per-route data so it survives past this single call
                 # — without this, if DOP arrives later than the Route Sheet
                 # (as happened 2026-07-16), the van/wave/stage data is gone
@@ -1231,10 +1231,11 @@ def check_and_notify(
                         db.add(RouteSheetEntry(
                             upload_date=for_date,
                             route_code=row["route_code"],
-                            van_number=row.get("van_number"),
+                            # van_number/driver_name intentionally never set —
+                            # Amazon's Route Sheet template has never had a
+                            # van/unit number; see ingest_route_sheet_bytes().
                             wave_time=row.get("wave_time"),
                             stage=row.get("stage"),
-                            driver_name=row.get("driver_name"),
                             source_file=rs_file["name"],
                         ))
                 db.add(SlackIngestLog(
@@ -1256,10 +1257,11 @@ def check_and_notify(
                 if not pdf_data:
                     _post_ingest_error(
                         "Route Sheet", rs_file["name"],
-                        "No rows extracted — van/wave/stage data will be missing from today's "
-                        "assignment matrix until this is resolved. If Amazon's PDF layout changed "
-                        "(e.g. no longer lists a van number, only a vehicle class), the parser "
-                        "needs to be updated for the new format.",
+                        "No rows extracted — stage/wave data will be missing from today's "
+                        "assignment matrix until this is resolved. Check whether Amazon's PDF "
+                        "layout changed again; the parser expects a route code like \"CX115\" "
+                        "at the start of each page.",
+                        db,
                     )
 
     # ── 4. Build assignments (DOP + Cortex + PDF) ─────────────────────────────

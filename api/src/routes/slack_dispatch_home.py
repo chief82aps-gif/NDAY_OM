@@ -40,6 +40,9 @@ INVITE_USER_CALLBACK_ID = "dispatch_invite_user_submit"
 RESET_PASSWORD_CALLBACK_ID = "dispatch_reset_password_submit"
 ROLE_OPTIONS = ["admin", "manager", "dispatcher", "driver"]
 
+INGEST_ALERTS_PIN_CALLBACK_ID = "dispatch_ingest_alerts_pin_submit"
+INGEST_ALERTS_PIN = "2468"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Home tab builder
@@ -149,6 +152,10 @@ def build_dispatch_home_view_blocks(db: Session) -> list:
                     "text": {"type": "plain_text", "text": "🔑 Reset Password", "emoji": True},
                 },
             ],
+        },
+        {
+            "type": "actions",
+            "elements": [_ingest_alerts_button(db)],
         },
         {
             "type": "context",
@@ -850,5 +857,123 @@ def _handle_dispatch_reset_password_submit(payload: dict, db: Session) -> dict:
             )
         except Exception as exc:
             logger.warning("Reset audit log post failed: %s", exc)
+
+    return {"response_action": "clear"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stop/Resume Ingest Notifications — PIN-gated (added 2026-07-20). A broken
+# ingest can re-alert every time someone re-uploads the same file trying to
+# fix it, even though the team already knows it's broken and dispatch is
+# already working the fix. This mutes that one alert channel
+# (_post_ingest_error in daily_notify.py) without needing a redeploy — the
+# PIN is a lightweight guard against an accidental click silencing a real
+# alert, not real access control.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _ingest_alerts_muted(db: Session) -> bool:
+    from api.src.routes.daily_notify import ingest_alerts_muted
+    return ingest_alerts_muted(db)
+
+
+def _ingest_alerts_button(db: Session) -> dict:
+    muted = _ingest_alerts_muted(db)
+    button = {
+        "type": "button",
+        "action_id": "dispatch_ingest_alerts_button",
+        "text": (
+            {"type": "plain_text", "text": "🔔 Resume Ingest Notifications", "emoji": True}
+            if muted else
+            {"type": "plain_text", "text": "🔕 Stop Ingest Notifications", "emoji": True}
+        ),
+    }
+    if muted:
+        button["style"] = "danger"
+    return button
+
+
+def _handle_dispatch_ingest_alerts_button(payload: dict, db: Session) -> None:
+    user_id = payload.get("user", {}).get("id", "")
+    if not is_dispatch_staff(user_id, db):
+        logger.warning("Non-dispatch user %s attempted dispatch_ingest_alerts_button", user_id)
+        return
+    trigger_id = payload.get("trigger_id")
+    client = _client()
+    if not client or not trigger_id:
+        return
+
+    muted = _ingest_alerts_muted(db)
+    action_label = "Resume" if muted else "Stop"
+    modal = {
+        "type": "modal",
+        "callback_id": INGEST_ALERTS_PIN_CALLBACK_ID,
+        "private_metadata": "resume" if muted else "stop",
+        "title": {"type": "plain_text", "text": "Ingest Notifications"},
+        "submit": {"type": "plain_text", "text": action_label},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"Notifications are currently *{'muted' if muted else 'active'}*.\n"
+                        f"Enter the PIN to *{action_label.lower()}* ingest-failure alerts to #nday-mgt."
+                    ),
+                },
+            },
+            {
+                "type": "input",
+                "block_id": "pin_block",
+                "label": {"type": "plain_text", "text": "PIN"},
+                "element": {"type": "plain_text_input", "action_id": "pin", "min_length": 1, "max_length": 10},
+            },
+        ],
+    }
+    try:
+        client.views_open(trigger_id=trigger_id, view=modal)
+    except Exception as exc:
+        logger.warning("views_open failed for ingest-alerts PIN modal: %s", exc)
+
+
+def _handle_dispatch_ingest_alerts_pin_submit(payload: dict, db: Session) -> dict:
+    from api.src.routes.daily_notify import set_ingest_alerts_muted
+
+    clicker_id = payload.get("user", {}).get("id", "")
+    if not is_dispatch_staff(clicker_id, db):
+        logger.warning("Non-dispatch user %s attempted dispatch_ingest_alerts_pin_submit", clicker_id)
+        return {"response_action": "clear"}
+
+    view = payload.get("view", {})
+    action = view.get("private_metadata")  # "stop" or "resume"
+    values = view.get("state", {}).get("values", {})
+    pin = values.get("pin_block", {}).get("pin", {}).get("value", "")
+
+    client = _client()
+    if pin != INGEST_ALERTS_PIN:
+        if client:
+            try:
+                _dm_driver(client, clicker_id, ":no_entry: Incorrect PIN — ingest notifications were not changed.")
+            except Exception as exc:
+                logger.warning("Wrong-PIN DM failed for %s: %s", clicker_id, exc)
+        return {"response_action": "clear"}
+
+    muted = action == "stop"
+    set_ingest_alerts_muted(db, muted, by=clicker_id)
+
+    summary = (
+        ":no_bell: Ingest-failure notifications *stopped* — flip this back on once ingests are confirmed working."
+        if muted else
+        ":bell: Ingest-failure notifications *resumed*."
+    )
+    if client:
+        try:
+            _dm_driver(client, clicker_id, summary)
+        except Exception as exc:
+            logger.warning("Ingest-alerts confirmation DM failed for %s: %s", clicker_id, exc)
+        try:
+            client.chat_postMessage(channel=DISPATCH_HOME_CHANNEL_ID, text=summary)
+        except Exception as exc:
+            logger.warning("Ingest-alerts audit log post failed: %s", exc)
 
     return {"response_action": "clear"}

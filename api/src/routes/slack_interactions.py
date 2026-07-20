@@ -18,7 +18,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -451,6 +451,9 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
         if callback_id == "dispatch_reset_password_submit":
             from api.src.routes.slack_dispatch_home import _handle_dispatch_reset_password_submit
             return _handle_dispatch_reset_password_submit(payload, db)
+        if callback_id == "dispatch_ingest_alerts_pin_submit":
+            from api.src.routes.slack_dispatch_home import _handle_dispatch_ingest_alerts_pin_submit
+            return _handle_dispatch_ingest_alerts_pin_submit(payload, db)
         return {"ok": True}
 
     action_id = (payload.get("actions") or [{}])[0].get("action_id", "")
@@ -463,6 +466,9 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
 
     elif action_id == "driver_arrived_shift":
         _handle_driver_arrived(payload, db)
+
+    elif action_id == "talk_to_lead":
+        _handle_talk_to_lead(payload, db)
 
     elif action_id == "driver_schedule_ack":
         _handle_schedule_ack(payload, db)
@@ -517,6 +523,10 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
         from api.src.routes.slack_dispatch_home import _handle_dispatch_reset_password_button
         _handle_dispatch_reset_password_button(payload, db)
 
+    elif action_id == "dispatch_ingest_alerts_button":
+        from api.src.routes.slack_dispatch_home import _handle_dispatch_ingest_alerts_button
+        _handle_dispatch_ingest_alerts_button(payload, db)
+
     elif action_id == "crash_report_approve":
         from api.src.routes.crash_report import _handle_crash_report_approve
         _handle_crash_report_approve(payload, db)
@@ -524,6 +534,64 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
     elif action_id == "crash_report_drug_screen_done":
         from api.src.routes.crash_report import _handle_crash_report_drug_screen_done
         _handle_crash_report_drug_screen_done(payload, db)
+
+    # Slack requires a 200 response within 3 seconds
+    return {"ok": True}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Events API — push-based file detection for #nday-operations-management,
+# replacing/backstopping daily_notify.py's 10-min, 8-10AM-only poll for
+# DOP/Route Sheet/Cortex (added 2026-07-20). Those three are the only Amazon-
+# adjacent sources NOT gated behind the Amazon portal -- Amazon posts them
+# directly into Slack each morning, so there's no download step to automate,
+# only a detection-latency problem. This does NOT apply to Cortex/Fleet/
+# DVIC/WST/driver schedule's actual download step -- see the Amazon portal
+# automation ban in CLAUDE.md. The 10-min poll stays in place as a backstop
+# in case an event is ever dropped; check_and_notify()'s own SlackIngestLog
+# check makes calling it twice for the same file a no-op either way.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _run_event_triggered_notify() -> None:
+    from api.src.database import SessionLocal
+    from api.src.routes.daily_notify import check_and_notify
+
+    db = SessionLocal()
+    try:
+        result = check_and_notify(db)
+        logger.info("Slack event-triggered notify: %s", result)
+    except Exception as exc:
+        logger.warning("Slack event-triggered notify failed: %s", exc)
+    finally:
+        db.close()
+
+
+@router.post("/events")
+async def slack_events(request: Request, background_tasks: BackgroundTasks):
+    """Slack Events API Request URL. Configure in the Slack app's Event
+    Subscriptions with this endpoint, subscribed to message.channels (or
+    file_shared) scoped to #nday-operations-management -- a manual step in
+    Slack's app console, not something this code can set up on its own."""
+    body = await request.body()
+    timestamp = request.headers.get("X-Slack-Request-Timestamp", "0")
+    signature = request.headers.get("X-Slack-Signature", "")
+
+    if not _verify_slack_signature(body, timestamp, signature):
+        raise HTTPException(403, "Invalid Slack signature.")
+
+    payload = json.loads(body)
+
+    # One-time handshake Slack requires when the Request URL is first saved.
+    if payload.get("type") == "url_verification":
+        return {"challenge": payload.get("challenge", "")}
+
+    if payload.get("type") == "event_callback":
+        event = payload.get("event", {})
+        from api.src.routes.daily_notify import NOTIFY_CHANNEL
+
+        has_files = bool(event.get("files")) or event.get("subtype") == "file_share"
+        if event.get("type") == "message" and event.get("channel") == NOTIFY_CHANNEL and has_files:
+            background_tasks.add_task(_run_event_triggered_notify)
 
     # Slack requires a 200 response within 3 seconds
     return {"ok": True}
@@ -700,6 +768,45 @@ def _handle_driver_arrived(payload: dict, db: Session) -> None:
                 )
     except Exception as exc:
         logger.warning("driver_arrived handler error: %s", exc)
+
+
+def _handle_talk_to_lead(payload: dict, db: Session) -> None:
+    """Driver tapped 'Talk to My Lead' in their day-of shift DM. Resolves
+    today's lead at press-time (never a cached contact), so a lead change
+    earlier the same day is always picked up. See
+    Governance/SRD_DRIVER_SCHEDULE_PTT_MODULE.md §7."""
+    try:
+        action = (payload.get("actions") or [{}])[0]
+        value = json.loads(action.get("value", "{}"))
+        shift_date_str = value.get("shift_date", "")
+        driver_name = value.get("driver_name", "")
+        channel_id = payload.get("channel", {}).get("id", "")
+
+        from api.src.routes.driver_lead_schedule import get_current_lead
+        shift_date = date.fromisoformat(shift_date_str)
+        lead_name, lead_slack_id, _source = get_current_lead(shift_date, db)
+
+        token = os.getenv("SLACK_BOT_TOKEN")
+        if not token:
+            return
+        from slack_sdk import WebClient as _WC
+        client = _WC(token=token)
+
+        response_text = f"Couldn't reach {lead_name} automatically — try Zello instead."
+        if lead_slack_id:
+            try:
+                client.chat_postMessage(
+                    channel=lead_slack_id,
+                    text=f"📻 {driver_name} wants to talk to you — they tapped *Talk to My Lead* from their shift DM.",
+                )
+                response_text = f"✅ Sent — {lead_name} has been notified and will reach out."
+            except Exception as exc:
+                logger.warning("Talk-to-lead DM send failed: %s", exc)
+
+        if channel_id:
+            client.chat_postMessage(channel=channel_id, text=response_text)
+    except Exception as exc:
+        logger.warning("Talk-to-lead handler error: %s", exc)
 
 
 def _handle_dvic_ack(payload: dict, db: Session) -> None:

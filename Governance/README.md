@@ -40,6 +40,7 @@ Use this index to quickly locate governing standards, ingest rules, audit rules,
 ## Platform & System
 
 - [SRD Module Architecture v3](SRD_MODULE_ARCHITECTURE_v3.md) — **Start here for module boundaries.** Defines all 8 SRD modules' ownership/boundaries plus two new cross-cutting modules (Ingest, Scheduling/Cadence) with target table schemas and migration plans (2026-07-11)
+- [Driver-Facing Schedule & PTT Communications Module SRD](SRD_DRIVER_SCHEDULE_PTT_MODULE.md) — **Spec / pre-build.** Fills the reserved Driver-Facing Schedule module slot; daily lead ingest + adaptive "talk to my lead" routing + push/SMS/PTT messaging pipeline; supersedes/extends the Android PTT concept doc (2026-07-19)
 - [DSP Route Manager: Software Manual & System Blueprint](DSP_Route_Manager_Software_Manual.md) — Architecture overview; includes current implementation status section (updated 2026-07-03)
 - [Database Schema](DATABASE_SCHEMA.md) — Actual tables (2026-07-03) + original planned schema
 - [Database Setup Guide](DATABASE_SETUP.md)
@@ -72,3 +73,4 @@ Use this index to quickly locate governing standards, ingest rules, audit rules,
 | Tenured Workforce Ingest | `routes/tenured_workforce.py` | *(no page yet — API only)* | ✅ 2026-07-17 |
 | Driver Individual Scoring | `routes/driver_scoring.py` | *(no page yet — API only)* | ✅ 2026-07-17 |
 | Auth (DB-backed) + Invite/Reset | `routes/auth.py` | `/login`, `/admin`, `/set-password` | ✅ 2026-07-17 |
+| Okami Capacity | `routes/okami_capacity.py` | `/okami-capacity` | 🔒 **Locked 2026-07-19** — user confirmed working, do not modify without explicit request |

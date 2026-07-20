@@ -129,6 +129,13 @@ pattern, don't reinvent it. When in doubt, grep for `PT = ZoneInfo(...)` —
 several files already define this constant; reuse it rather than adding a
 new naive date call.
 
+## Okami Capacity — locked 2026-07-19
+
+User confirmed `okami_capacity.py` (submit/finalize, the card-style
+`#nday-mgt` message, the Pacific-time fix above) is working correctly.
+**Do not modify this module unless explicitly asked to** — it's done,
+not a target for opportunistic cleanup while touching adjacent code.
+
 ## Production safety gates — do not flip without explicit sign-off
 
 Full detail: `Governance/ROSTERING_DM_RULES.md`.

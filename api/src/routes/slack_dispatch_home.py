@@ -308,14 +308,13 @@ def _handle_dispatch_republish_showtime(payload: dict, db: Session) -> None:
         logger.warning("Non-dispatch user %s attempted dispatch_republish_showtime", user_id)
         return
 
-    from datetime import datetime as _dt, timedelta
+    from datetime import datetime as _dt
     from zoneinfo import ZoneInfo
     from sqlalchemy import func, or_
     from api.src.database import DriverScheduleEntry
     from api.src.routes.rostering import post_showtime_summary
 
     today = _dt.now(ZoneInfo("America/Los_Angeles")).date()
-    tomorrow = today + timedelta(days=1)
     # Showtime is a night-before roster for the NEXT shift, never the
     # calendar day the button happens to be clicked on -- so the date
     # filter must be strictly > today, not >= today. Today's row still
@@ -326,9 +325,6 @@ def _handle_dispatch_republish_showtime(payload: dict, db: Session) -> None:
     # schedule upload can create bare name-only rows for several future
     # dates before DOP enrichment adds real wave_time/show_time to the
     # nearest one (same reasoning as _tomorrow_schedule_landed() above).
-    # If nothing future is enriched yet, fall back to tomorrow's date (not
-    # today's) so the result is an honest "no schedule yet" instead of a
-    # silent repost of last night's already-sent roster.
     target_date = (
         db.query(func.min(DriverScheduleEntry.schedule_date))
         .filter(
@@ -336,16 +332,29 @@ def _handle_dispatch_republish_showtime(payload: dict, db: Session) -> None:
             or_(DriverScheduleEntry.wave_time.isnot(None), DriverScheduleEntry.show_time.isnot(None)),
         )
         .scalar()
-    ) or tomorrow
+    )
+
+    client = _client()
+    if not client:
+        return
+
+    # No future date has real showtime data yet -- do NOT guess "tomorrow"
+    # and repost stale/wrong data under that label (e.g. a holiday gap
+    # could mean the real next shift is several days out). Tell the
+    # clicker plainly instead of picking any date on their behalf.
+    if target_date is None:
+        try:
+            _dm_driver(client, user_id, ":warning: No upcoming schedule with showtimes has been ingested yet — nothing to publish. Ingest the next driver schedule file first, then try again.")
+        except Exception as exc:
+            logger.warning("Republish showtime summary DM failed for %s: %s", user_id, exc)
+        return
+
     try:
         result = post_showtime_summary(target_date, db, force=True)
     except Exception as exc:
         logger.exception("Re-publish showtime matrix failed")
         result = {"status": "error", "detail": str(exc)}
 
-    client = _client()
-    if not client:
-        return
     if result.get("status") == "posted":
         summary = f":white_check_mark: Showtime matrix republished for {target_date.isoformat()}."
     elif result.get("status") == "no_schedule":

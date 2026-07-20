@@ -168,6 +168,22 @@ Full detail: `Governance/ROSTERING_DM_RULES.md`.
   `#nday-mgt` or any manually-triggered send (e.g. Send Route Matrix). Do
   not re-enable without the user's explicit go-ahead.
 
+## No Amazon portal automation — permanent, not a risk tradeoff
+
+A Tier-1 feasibility review (2026-07-20) concluded there is no safe way
+to automate logins/downloads against Amazon's operational portal
+(`www.logistics.amazon.com`) — doing so risks the primary DSP contract,
+and the "juice vs. squeeze" does not net out. **Do not build or propose
+Playwright/headless-browser/scraping automation against that portal —
+ever — unless the user states Amazon has given written permission.**
+This applies to Cortex, Fleet, DVIC, WST, and driver schedule downloads
+(all portal-gated). **DOP and Route Sheet are NOT subject to this** —
+Amazon posts those directly into a Slack channel each morning, so they
+never touch the portal; automating *that* detection (Slack Events API
+instead of polling) is fine. For the five portal-gated sources, the
+ceiling is a human-in-the-loop flow (reminder → deep link → confirmed
+upload page), not removing the human from the download step.
+
 ## Security — this repo is public
 
 - `chief82aps-gif/NDAY_OM` on GitHub is a **public** repository (confirmed

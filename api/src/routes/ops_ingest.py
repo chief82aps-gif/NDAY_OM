@@ -765,8 +765,14 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
 
     # ── DVIC Pre-Trip Under-90s Excel ────────────────────────────────────────
     if t == "dvic":
-        from api.src.routes.dvic import _store_dvic
-        return _store_dvic(content, job.file_name, job.slack_file_id, db)
+        from api.src.routes.dvic import _store_dvic, post_dvic_naughty_list
+        result = _store_dvic(content, job.file_name, job.slack_file_id, db)
+        # Daily #nday-mgt "Naughty List" summary — per explicit 2026-07-20
+        # decision, fires automatically on each real new upload (driver DMs
+        # are a separate, deliberately deferred future step, not built here).
+        if result.get("status") == "ingested" and result.get("snapshot_id"):
+            post_dvic_naughty_list(result["snapshot_id"], db)
+        return result
 
     # ── DSP Scorecard PDF ────────────────────────────────────────────────────
     if t == "dsp_scorecard":

@@ -1122,10 +1122,10 @@ def _latest_dvic_map(db: Session) -> dict[str, dict]:
     per-driver aggregation so the two never compute this differently."""
     from api.src.database import DvicSnapshot
     from api.src.routes.dvic import _mgt_summary_rows
-    latest = db.query(DvicSnapshot).order_by(DvicSnapshot.week.desc()).first()
+    latest = db.query(DvicSnapshot).order_by(DvicSnapshot.imported_at.desc(), DvicSnapshot.id.desc()).first()
     if not latest:
         return {}
-    return {row["name"]: row for row in _mgt_summary_rows(latest.week, db)}
+    return {row["name"]: row for row in _mgt_summary_rows(latest.id, db)}
 
 
 def post_driver_summary_matrix(shift_date: date, db: Session, force: bool = False) -> dict:
@@ -1599,12 +1599,17 @@ def _calc_return_time(wave_str: str, duration_minutes: Optional[int]) -> Optiona
     return (dt + timedelta(minutes=int(duration_minutes) - 30)).strftime("%-I:%M %p")
 
 
-def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str) -> tuple[str, list]:
+def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str, wave_lead_slack_id: Optional[str] = None) -> tuple[str, list]:
     """Build the (fallback_text, blocks) for one driver's day-of assignment
     DM. Shared by send_day_of_dms() (the real, gated send) and the
     /day-of-dms/test endpoint (an explicit preview send to a reviewer,
     bypassing DRIVER_DM_ACTIVE) so the two can never drift apart in content.
     Content spec: Governance/DRIVER_DM_CONTENT_RULES.md.
+
+    wave_lead_slack_id is only passed once LEAD_ROUTING_ACTIVE is on (see
+    driver_lead_schedule.py) — when present, a "Talk to My Lead" button
+    replaces the "contact your wave lead on Zello" text, per
+    Governance/SRD_DRIVER_SCHEDULE_PTT_MODULE.md §7.
     """
     first_name = a.driver_name.split(",")[1].strip().split()[0] if "," in (a.driver_name or "") else (a.driver_name or "Driver").split()[0]
 
@@ -1660,7 +1665,11 @@ def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": "_Drive safe and have a great shift! 💪 For questions before your wave, contact your wave lead on Zello._",
+                "text": (
+                    "_Drive safe and have a great shift! 💪 Need your wave lead? Tap below._"
+                    if wave_lead_slack_id else
+                    "_Drive safe and have a great shift! 💪 For questions before your wave, contact your wave lead on Zello._"
+                ),
             },
         },
         {
@@ -1676,7 +1685,17 @@ def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str
                     "style": "primary",
                     "action_id": "driver_arrived_shift",
                     "value": arrival_value,
-                }
+                },
+                *([{
+                    "type": "button",
+                    "text": {
+                        "type": "plain_text",
+                        "text": "📻  Talk to My Lead",
+                        "emoji": True,
+                    },
+                    "action_id": "talk_to_lead",
+                    "value": arrival_value,
+                }] if wave_lead_slack_id else []),
             ],
         },
     ]
@@ -1722,7 +1741,10 @@ def send_day_of_dms(shift_date: date, db: Session) -> dict:
     if not assignments:
         return {"status": "no_assignments", "date": shift_date.isoformat()}
 
-    wave_lead_name, _ = _wave_lead_name(shift_date)
+    from api.src.routes.driver_lead_schedule import get_current_lead, LEAD_ROUTING_ACTIVE
+    wave_lead_name, wave_lead_slack_id, _lead_source = get_current_lead(shift_date, db)
+    if not LEAD_ROUTING_ACTIVE:
+        wave_lead_slack_id = None  # keep the legacy Zello-text DM until the flag is flipped on
     client = _slack_client()
     date_str = shift_date.strftime("%A, %B %-d")
 
@@ -1735,7 +1757,7 @@ def send_day_of_dms(shift_date: date, db: Session) -> dict:
             # Still mark dm_sent so daily_notify plain-text fallback can pick it up
             continue
 
-        fallback_text, blocks = _build_driver_dm(a, wave_lead_name, date_str)
+        fallback_text, blocks = _build_driver_dm(a, wave_lead_name, date_str, wave_lead_slack_id)
 
         dm_ts = None
         if client:
@@ -1796,9 +1818,12 @@ def send_test_driver_dm(shift_date: date, sample_driver_name: str, target_slack_
     if not client:
         return {"status": "no_slack_token"}
 
-    wave_lead_name, _ = _wave_lead_name(shift_date)
+    from api.src.routes.driver_lead_schedule import get_current_lead, LEAD_ROUTING_ACTIVE
+    wave_lead_name, wave_lead_slack_id, _lead_source = get_current_lead(shift_date, db)
+    if not LEAD_ROUTING_ACTIVE:
+        wave_lead_slack_id = None
     date_str = shift_date.strftime("%A, %B %-d")
-    fallback_text, blocks = _build_driver_dm(a, wave_lead_name, date_str)
+    fallback_text, blocks = _build_driver_dm(a, wave_lead_name, date_str, wave_lead_slack_id)
 
     banner = {
         "type": "context",

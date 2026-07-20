@@ -274,16 +274,34 @@ def _queue_discipline_writeup(record: "DvicCounselingRecord", week: str, db: Ses
 
 
 def _process_week(week: str, db: Session, only_tid: Optional[str] = None) -> dict:
-    """Advance counseling stage + send the Slack DM for each flagged driver
-    in `week`'s report.
+    """Advance counseling stage + send the Slack DM for each flagged driver,
+    using the most-recently-imported snapshot for `week`.
 
     Gated by DRIVER_DM_ACTIVE — a no-op otherwise, so the counseling ladder
     can never silently advance while driver DMs are switched off.
+
+    Violations are scoped to that ONE snapshot, not every row tagged with
+    this week string — DVIC is a rolling trailing-7-day report re-uploaded
+    daily under the same week label, so summing by week alone would count
+    the same real-world instance multiple times (once per overlapping
+    day's snapshot) and inflate both the DM's stated count and the stage
+    advancement. _advance_counseling()'s own "already actioned this week"
+    check (keyed by week, not snapshot) still ensures only one DM/stage
+    bump happens per driver per week even though this runs once per daily
+    upload.
     """
     if not _DM_ACTIVE:
         return {"status": "inactive", "note": "Set DRIVER_DM_ACTIVE=true on Render to enable driver DMs"}
 
-    violations = db.query(DvicViolation).filter(DvicViolation.week == week).all()
+    snap = (
+        db.query(DvicSnapshot)
+        .filter(DvicSnapshot.week == week)
+        .order_by(DvicSnapshot.imported_at.desc(), DvicSnapshot.id.desc())
+        .first()
+    )
+    if not snap:
+        return {"status": "no_violations", "week": week}
+    violations = db.query(DvicViolation).filter(DvicViolation.snapshot_id == snap.id).all()
     if only_tid:
         violations = [v for v in violations if v.transporter_id == only_tid]
     if not violations:
@@ -380,6 +398,7 @@ def _store_dvic(content: bytes, filename: str, slack_file_id: Optional[str], db:
     return {
         "status": "ingested",
         "week": week,
+        "snapshot_id": snap.id,
         "total_violations": summary["total_violations"],
         "unique_drivers": summary["unique_drivers"],
         "date_range_start": summary["date_range_start"],
@@ -538,10 +557,17 @@ def ingest_slack(slack_file_id: str, file_url: str, filename: str, db: Session =
     return _store_dvic(content, filename, slack_file_id, db)
 
 
-def _mgt_summary_rows(week: str, db: Session) -> list[dict]:
+def _mgt_summary_rows(snapshot_id: int, db: Session) -> list[dict]:
     """Per-driver name / avg inspection time / instance count / most recent
-    inspection time (the "Naughty List") for a week."""
-    violations = db.query(DvicViolation).filter(DvicViolation.week == week).all()
+    inspection time (the "Naughty List") for one specific snapshot.
+
+    Scoped by snapshot_id, not week — DVIC is a rolling trailing-7-day
+    report re-uploaded daily under the SAME week label (e.g. four separate
+    "2026-W29" snapshots on 07-14/15/16/19), so filtering by week alone
+    would silently sum violation rows across every snapshot that shares
+    that label, wildly over-counting the same real-world instances that
+    reappear in each day's overlapping 7-day window."""
+    violations = db.query(DvicViolation).filter(DvicViolation.snapshot_id == snapshot_id).all()
     by_driver: dict = defaultdict(list)
     for v in violations:
         by_driver[v.transporter_id].append(v)
@@ -568,24 +594,23 @@ def _mgt_summary_rows(week: str, db: Session) -> list[dict]:
     return rows
 
 
-@router.post("/post-mgt-summary")
-def post_mgt_summary(req: DmRequest, db: Session = Depends(get_db)):
-    """Post a driver-name / avg-time / instance-count summary table to
-    #nday-mgt for a week. Explicit action — never fired automatically on
-    ingest (see column_mapping/rostering fix history: ingest must only
-    update data, posting is a separate, deliberate step)."""
-    week = req.week
-    if not week:
-        snap = db.query(DvicSnapshot).order_by(DvicSnapshot.week.desc()).first()
-        if not snap:
-            raise HTTPException(404, "No DVIC data ingested.")
-        week = snap.week
+def post_dvic_naughty_list(snapshot_id: int, db: Session) -> dict:
+    """Build and post the driver-name / avg-time / instance-count 'Naughty
+    List' table to #nday-mgt for one specific snapshot. Shared by the
+    manual /post-mgt-summary endpoint and the automatic post-ingest hook
+    (ops_ingest.py's dvic dispatch) — per explicit 2026-07-20 decision,
+    this is now a daily summary that fires automatically once per real new
+    DVIC upload (driver DMs are a separate, not-yet-built, deliberately
+    deferred future step)."""
+    snap = db.query(DvicSnapshot).filter(DvicSnapshot.id == snapshot_id).first()
+    if not snap:
+        return {"status": "no_data"}
 
-    rows = _mgt_summary_rows(week, db)
+    rows = _mgt_summary_rows(snap.id, db)
     if not rows:
-        return {"status": "no_data", "week": week}
+        return {"status": "no_data", "week": snap.week}
 
-    week_label = _week_label(week)
+    week_label = _week_label(snap.week)
     lines = [f"{'Driver':<24} {'Instances':>10} {'Avg Time':>10} {'Most Recent':>12}"]
     for r in rows:
         avg = f"{r['avg_seconds']:.0f}s" if r["avg_seconds"] is not None else "—"
@@ -606,12 +631,26 @@ def post_mgt_summary(req: DmRequest, db: Session = Depends(get_db)):
     ]
     _post(NDAY_MGT_CHANNEL, f"DVIC Naughty List — {week_label}", blocks=blocks)
 
-    return {"status": "posted", "week": week, "driver_count": len(rows)}
+    return {"status": "posted", "week": snap.week, "driver_count": len(rows)}
+
+
+@router.post("/post-mgt-summary")
+def post_mgt_summary(req: DmRequest, db: Session = Depends(get_db)):
+    """Manual trigger — post the Naughty List for a given week (or the
+    latest snapshot if no week given). See post_dvic_naughty_list() for
+    the shared logic; this also runs automatically on ingest now."""
+    query = db.query(DvicSnapshot)
+    if req.week:
+        query = query.filter(DvicSnapshot.week == req.week)
+    snap = query.order_by(DvicSnapshot.imported_at.desc(), DvicSnapshot.id.desc()).first()
+    if not snap:
+        raise HTTPException(404, "No DVIC data ingested.")
+    return post_dvic_naughty_list(snap.id, db)
 
 
 @router.get("/weeks")
 def list_weeks(db: Session = Depends(get_db)):
-    snaps = db.query(DvicSnapshot).order_by(DvicSnapshot.week.desc()).all()
+    snaps = db.query(DvicSnapshot).order_by(DvicSnapshot.week.desc(), DvicSnapshot.imported_at.desc()).all()
     return [
         {
             "week": s.week,
@@ -626,16 +665,20 @@ def list_weeks(db: Session = Depends(get_db)):
 
 @router.get("/violations")
 def get_violations(week: Optional[str] = None, db: Session = Depends(get_db)):
-    """Return violations grouped by driver for a given week (default: latest)."""
-    if not week:
-        latest = db.query(DvicSnapshot).order_by(DvicSnapshot.week.desc()).first()
-        if not latest:
-            return {"week": None, "drivers": [], "message": "No DVIC data ingested yet."}
-        week = latest.week
-
-    snap = db.query(DvicSnapshot).filter(DvicSnapshot.week == week).first()
+    """Return violations grouped by driver for a given week (default: the
+    single most-recently-imported snapshot overall — NOT a fresh
+    unordered lookup by week string, which would silently pick an
+    arbitrary one of several same-week snapshots re-uploaded on
+    different days)."""
+    query = db.query(DvicSnapshot)
+    if week:
+        query = query.filter(DvicSnapshot.week == week)
+    snap = query.order_by(DvicSnapshot.imported_at.desc(), DvicSnapshot.id.desc()).first()
     if not snap:
-        raise HTTPException(404, f"No DVIC snapshot for week {week}")
+        if week:
+            raise HTTPException(404, f"No DVIC snapshot for week {week}")
+        return {"week": None, "drivers": [], "message": "No DVIC data ingested yet."}
+    week = snap.week
 
     violations = (
         db.query(DvicViolation)
@@ -745,7 +788,7 @@ def send_dm(transporter_id: str, req: DmRequest, db: Session = Depends(get_db)):
     Gated by DRIVER_DM_ACTIVE (see _process_week)."""
     week = req.week
     if not week:
-        snap = db.query(DvicSnapshot).order_by(DvicSnapshot.week.desc()).first()
+        snap = db.query(DvicSnapshot).order_by(DvicSnapshot.imported_at.desc(), DvicSnapshot.id.desc()).first()
         if not snap:
             raise HTTPException(404, "No DVIC data ingested.")
         week = snap.week
@@ -759,7 +802,7 @@ def send_all_dms(req: DmRequest, db: Session = Depends(get_db)):
     Gated by DRIVER_DM_ACTIVE (see _process_week)."""
     week = req.week
     if not week:
-        snap = db.query(DvicSnapshot).order_by(DvicSnapshot.week.desc()).first()
+        snap = db.query(DvicSnapshot).order_by(DvicSnapshot.imported_at.desc(), DvicSnapshot.id.desc()).first()
         if not snap:
             raise HTTPException(404, "No DVIC data ingested.")
         week = snap.week
@@ -913,7 +956,7 @@ def upload_status(db: Session = Depends(get_db)):
         .filter(DvicSnapshot.imported_at >= datetime(today.year, today.month, today.day))
         .first()
     )
-    latest = db.query(DvicSnapshot).order_by(DvicSnapshot.week.desc()).first()
+    latest = db.query(DvicSnapshot).order_by(DvicSnapshot.imported_at.desc(), DvicSnapshot.id.desc()).first()
     return {
         "uploaded_today": snap is not None,
         "latest_week": latest.week if latest else None,

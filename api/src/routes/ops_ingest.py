@@ -588,16 +588,27 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
         try:
             from api.src.orchestrator import orchestrator
             from api.src.database import Vehicle
+            from api.src.van_capacities import is_route_electric
             orchestrator.ingest_fleet(tmp_path)
             records = orchestrator.status.fleet_records
             updated = created = 0
             for record in records:
                 existing = db.query(Vehicle).filter(Vehicle.vin == record.vin).first()
                 status_value = str(record.operational_status or "active").lower()
+                # is_route_electric() is really just a "does this service-type
+                # string say electric/rivian" check -- generic enough to
+                # reuse for vehicles. Previously never set at all here, so
+                # every vehicle silently defaulted to is_electric=False
+                # (the SQLAlchemy column default) regardless of whether it
+                # was a real EDV -- confirmed live 2026-07-20: 28 active EDVs
+                # existed in Fleet with correct service_type, but every one
+                # failed the electric-van-assignment check because of this.
+                is_electric = is_route_electric(record.service_type or "")
                 if existing:
                     existing.vehicle_name = record.vehicle_name
                     existing.service_type = record.service_type
                     existing.status = status_value
+                    existing.is_electric = is_electric
                     updated += 1
                 else:
                     db.add(Vehicle(
@@ -605,6 +616,7 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
                         vehicle_name=record.vehicle_name,
                         service_type=record.service_type,
                         status=status_value,
+                        is_electric=is_electric,
                     ))
                     created += 1
             db.commit()

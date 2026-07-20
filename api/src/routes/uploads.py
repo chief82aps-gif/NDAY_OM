@@ -384,21 +384,28 @@ def upload_fleet(file: UploadFile = File(...)):
         orchestrator.ingest_fleet(file_path)
 
         # Persist parsed fleet rows to DB vehicles table
+        from api.src.van_capacities import is_route_electric
         db = SessionLocal()
         try:
             for record in orchestrator.status.fleet_records:
                 existing = db.query(Vehicle).filter(Vehicle.vin == record.vin).first()
                 status_value = record.operational_status or "active"
+                # Same fix as ops_ingest.py's fleet dispatch -- this field was
+                # never set here either, so every vehicle silently defaulted
+                # to is_electric=False regardless of actual vehicle type.
+                is_electric = is_route_electric(record.service_type or "")
                 if existing:
                     existing.vehicle_name = record.vehicle_name
                     existing.service_type = record.service_type
                     existing.status = str(status_value).lower()
+                    existing.is_electric = is_electric
                 else:
                     db.add(Vehicle(
                         vin=record.vin,
                         vehicle_name=record.vehicle_name,
                         service_type=record.service_type,
                         status=str(status_value).lower(),
+                        is_electric=is_electric,
                     ))
 
             _archive_upload(

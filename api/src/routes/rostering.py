@@ -726,9 +726,11 @@ def run_schedule_escalation_check(db: Session) -> dict:
 
 def post_showtime_summary(shift_date: date, db: Session) -> dict:
     """Post a Showtime-grouped breakdown to #nday-mgt AND #nday-team-room
-    (driver-facing): drivers bucketed by show_time, with van/service type.
-    Sweepers land in the final wave's bucket automatically (their show_time
-    now equals it, per the ingest fix). A different lens than
+    (driver-facing): drivers bucketed by show_time, name only — no van,
+    service type, or sweeper tag per explicit 2026-07-20 decision (van
+    assignment is the assignment matrix's job, a deliberately different
+    lens). Sweepers land in the final wave's bucket automatically (their
+    show_time now equals it, per the ingest fix). A different lens than
     post_mgt_summary's quality/risk matrix — same precedent as
     post_assignment_matrix being its own function.
 
@@ -801,10 +803,11 @@ def post_showtime_summary(shift_date: date, db: Session) -> dict:
             first_chunk = False
 
         for s in buckets[show_time]:
-            sweeper_tag = " | 🧹 Sweeper" if s["is_sweeper"] else ""
-            service = s.get("service_type") or ("Van assigned morning-of" if s["is_sweeper"] else "TBD")
+            # Name + showtime only, per explicit 2026-07-20 decision — no
+            # service type, van, or sweeper tag on this report (that's the
+            # assignment matrix's job, a different lens on purpose).
             name = _truncate(s["driver_name"], 22)
-            line = f"• {name} — {service}{sweeper_tag}"
+            line = f"• {name}"
             if chunk_len + len(line) + 1 > _BLOCK_TEXT_LIMIT:
                 _flush()
             chunk_lines.append(line)

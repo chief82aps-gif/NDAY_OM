@@ -158,6 +158,50 @@ def debug_cortex_state(date_str: str):
         db.close()
 
 
+@router.post("/clear-day")
+def clear_day(date_str: str):
+    """Wipe DOP + Cortex rows (and their SlackIngestLog entries) for one
+    exact date, so the next check_and_notify() re-ingests from scratch
+    instead of resolving "latest source_file" against stale/corrupted
+    rows. Added 2026-07-20 to recover from a same-day incident where the
+    DOP file was submitted through the (now-retired) website Cortex
+    upload form, silently writing wave-time values into Cortex.driver_name
+    under source_file="DOP NDAY 7.20.xlsx" -- get_latest_cortex_rows()
+    then picked that corrupted batch as "latest" over the real Cortex
+    data. Does NOT touch Route Sheet or DailyRouteAssignment -- re-run
+    /daily-notify/check afterward to rebuild from the already-posted
+    Slack files."""
+    from api.src.database import SlackIngestLog
+
+    try:
+        target = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date_str — use YYYY-MM-DD.")
+
+    db = SessionLocal()
+    try:
+        dop_deleted = db.query(DOP).filter(DOP.schedule_date == target).delete(synchronize_session=False)
+        cortex_deleted = db.query(Cortex).filter(Cortex.assignment_date == target).delete(synchronize_session=False)
+        logs_deleted = (
+            db.query(SlackIngestLog)
+            .filter(SlackIngestLog.file_type.in_(["dop", "cortex"]), SlackIngestLog.ingest_date == target)
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+        return {
+            "date": date_str,
+            "dop_rows_deleted": dop_deleted,
+            "cortex_rows_deleted": cortex_deleted,
+            "ingest_logs_deleted": logs_deleted,
+            "next_step": "POST /daily-notify/check to re-ingest from the already-posted Slack files",
+        }
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        db.close()
+
+
 @router.post("/dop/backfill-duration")
 def backfill_dop_duration(date_str: str):
     """

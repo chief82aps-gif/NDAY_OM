@@ -773,17 +773,43 @@ def post_showtime_summary(shift_date: date, db: Session) -> dict:
         },
     ]
 
+    # Slack rejects any block whose text exceeds 3000 characters
+    # (invalid_blocks) -- a single showtime bucket with enough drivers
+    # crammed into one section can silently blow past that and fail the
+    # ENTIRE post (confirmed live 2026-07-20: a bucket large enough to hit
+    # this took down the whole showtime summary). Chunk each bucket across
+    # as many section blocks as needed, well under the limit.
+    _BLOCK_TEXT_LIMIT = 2800
+
     for show_time in sorted(buckets, key=_sort_key):
-        lines = []
+        header_line = f"*Showtime {show_time}* ({len(buckets[show_time])})"
+        chunk_lines: list[str] = []
+        chunk_len = len(header_line) + 1
+        first_chunk = True
+
+        def _flush():
+            nonlocal chunk_lines, chunk_len, first_chunk
+            if not chunk_lines:
+                return
+            prefix = f"{header_line}\n" if first_chunk else f"*Showtime {show_time} (cont'd)*\n"
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": prefix + "\n".join(chunk_lines)},
+            })
+            chunk_lines = []
+            chunk_len = len(header_line) + 1
+            first_chunk = False
+
         for s in buckets[show_time]:
             sweeper_tag = " | 🧹 Sweeper" if s["is_sweeper"] else ""
             service = s.get("service_type") or ("Van assigned morning-of" if s["is_sweeper"] else "TBD")
             name = _truncate(s["driver_name"], 22)
-            lines.append(f"• {name} — {service}{sweeper_tag}")
-        blocks.append({
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": f"*Showtime {show_time}* ({len(buckets[show_time])})\n" + "\n".join(lines)},
-        })
+            line = f"• {name} — {service}{sweeper_tag}"
+            if chunk_len + len(line) + 1 > _BLOCK_TEXT_LIMIT:
+                _flush()
+            chunk_lines.append(line)
+            chunk_len += len(line) + 1
+        _flush()
 
     blocks.append({
         "type": "context",

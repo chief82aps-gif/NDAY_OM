@@ -46,13 +46,15 @@ rather than re-deriving status from scratch each session.
   for every driver in the latest quality snapshot. User asked to see a
   real list built from production data — blocked only on confirming the
   scores endpoint's deploy went live, not on any further code work.
-- **Still open — `im:write` OAuth scope missing.** Confirmed live in
-  Render logs: `conversations.open` fails with `missing_scope`, which
-  blocks "Re-Run Route Assignments"'s DM-back-to-the-clicker step (the
-  rebuild itself still runs and posts to channels fine). Needs: add
-  `im:write` in the Slack app's OAuth & Permissions page, reinstall the
-  app to the workspace, update `SLACK_BOT_TOKEN` in Render if it
-  rotates.
+- **Fixed 2026-07-20 — `im:write` OAuth scope added.** Was blocking
+  `conversations.open` (`missing_scope`) for every Dispatch Home button's
+  DM-back-to-clicker step: Re-Run Route Assignments, Re-Publish Showtime
+  Matrix, Send Route Matrix, Invite User, Reset Password, Remove
+  Terminated Employees. The underlying actions themselves (channel posts,
+  DB writes) were never affected — only the confirmation DM silently
+  failed, which made working buttons look broken. User added the scope
+  and reinstalled the app; not yet independently re-verified against a
+  real button click as of this note.
 - **Still open — `DISPATCH_HOME_CHANNEL_ID` misconfigured.** Default
   `C0BHGL7DLLC` returns `channel_not_found`, blocking the Dispatch Home
   audit-log post step. Needs the correct channel ID confirmed and the
@@ -67,9 +69,9 @@ rather than re-deriving status from scratch each session.
   passwords; a one-time seed migrates every account that used to live in
   the JSON file. Added Invite User / Reset Password buttons on Slack
   Dispatch Home (tokenized set-password links via
-  `frontend/pages/set-password.tsx`) — same `im:write` scope gap above
-  blocks the DM-to-invitee step until that scope is added, but the
-  audit-log post + DM-to-clicker fallback always carries the link.
+  `frontend/pages/set-password.tsx`) — the DM-to-invitee step should now
+  work now that `im:write` is added (see above); the audit-log post +
+  DM-to-clicker fallback still always carries the link either way.
 - **Fixed 2026-07-17 — Okami finalize Slack message reformatted** to
   match the dashboard's own card layout (green "Logged" card + neutral
   "Finalized" card with OK/MET badges), per user request.
@@ -180,8 +182,8 @@ changed since they were last told).
       violates the file's own stated policy, in a confirmed-public repo
 - [ ] Enable the Home tab feature + Events API subscription
       (`/slack/events`) in the existing bot's config at api.slack.com
-- [ ] Confirm/add required OAuth scopes (`im:write` for the DM helper,
-      plus whatever `views.publish`/`views.open` need)
+- [x] `im:write` added 2026-07-20 — confirm `views.publish`/`views.open`
+      scopes are also present if Home tab issues persist
 - [ ] End-to-end test with `DRIVER_DM_ACTIVE=true` against a couple of
       the 61 already-linked drivers before wider rollout
 - [ ] Decide exact HR field sets vs. the spec's full HRM/OPS form

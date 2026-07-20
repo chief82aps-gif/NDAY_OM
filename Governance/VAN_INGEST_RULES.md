@@ -227,6 +227,21 @@ Errors:
   pipeline). Deliberately skips any route that already has a van, so a
   scheduler re-run minutes later never reshuffles an already-assigned
   vehicle.
+- **Fixed 2026-07-20 — `Vehicle.is_electric` was never set on ingest.**
+  Both Fleet ingest paths (`ops_ingest.py`'s auto-ingest dispatch and
+  `uploads.py`'s manual `/upload/fleet`) created/updated `Vehicle` rows
+  without touching `is_electric` at all, so it silently sat at the
+  SQLAlchemy column default (`False`) for every vehicle regardless of
+  real type. Since `_assign_van()` checks `Vehicle.is_electric` directly
+  (not a re-derived string match) for the electric-route constraint, real
+  EDVs with a correct `service_type` could never pass — confirmed live:
+  28 active EDVs existed, but every electric route still failed with "no
+  eligible van." Fixed by deriving `is_electric` from `service_type` at
+  ingest time via `van_capacities.py`'s `is_route_electric()` (the same
+  proven-correct substring check already used for the route side of this
+  constraint — reused, not duplicated). A routine Fleet re-ingest
+  corrects already-stored vehicles too, since both the create and update
+  branches now set it.
 
 **Any changes to these rules must**:
 1. Update this document

@@ -310,20 +310,26 @@ def _handle_dispatch_republish_showtime(payload: dict, db: Session) -> None:
 
     from datetime import datetime as _dt
     from zoneinfo import ZoneInfo
-    from sqlalchemy import func
+    from sqlalchemy import func, or_
     from api.src.database import DriverScheduleEntry
     from api.src.routes.rostering import post_showtime_summary
 
     today = _dt.now(ZoneInfo("America/Los_Angeles")).date()
     # Showtime is a night-before roster for the NEXT shift, not the
-    # calendar day the button happens to be clicked on -- use the most
-    # recently ingested schedule date (>= today) so this matches whatever
-    # date the automatic pipeline already posted for, instead of hardcoding
-    # "today" (confirmed live 2026-07-19: republish showed today's data
-    # when tomorrow's schedule had already been ingested).
+    # calendar day the button happens to be clicked on -- use the EARLIEST
+    # upcoming date that actually has real wave_time/show_time data, not
+    # just MAX(schedule_date). A multi-week schedule upload can create bare
+    # name-only rows for several future dates before DOP enrichment adds
+    # real show times to the nearest one (same reasoning as
+    # _tomorrow_schedule_landed() above) -- taking the max grabbed a later,
+    # unenriched date and made every driver bucket into "TBD" (confirmed
+    # live 2026-07-19, introduced by the first version of this fix).
     target_date = (
-        db.query(func.max(DriverScheduleEntry.schedule_date))
-        .filter(DriverScheduleEntry.schedule_date >= today)
+        db.query(func.min(DriverScheduleEntry.schedule_date))
+        .filter(
+            DriverScheduleEntry.schedule_date >= today,
+            or_(DriverScheduleEntry.wave_time.isnot(None), DriverScheduleEntry.show_time.isnot(None)),
+        )
         .scalar()
     ) or today
     try:

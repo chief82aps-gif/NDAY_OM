@@ -471,6 +471,13 @@ def send_driver_shift_dms(shift_date: date, db: Session) -> dict:
                         "action_id": "driver_arrived_shift",
                         "value": btn_value,
                     },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "❌  Can't Make It", "emoji": True},
+                        "style": "danger",
+                        "action_id": "driver_decline_shift",
+                        "value": btn_value,
+                    },
                 ],
             },
         ]
@@ -1646,6 +1653,18 @@ def mark_driver_arrived(shift_date_str: str, driver_name: str, slack_user_id: st
     except Exception as exc:
         logger.warning("Wave lead arrival ping error: %s", exc)
 
+    # Also surface it in #nday-mgt — the wave-lead DM above is private to
+    # one person, and dispatch/mgt has no other visibility into arrivals.
+    try:
+        client = _slack_client()
+        if client:
+            client.chat_postMessage(
+                channel=MGT_CHANNEL,
+                text=f"✅ *{driver_name}* arrived for their {shift_date_str} shift.",
+            )
+    except Exception as exc:
+        logger.warning("Mgt arrival notice failed: %s", exc)
+
     return True
 
 
@@ -1768,6 +1787,17 @@ def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str
                     "action_id": "talk_to_lead",
                     "value": arrival_value,
                 }] if wave_lead_slack_id else []),
+                {
+                    "type": "button",
+                    "text": {
+                        "type": "plain_text",
+                        "text": "🚨  Call Out",
+                        "emoji": True,
+                    },
+                    "style": "danger",
+                    "action_id": "driver_callout_from_dm",
+                    "value": arrival_value,
+                },
             ],
         },
     ]
@@ -2330,10 +2360,60 @@ def ack_schedule(
         rec = DriverShiftDM(shift_date=target, driver_name=driver_name)
         db.add(rec)
 
-    if not rec.schedule_acked_at:
+    already_acked = bool(rec.schedule_acked_at)
+    if not already_acked:
         rec.schedule_acked_at = datetime.utcnow()
     db.commit()
+
+    if not already_acked:
+        try:
+            client = _slack_client()
+            if client:
+                client.chat_postMessage(
+                    channel=MGT_CHANNEL,
+                    text=f"📋 *{driver_name}* acknowledged their schedule for {shift_date}.",
+                )
+        except Exception as exc:
+            logger.warning("Mgt schedule-ack notice failed: %s", exc)
+
     return {"status": "ok", "driver_name": driver_name, "shift_date": shift_date}
+
+
+def decline_shift(shift_date_str: str, driver_name: str, db: Session) -> bool:
+    """Driver tapped 'Can't Make It' on their night-before Showtime DM.
+    Records the decline and flags #nday-mgt that the shift needs
+    coverage — this is a distinct signal from a same-day callout (which
+    goes through the existing tokenized /callout web form instead)."""
+    try:
+        shift_date = date.fromisoformat(shift_date_str)
+    except ValueError:
+        return False
+
+    rec = db.query(DriverShiftDM).filter(
+        DriverShiftDM.shift_date == shift_date,
+        DriverShiftDM.driver_name == driver_name,
+    ).first()
+    if not rec:
+        rec = DriverShiftDM(shift_date=shift_date, driver_name=driver_name)
+        db.add(rec)
+
+    rec.declined_at = datetime.utcnow()
+    db.commit()
+
+    try:
+        client = _slack_client()
+        if client:
+            client.chat_postMessage(
+                channel=MGT_CHANNEL,
+                text=(
+                    f"⚠️ *{driver_name}* tapped *Can't Make It* for their shift on "
+                    f"{shift_date_str} — needs coverage."
+                ),
+            )
+    except Exception as exc:
+        logger.warning("Mgt decline notice failed: %s", exc)
+
+    return True
 
 
 @router.post("/eod-complete")

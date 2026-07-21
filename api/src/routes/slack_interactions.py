@@ -32,6 +32,7 @@ router = APIRouter(prefix="/slack", tags=["slack"])
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://nday-om.vercel.app")
+MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
 TOKEN_TTL_HOURS = 4
 
 
@@ -473,6 +474,12 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
     elif action_id == "driver_schedule_ack":
         _handle_schedule_ack(payload, db)
 
+    elif action_id == "driver_decline_shift":
+        _handle_driver_decline_shift(payload, db)
+
+    elif action_id == "driver_callout_from_dm":
+        _handle_driver_callout_from_dm(payload, db)
+
     elif action_id == "driver_eod_complete":
         _handle_eod_complete(payload, db)
 
@@ -688,6 +695,85 @@ def _handle_schedule_ack(payload: dict, db: Session) -> None:
                 )
     except Exception as exc:
         logger.warning("schedule_ack handler error: %s", exc)
+
+
+def _handle_driver_decline_shift(payload: dict, db: Session) -> None:
+    """Driver tapped 'Can't Make It' on their night-before Showtime DM."""
+    try:
+        action = (payload.get("actions") or [{}])[0]
+        value = json.loads(action.get("value", "{}"))
+        shift_date_str = value.get("shift_date", "")
+        driver_name = value.get("driver_name", "")
+
+        from api.src.routes.rostering import decline_shift
+        decline_shift(shift_date_str, driver_name, db)
+
+        channel_id = payload.get("channel", {}).get("id", "")
+        msg_ts = payload.get("message", {}).get("ts", "")
+        if channel_id and msg_ts:
+            token = os.getenv("SLACK_BOT_TOKEN")
+            if token:
+                from slack_sdk import WebClient as _WC
+                _WC(token=token).chat_update(
+                    channel=channel_id,
+                    ts=msg_ts,
+                    text="Shift decline recorded.",
+                    blocks=[
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": (
+                                    f"❌ *Can't Make It* recorded for {driver_name.split()[0]}'s "
+                                    f"shift on {shift_date_str}. Dispatch has been notified."
+                                ),
+                            },
+                        },
+                    ],
+                )
+    except Exception as exc:
+        logger.warning("driver_decline_shift handler error: %s", exc)
+
+
+def _handle_driver_callout_from_dm(payload: dict, db: Session) -> None:
+    """Driver tapped 'Call Out' on their day-of Route Assignment DM.
+    Reuses the same tokenized callout link as the standing #nday-team-room
+    Call Out button (_handle_callout_button) rather than recording the
+    callout a second, different way — per this module's design, no
+    callout business logic lives here beyond issuing the token."""
+    try:
+        action = (payload.get("actions") or [{}])[0]
+        value = json.loads(action.get("value", "{}"))
+        shift_date_str = value.get("shift_date", "") or _default_shift_date()
+        driver_name = value.get("driver_name", "")
+        channel_id = payload.get("channel", {}).get("id", "")
+        user_id = payload.get("user", {}).get("id", "")
+
+        token = _issue_callout_token(driver_name, shift_date_str)
+        url = f"{FRONTEND_URL}/callout?token={token}"
+
+        _send_ephemeral(
+            channel_id, user_id,
+            f"Your personal absence report link — *only you can see this message.*\n\n"
+            f"<{url}|👆 Tap here to report your absence>\n\n"
+            f"_Expires in {TOKEN_TTL_HOURS} hours. Do not share this link._",
+        )
+
+        bot_token = os.getenv("SLACK_BOT_TOKEN")
+        if bot_token:
+            try:
+                from slack_sdk import WebClient as _WC
+                _WC(token=bot_token).chat_postMessage(
+                    channel=MGT_CHANNEL,
+                    text=(
+                        f"🚨 *{driver_name}* tapped Call Out from their route assignment "
+                        f"DM for {shift_date_str}."
+                    ),
+                )
+            except Exception as exc:
+                logger.warning("Mgt callout-from-dm notice failed: %s", exc)
+    except Exception as exc:
+        logger.warning("driver_callout_from_dm handler error: %s", exc)
 
 
 def _handle_eod_complete(payload: dict, db: Session) -> None:

@@ -2053,6 +2053,20 @@ def ensure_route_sheet_load_size_columns():
             pass  # Column already exists
 
 
+def ensure_driver_shift_dm_decline_column():
+    """Add declined_at to driver_shift_dms — added 2026-07-21 for the
+    Showtime DM's "Can't Make It" button (see send_driver_shift_dms() in
+    rostering.py)."""
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE driver_shift_dms ADD COLUMN declined_at DATETIME"))
+            else:
+                conn.execute(text("ALTER TABLE driver_shift_dms ADD COLUMN IF NOT EXISTS declined_at TIMESTAMP"))
+    except Exception:
+        pass  # Column already exists
+
+
 def ensure_user_auth_columns():
     """Add slack_user_id/reset_token/reset_token_expires_at to users —
     added 2026-07-17 for the invite/reset-password Dispatch Home flow."""
@@ -3012,6 +3026,7 @@ class DriverShiftDM(Base):
     arrival_confirmed = Column(Boolean, default=False)
     schedule_acked_at = Column(DateTime)   # when driver tapped 'I've Got My Schedule'
     eod_checklist_at = Column(DateTime)    # when driver tapped 'EOD Complete'
+    declined_at = Column(DateTime)         # when driver tapped 'Can't Make It' (Showtime DM)
 
     __table_args__ = (
         Index("idx_dsdm_date_driver", "shift_date", "driver_name"),

@@ -97,9 +97,6 @@ export default function OkamiCapacityPage() {
   const [error, setError] = useState('');
   const [justSubmitted, setJustSubmitted] = useState(false);
 
-  const [finalizing, setFinalizing] = useState(false);
-  const [finalizeError, setFinalizeError] = useState('');
-
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
   const loadToday = useCallback(async () => {
@@ -164,28 +161,6 @@ export default function OkamiCapacityPage() {
     }
   };
 
-  const handleFinalize = async () => {
-    setFinalizeError('');
-    setFinalizing(true);
-    try {
-      const res = await fetch(`${resolveApi()}/okami-capacity/finalize`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ log_id: today?.id, finalized_by: user?.username ?? 'ops' }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => null);
-        setFinalizeError(err?.detail ?? 'Failed to finalize.');
-        return;
-      }
-      await loadToday();
-    } catch {
-      setFinalizeError('Network error — please try again.');
-    } finally {
-      setFinalizing(false);
-    }
-  };
-
   const isFinalized = !!today?.finalized_at;
 
   return (
@@ -217,53 +192,43 @@ export default function OkamiCapacityPage() {
             </div>
           )}
 
-          {today && (
+          {today && isFinalized && (
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 mb-6">
-              {isFinalized ? (
-                <>
-                  <p className="font-semibold text-slate-900 mb-3">
-                    🔒 Finalized at {new Date(today.finalized_at as string).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
-                    {today.finalized_by ? ` by ${today.finalized_by}` : ''}
-                  </p>
-                  <div className="space-y-2 text-sm">
-                    <DaCoverageBlock today={today} />
-                    <div className="flex items-center justify-between">
-                      <span>Van coverage — need {today.required_van_count}, effectively have {today.effective_available_vans}</span>
-                      <StatusPill status={today.van_status} />
-                    </div>
-                    {today.van_status === 'short' && (
-                      <div className="bg-red-50 border border-red-200 rounded p-2 text-xs text-red-700">
-                        Short by {today.van_deficit}. Grounded: {today.grounded_vans_snapshot?.length
-                          ? today.grounded_vans_snapshot.map((v) => v.vehicle_name || v.vin).join(', ')
-                          : 'none currently flagged'}
-                      </div>
-                    )}
-                    {today.frt != null && (
-                      <div className="flex items-center justify-between">
-                        <span>FRT (Flex Up Target) — {today.frt}</span>
-                        <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${
-                          today.frt_breached ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
-                        }`}>
-                          {today.frt_breached ? 'BREACHED' : 'MET'}
-                        </span>
-                      </div>
-                    )}
+              <p className="font-semibold text-slate-900 mb-3">
+                🔒 Finalized at {new Date(today.finalized_at as string).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                {today.finalized_by ? ` by ${today.finalized_by}` : ''}
+              </p>
+              <div className="space-y-2 text-sm">
+                <DaCoverageBlock today={today} />
+                <div className="flex items-center justify-between">
+                  <span>Van coverage — need {today.required_van_count}, effectively have {today.effective_available_vans}</span>
+                  <StatusPill status={today.van_status} />
+                </div>
+                {today.van_status === 'short' && (
+                  <div className="bg-red-50 border border-red-200 rounded p-2 text-xs text-red-700">
+                    Short by {today.van_deficit}. Grounded: {today.grounded_vans_snapshot?.length
+                      ? today.grounded_vans_snapshot.map((v) => v.vehicle_name || v.vin).join(', ')
+                      : 'none currently flagged'}
                   </div>
-                  <p className="text-xs text-slate-400 mt-3">Corrected a number above? Finalizing again re-runs these checks and re-sends notifications.</p>
-                </>
-              ) : (
-                <p className="text-sm text-slate-500">Numbers logged but not finalized yet — finalizing posts the summary to #nday-mgt and runs the coverage checks.</p>
-              )}
+                )}
+                {today.frt != null && (
+                  <div className="flex items-center justify-between">
+                    <span>FRT (Flex Up Target) — {today.frt}</span>
+                    <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${
+                      today.frt_breached ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+                    }`}>
+                      {today.frt_breached ? 'BREACHED' : 'MET'}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <p className="text-xs text-slate-400 mt-3">Corrected a number? Submit again below — it re-runs these checks and re-sends the #nday-mgt report.</p>
+            </div>
+          )}
 
-              {finalizeError && <p className="text-sm text-red-600 font-medium mt-2">{finalizeError}</p>}
-
-              <button
-                onClick={handleFinalize}
-                disabled={finalizing}
-                className="w-full mt-4 py-2.5 bg-slate-800 text-white rounded font-semibold text-sm hover:bg-slate-900 disabled:opacity-50"
-              >
-                {finalizing ? 'Finalizing...' : isFinalized ? 'Re-finalize OKAMI' : 'Finalize OKAMI'}
-              </button>
+          {today && !isFinalized && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6 text-sm text-amber-800">
+              Capacity (base + 4x4) still needed — the #nday-mgt report and coverage checks run automatically once both are submitted.
             </div>
           )}
 
@@ -336,14 +301,14 @@ export default function OkamiCapacityPage() {
               </div>
 
               {error && <p className="text-sm text-red-600 font-medium">{error}</p>}
-              {justSubmitted && !error && <p className="text-sm text-green-600 font-medium">Logged.</p>}
+              {justSubmitted && !error && <p className="text-sm text-green-600 font-medium">Submitted.</p>}
 
               <button
                 type="submit"
                 disabled={submitting}
                 className="w-full py-3 bg-blue-600 text-white rounded font-bold text-base hover:bg-blue-700 disabled:opacity-50"
               >
-                {submitting ? 'Logging...' : 'Log Okami Capacity'}
+                {submitting ? 'Submitting...' : 'Submit Okami Capacity'}
               </button>
             </form>
           </div>

@@ -301,7 +301,17 @@ def submit_okami_capacity(payload: OkamiCapacitySubmission, db: Session = Depend
     db.add(row)
     db.commit()
     db.refresh(row)
-    return _serialize(row)
+
+    # Submit IS the last step as of 2026-07-20 — no separate Finalize
+    # button anymore. Runs the same coverage checks + #nday-mgt broadcast
+    # finalize() used to require a second click for, automatically, the
+    # moment both capacity numbers are in (nothing to check against
+    # without capacity_total). Re-submitting simply re-runs this and
+    # replaces the report, same as the old "finalize again" behavior.
+    if row.capacity_total is not None:
+        return _run_finalize_checks_and_notify(row, db, payload.submitted_by)
+
+    return {"submission": _serialize(row), "notifications": None}
 
 
 @router.get("/today")
@@ -350,6 +360,11 @@ def update_settings(payload: OkamiSettingsUpdate, db: Session = Depends(get_db))
 
 @router.post("/finalize")
 def finalize(payload: FinalizeRequest, db: Session = Depends(get_db)):
+    """Kept as a standalone endpoint for manual re-runs (e.g. settings
+    changed after submit and someone wants the checks re-evaluated
+    without resubmitting numbers) — submit_okami_capacity() now calls
+    the same underlying logic automatically as of 2026-07-20, so the
+    frontend no longer has a separate Finalize step in normal use."""
     row = (
         db.query(OkamiCapacityLog).filter(OkamiCapacityLog.id == payload.log_id).first()
         if payload.log_id else get_latest_for_date(db, datetime.now(PT).date())
@@ -358,7 +373,15 @@ def finalize(payload: FinalizeRequest, db: Session = Depends(get_db)):
         raise HTTPException(404, "No Okami capacity submission to finalize — submit numbers first.")
     if row.capacity_total is None:
         raise HTTPException(400, "Capacity (base + 4x4) must be entered before finalizing.")
+    return _run_finalize_checks_and_notify(row, db, payload.finalized_by)
 
+
+def _run_finalize_checks_and_notify(row: OkamiCapacityLog, db: Session, finalized_by: Optional[str]) -> dict:
+    """The actual coverage-check + #nday-mgt broadcast logic — shared by
+    the standalone /finalize endpoint and submit_okami_capacity()'s
+    automatic call (added 2026-07-20, no more separate Finalize step in
+    normal use). Caller must have already confirmed row.capacity_total
+    is set."""
     settings = _get_or_create_settings(db)
 
     # ── DA coverage (informational — no specified notification target) ──
@@ -376,7 +399,7 @@ def finalize(payload: FinalizeRequest, db: Session = Depends(get_db)):
     frt_breached = bool(row.frt is not None and row.capacity_total < row.frt)
 
     row.finalized_at = datetime.utcnow()
-    row.finalized_by = payload.finalized_by
+    row.finalized_by = finalized_by
     row.required_da_count = required_da
     row.da_status = da_status
     row.required_van_count = required_van

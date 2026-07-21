@@ -1056,15 +1056,20 @@ def check_route_code_reconciliation(for_date: date, pdf_data: List[Dict], db: Se
     (DOP and/or Route Sheet) mismatches Cortex by more than
     RECONCILIATION_THRESHOLD, naming the specific routes that are missing or
     extra so the station knows what to fix. Cortex itself is never
-    considered the problem."""
-    cortex_rows = get_latest_cortex_rows(db, for_date)
-    if not cortex_rows:
-        latest = db.query(func.max(Cortex.assignment_date)).scalar()
-        if latest:
-            cortex_rows = get_latest_cortex_rows(db, latest)
-    cortex_codes = _route_codes(cortex_rows)
+    considered the problem.
+
+    STRICTLY scoped to for_date's own Cortex data — no falling back to an
+    older date's Cortex when today's isn't in yet. Cortex routinely lands
+    after DOP/Route Sheet (DOP/Route Sheet ~8:47 AM, Cortex not until
+    ~9 AM most days per 2026-07-21), so a same-day run of check_and_notify()
+    can legitimately have DOP/Route Sheet but no Cortex yet. Comparing
+    against yesterday's Cortex there used to produce a false "mismatch"
+    alert every single day (route codes always differ day to day) instead
+    of correctly waiting for today's real Cortex file. Once Cortex actually
+    lands, a later call to check_and_notify() re-runs this with real data."""
+    cortex_codes = _route_codes(get_latest_cortex_rows(db, for_date))
     if not cortex_codes:
-        return {"status": "no_cortex_data"}
+        return {"status": "no_cortex_data_for_date", "date": for_date.isoformat()}
 
     dop_codes = _route_codes(get_latest_dop_rows(db, for_date))
     route_sheet_codes = _route_codes(pdf_data)

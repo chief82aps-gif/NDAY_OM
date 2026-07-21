@@ -64,7 +64,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from api.src.database import get_db, OkamiCapacityLog, OkamiSettings, Vehicle
+from api.src.database import get_db, OkamiCapacityLog, OkamiSettings, Vehicle, get_reminder_state, set_reminder_state
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/okami-capacity", tags=["okami-capacity"])
@@ -72,6 +72,20 @@ router = APIRouter(prefix="/okami-capacity", tags=["okami-capacity"])
 MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")     # #nday-mgt
 FLEET_CHANNEL = os.getenv("SLACK_FLEET_CHANNEL", "C0BJ8J5LGAU")  # #nday-fleet
 PT = ZoneInfo("America/Los_Angeles")
+
+# Reminder-only, never auto-finalizes (added 2026-07-20, explicit
+# decision) — finalize() does real work (recomputes coverage against
+# live settings/grounded-vans) that shouldn't happen unattended, so a
+# missed finalize just nags #nday-mgt on a repeating cadence instead.
+# The whole point of Okami is confirming FRT coverage before Amazon's
+# ECP — dispatch can only finalize once Amazon reports the ECP has run,
+# and it MUST be finalized by 1700 local (5 PM) regardless, per explicit
+# 2026-07-20 direction (confirmed 1700, not the initially-stated 1600).
+OKAMI_FINALIZE_REMINDER_ACTIVE = os.getenv("OKAMI_FINALIZE_REMINDER_ACTIVE", "false").lower() == "true"
+OKAMI_NAG_START_HOUR = 15
+OKAMI_NAG_START_MINUTE = 30    # nagging starts 3:30 PM
+OKAMI_DEADLINE_HOUR = 17       # hard deadline 5:00 PM ("aka ECP")
+OKAMI_NAG_INTERVAL_SECONDS = 300  # every 5 minutes until finalized
 
 
 def _fmt_time(dt: Optional[datetime]) -> str:
@@ -158,6 +172,64 @@ def get_latest_for_date(db: Session, day: date) -> Optional[OkamiCapacityLog]:
         .order_by(OkamiCapacityLog.created_at.desc())
         .first()
     )
+
+
+def run_okami_finalize_reminder(db: Session) -> dict:
+    """Called every ~60s from main.py's background loop (added
+    2026-07-20). The whole point of Okami is confirming FRT coverage
+    before Amazon's ECP — dispatch can only finalize once Amazon reports
+    the ECP has run, and it MUST be finalized by 1700 Pacific (5 PM,
+    "aka ECP") regardless. Starts nagging #nday-mgt at 3:30 PM, every 5
+    minutes, continuing (with an escalated tone) past the 5 PM deadline
+    until someone finalizes — fires even if nothing has been submitted
+    yet at all. Reminder only — never auto-finalizes (finalize() does
+    real work against live settings/grounded-vans that shouldn't happen
+    unattended)."""
+    if not OKAMI_FINALIZE_REMINDER_ACTIVE:
+        return {"status": "inactive"}
+
+    now = datetime.now(PT)
+    today = now.date()
+
+    if (now.hour, now.minute) < (OKAMI_NAG_START_HOUR, OKAMI_NAG_START_MINUTE):
+        return {"status": "before_window"}
+
+    row = get_latest_for_date(db, today)
+    if row and row.finalized_at:
+        return {"status": "already_finalized"}
+
+    now_utc = datetime.utcnow()
+    key = f"okami_finalize_nag_{today.isoformat()}"
+    raw = get_reminder_state(db, key)
+    last_sent_at = datetime.fromisoformat(raw["last_sent_at"]) if raw.get("last_sent_at") else None
+    if last_sent_at and (now_utc - last_sent_at).total_seconds() < OKAMI_NAG_INTERVAL_SECONDS:
+        return {"status": "throttled"}
+
+    client = _client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    if not row:
+        detail = "No Okami numbers have been submitted yet today."
+    else:
+        detail = f"{row.submitted_by or 'ops'} logged numbers at {_fmt_time(row.created_at)}, but it's still not finalized."
+
+    overdue = now.hour >= OKAMI_DEADLINE_HOUR
+    prefix = (
+        ":rotating_light: *Okami is PAST the 5:00 PM (ECP) deadline and still not finalized* :rotating_light:"
+        if overdue else
+        ":alarm_clock: *Okami must be finalized by 5:00 PM (ECP)*"
+    )
+    text = f"{prefix}\n{detail}\nFinalize as soon as the ECP has run."
+
+    try:
+        client.chat_postMessage(channel=MGT_CHANNEL, text=text)
+    except Exception as exc:
+        logger.warning("Okami finalize reminder post failed: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+    set_reminder_state(db, key, {"last_sent_at": now_utc.isoformat()})
+    return {"status": "sent"}
 
 
 def _grounded_vans(db: Session) -> list[dict]:

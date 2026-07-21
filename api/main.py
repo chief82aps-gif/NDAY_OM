@@ -95,6 +95,25 @@ async def _mgt_reminders_loop():
         await asyncio.sleep(60)
 
 
+async def _okami_finalize_reminder_loop():
+    """Every 60 s — delegates to okami_capacity.run_okami_finalize_reminder(),
+    which nags #nday-mgt every 5 min from 3:30 PM until Okami is finalized
+    (hard deadline 5 PM / ECP). Gated by OKAMI_FINALIZE_REMINDER_ACTIVE
+    (default false)."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(okami_capacity.run_okami_finalize_reminder, db)
+            except Exception as exc:
+                logger.warning("Okami finalize reminder loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("Okami finalize reminder loop outer error: %s", exc)
+        await asyncio.sleep(60)
+
+
 async def _misrouted_file_watch_loop():
     """Every 60 s — delegates to ops_ingest.run_misrouted_file_watch(),
     which only actually scans every 15 min (own DB-backed throttle). Checks
@@ -393,6 +412,7 @@ async def startup():
     asyncio.create_task(_grounded_van_watcher_loop())
     asyncio.create_task(_wave_lead_watcher_loop())
     asyncio.create_task(_mgt_reminders_loop())
+    asyncio.create_task(_okami_finalize_reminder_loop())
     asyncio.create_task(_misrouted_file_watch_loop())
     asyncio.create_task(_schedule_escalation_loop())
     asyncio.create_task(_schedule_gap_alert_loop())

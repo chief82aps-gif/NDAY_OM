@@ -176,6 +176,35 @@ changing):
 - `driver_lead_schedule.py` / `LEAD_ROUTING_ACTIVE` — separate,
   unrelated feature, stays off
 
+## Driver-Slack linking — locked 2026-07-21
+
+Active roster verified at 101/101 linked (100%) against production on
+2026-07-21: live Slack `users.list` roster + `AssociateData` bridge
+match (`best_slack_match_via_associates()`) took it from 84/107 → the
+final two holdouts were resolved individually — one terminated
+(`Matthew Jonah Gronostalski`, was never actually active), one manually
+linked via `PATCH /drivers/{id}` after the user found him directly in
+Slack (`Victor Hugo Arteaga Sarmiento`, still shows "Invited member" —
+pending his own invite acceptance, not a linking-logic problem).
+**Do not modify without explicit authorization**:
+
+- `api/src/driver_matching.py` — `best_ssn_match()`,
+  `best_slack_match()`, `best_slack_match_via_associates()`,
+  `load_ssn()`, `load_slack()`, `load_associates()`
+- `api/src/routes/drivers.py` — `import_ssn_slack()`,
+  `update_driver()`, `terminate_driver()`
+
+**Explicitly NOT covered by this lock** (still open, expected to keep
+changing):
+
+- `run_associate_data_reminder()` / `notify_new_unlinked_drivers()`
+  (both new 2026-07-21, both gated off by `ASSOCIATE_DATA_REMINDER_ACTIVE`
+  / `UNLINKED_DRIVER_ALERT_ACTIVE`, default `false`) — not yet confirmed
+  live
+- Ongoing per-driver link maintenance (new hires from schedule uploads,
+  terminations) is expected and not itself a "modification" of the
+  matching logic
+
 ## Production safety gates — do not flip without explicit sign-off
 
 Full detail: `Governance/ROSTERING_DM_RULES.md`.

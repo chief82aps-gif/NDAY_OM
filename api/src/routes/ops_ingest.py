@@ -720,6 +720,7 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
                         r.payroll_name: r
                         for r in db.query(DRE).filter(DRE.payroll_name.in_(list(all_names))).all()
                     }
+                    newly_created_names = []
                     for name in all_names:
                         seen_date = last_seen_by_name.get(name)
                         row = existing_rows.get(name)
@@ -734,7 +735,14 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
                                 payroll_name=name, is_active=True, ssn_last4="1234",
                                 source="schedule_upload", last_seen_on_schedule=seen_date,
                             ))
+                            newly_created_names.append(name)
                     db.commit()
+                    if newly_created_names:
+                        try:
+                            from api.src.routes.drivers import notify_new_unlinked_drivers
+                            notify_new_unlinked_drivers(newly_created_names)
+                        except Exception as e:
+                            logger.warning("New-driver Slack notice failed: %s", e)
                     try:
                         flagged = flag_stale_driver_profiles(db)
                         if flagged:

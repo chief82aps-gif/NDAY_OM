@@ -21,7 +21,10 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from api.src.database import get_db, DriverRosterEntry, flag_stale_driver_profiles
+from api.src.database import (
+    get_db, DriverRosterEntry, flag_stale_driver_profiles,
+    get_reminder_state, set_reminder_state,
+)
 from api.src.driver_matching import (
     load_ssn, load_slack, load_associates,
     best_ssn_match, best_slack_match, best_slack_match_via_associates,
@@ -29,6 +32,110 @@ from api.src.driver_matching import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/drivers", tags=["drivers"])
+
+MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")     # #nday-mgt
+
+
+def _slack_client():
+    token = os.getenv("SLACK_BOT_TOKEN")
+    if not token:
+        return None
+    from slack_sdk import WebClient
+    return WebClient(token=token)
+
+
+# Weekly nag to HR/#nday-mgt to re-upload the Amazon associate roster
+# export ("AssociateData (N).csv") so the Slack-linking bridge
+# (best_slack_match_via_associates) keeps working for new hires — added
+# 2026-07-21 per explicit request. Gated off by default like the other
+# reminder loops (Okami finalize) until confirmed working.
+ASSOCIATE_DATA_REMINDER_ACTIVE = os.getenv("ASSOCIATE_DATA_REMINDER_ACTIVE", "false").lower() == "true"
+ASSOCIATE_DATA_STALE_DAYS = 7
+LAST_ASSOCIATE_UPLOAD_KEY = "associate_data_last_upload"
+ASSOCIATE_DATA_REMINDER_KEY = "associate_data_weekly_reminder"
+
+# Proactive "this driver isn't in Slack yet" notice, fired the moment a
+# new DriverRosterEntry is auto-created from a schedule upload (see
+# ops_ingest.py) — a brand-new driver can never already have a Slack
+# link at creation time (linking is a separate backfill process), so
+# "new driver created" and "new unlinked driver" are the same event.
+UNLINKED_DRIVER_ALERT_ACTIVE = os.getenv("UNLINKED_DRIVER_ALERT_ACTIVE", "false").lower() == "true"
+
+
+def notify_new_unlinked_drivers(names: list[str]) -> None:
+    """Post a one-time #nday-mgt notice for drivers newly auto-created
+    from a schedule upload — they won't be Slack-linked until the next
+    associate-data import. Best-effort: never raises into the caller's
+    ingest path."""
+    if not UNLINKED_DRIVER_ALERT_ACTIVE or not names:
+        return
+    try:
+        client = _slack_client()
+        if not client:
+            return
+        names_list = "\n".join(f"• {n}" for n in names)
+        client.chat_postMessage(
+            channel=MGT_CHANNEL,
+            text=(
+                f"👋 *New driver{'s' if len(names) > 1 else ''} not yet in Slack*\n"
+                f"{names_list}\n"
+                f"Just picked up off today's schedule upload — not linked to a Slack "
+                f"account yet. They'll link automatically on the next Associate Data "
+                f"import, or can be added manually via /drivers/import-ssn-slack."
+            ),
+        )
+    except Exception as e:
+        logger.warning("Unlinked-driver Slack notice failed: %s", e)
+
+
+def run_associate_data_reminder(db: Session) -> dict:
+    """Nags #nday-mgt weekly if the Amazon associate roster export
+    hasn't been re-uploaded via /drivers/import-ssn-slack in
+    ASSOCIATE_DATA_STALE_DAYS+ days. Reminder-only — never re-runs the
+    import itself. Call on a periodic loop (see main.py)."""
+    if not ASSOCIATE_DATA_REMINDER_ACTIVE:
+        return {"status": "inactive"}
+
+    upload_state = get_reminder_state(db, LAST_ASSOCIATE_UPLOAD_KEY)
+    last_uploaded_at = upload_state.get("last_uploaded_at")
+    now = datetime.utcnow()
+
+    if last_uploaded_at:
+        last_dt = datetime.fromisoformat(last_uploaded_at)
+        stale = (now - last_dt).days >= ASSOCIATE_DATA_STALE_DAYS
+    else:
+        stale = True  # never uploaded at all
+
+    if not stale:
+        return {"status": "not_due", "last_uploaded_at": last_uploaded_at}
+
+    nag_state = get_reminder_state(db, ASSOCIATE_DATA_REMINDER_KEY)
+    last_nagged_at = nag_state.get("last_nagged_at")
+    if last_nagged_at:
+        last_nag_dt = datetime.fromisoformat(last_nagged_at)
+        if (now - last_nag_dt).days < ASSOCIATE_DATA_STALE_DAYS:
+            return {"status": "already_nagged_this_week", "last_nagged_at": last_nagged_at}
+
+    try:
+        client = _slack_client()
+        if client:
+            when = f"since {last_dt.date().isoformat()}" if last_uploaded_at else "no upload on record"
+            client.chat_postMessage(
+                channel=MGT_CHANNEL,
+                text=(
+                    f"📋 *Weekly reminder: Associate Data upload*\n"
+                    f"The Amazon associate/Transporter roster export hasn't been "
+                    f"re-uploaded in {ASSOCIATE_DATA_STALE_DAYS}+ days ({when}). "
+                    f"Re-upload the latest `AssociateData (N).csv` via "
+                    f"/drivers/import-ssn-slack so new hires keep linking to Slack "
+                    f"correctly."
+                ),
+            )
+    except Exception as e:
+        logger.warning("Associate Data reminder Slack post failed: %s", e)
+
+    set_reminder_state(db, ASSOCIATE_DATA_REMINDER_KEY, {"last_nagged_at": now.isoformat()})
+    return {"status": "nagged", "last_uploaded_at": last_uploaded_at}
 
 
 def _serialize(r: DriverRosterEntry) -> dict:
@@ -256,6 +363,10 @@ def import_ssn_slack(
 
         if not dry_run:
             db.commit()
+            if associate_rows:
+                set_reminder_state(db, LAST_ASSOCIATE_UPLOAD_KEY, {
+                    "last_uploaded_at": datetime.utcnow().isoformat(),
+                })
 
         return {
             "status": "applied" if not dry_run else "dry_run",

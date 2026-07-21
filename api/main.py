@@ -114,6 +114,25 @@ async def _okami_finalize_reminder_loop():
         await asyncio.sleep(60)
 
 
+async def _associate_data_reminder_loop():
+    """Every 60 s — delegates to drivers.run_associate_data_reminder(),
+    which nags #nday-mgt weekly if the Amazon associate roster export
+    hasn't been re-uploaded via /drivers/import-ssn-slack. Gated by
+    ASSOCIATE_DATA_REMINDER_ACTIVE (default false)."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(drivers.run_associate_data_reminder, db)
+            except Exception as exc:
+                logger.warning("Associate Data reminder loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("Associate Data reminder loop outer error: %s", exc)
+        await asyncio.sleep(60)
+
+
 async def _misrouted_file_watch_loop():
     """Every 60 s — delegates to ops_ingest.run_misrouted_file_watch(),
     which only actually scans every 15 min (own DB-backed throttle). Checks
@@ -413,6 +432,7 @@ async def startup():
     asyncio.create_task(_wave_lead_watcher_loop())
     asyncio.create_task(_mgt_reminders_loop())
     asyncio.create_task(_okami_finalize_reminder_loop())
+    asyncio.create_task(_associate_data_reminder_loop())
     asyncio.create_task(_misrouted_file_watch_loop())
     asyncio.create_task(_schedule_escalation_loop())
     asyncio.create_task(_schedule_gap_alert_loop())

@@ -998,6 +998,12 @@ class RouteSheetEntry(Base):
     stage = Column(String(100))
     driver_name = Column(String(255))
     source_file = Column(String(255))
+    # Load-size signal for electric-van-shortage substitution (added
+    # 2026-07-20) — total_bags = tote count, oversized_count = overflow
+    # (oversize package) entry count. See assign_vans_for_routes()'s
+    # electric-shortage handling in route_assignment.py.
+    total_bags = Column(Integer)
+    oversized_count = Column(Integer)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
@@ -1397,6 +1403,32 @@ class DriverScheduleEntry(Base):
 
     __table_args__ = (
         Index('idx_schedule_date_driver', 'schedule_date', 'driver_name'),
+    )
+
+
+class DailyLeadAssignment(Base):
+    """One row per lead, per scope, per day — the data-driven replacement
+    for rostering.py's hardcoded _wave_lead_name() weekday dict. Resolution
+    always checks the most recent row for (schedule_date, scope_type):
+    a manual_override always wins because it's written after any
+    default_rotation fallback the same day. See
+    Governance/SRD_DRIVER_SCHEDULE_PTT_MODULE.md §5.1/§6."""
+    __tablename__ = "daily_lead_assignments"
+
+    id = Column(Integer, primary_key=True)
+    schedule_date = Column(Date, nullable=False, index=True)
+    scope_type = Column(String(20), nullable=False, default="global")   # wave|route_group|station|global — only "global" is resolved against in Phase 1
+    scope_key = Column(String(100), default="")                        # e.g. "Wave 1" — unused while scope_type=global
+    driver_name = Column(String(255), nullable=False)
+    transporter_id = Column(String(50))
+    effective_start_time = Column(String(20))  # HH:MM, null = all day
+    effective_end_time = Column(String(20))
+    source = Column(String(20), default="manual_override")  # manual_override|schedule_ingest|default_rotation
+    created_by = Column(String(150))
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_lead_date_scope', 'schedule_date', 'scope_type', 'scope_key'),
     )
 
 
@@ -2002,6 +2034,21 @@ def ensure_route_duration_columns():
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN route_duration INTEGER"))
                 else:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS route_duration INTEGER"))
+        except Exception:
+            pass  # Column already exists
+
+
+def ensure_route_sheet_load_size_columns():
+    """Add total_bags/oversized_count to route_sheet_entries — added
+    2026-07-20 for electric-van-shortage substitution (see
+    assign_vans_for_routes() in route_assignment.py)."""
+    for col in ("total_bags", "oversized_count"):
+        try:
+            with engine.begin() as conn:
+                if DATABASE_URL.startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE route_sheet_entries ADD COLUMN {col} INTEGER"))
+                else:
+                    conn.execute(text(f"ALTER TABLE route_sheet_entries ADD COLUMN IF NOT EXISTS {col} INTEGER"))
         except Exception:
             pass  # Column already exists
 

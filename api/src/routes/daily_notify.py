@@ -426,12 +426,14 @@ def ingest_route_sheet_bytes(content: bytes, filename: str) -> Tuple[List[Dict],
     for an entire day — see Governance/DOP_ROUTE_SHEET_INGEST_RULES.md.
 
     Returns (pdf_data, error) where pdf_data is a list of
-    {route_code, stage, wave_time} dicts — the same shape build_daily_
-    assignments()/RouteSheetEntry already expect. The shared parser also
-    extracts service_type, bags, overflow, and total_packages per
-    Governance/Route Sheet Definition.pptx, but none of that is consumed
-    here yet — pulling it into the daily pipeline is a separate change to
-    flag explicitly before making, not something to fold in silently here.
+    {route_code, stage, wave_time, total_bags, oversized_count} dicts —
+    the same shape build_daily_assignments()/RouteSheetEntry expect.
+    total_bags/oversized_count (added 2026-07-20, explicit go-ahead) feed
+    assign_vans_for_routes()'s electric-van-shortage substitution — the
+    shared parser already extracted these per Governance/Route Sheet
+    Definition.pptx, they just weren't consumed until now. service_type
+    and the raw bag/overflow line items are still not pulled in — that
+    remains a separate change to flag explicitly before making.
 
     Per Governance/Route Sheet Definition.pptx and VAN_INGEST_RULES.md:
     Amazon's Route Sheet template does NOT contain a van/unit number, and
@@ -455,7 +457,13 @@ def ingest_route_sheet_bytes(content: bytes, filename: str) -> Tuple[List[Dict],
             )
 
         pdf_data = [
-            {"route_code": r.route_code, "stage": r.staging_location, "wave_time": r.wave_time}
+            {
+                "route_code": r.route_code,
+                "stage": r.staging_location,
+                "wave_time": r.wave_time,
+                "total_bags": r.total_bags,
+                "oversized_count": len(r.overflow),
+            }
             for r in records if r.route_code
         ]
         if not pdf_data:
@@ -1253,6 +1261,8 @@ def check_and_notify(
                             # van/unit number; see ingest_route_sheet_bytes().
                             wave_time=row.get("wave_time"),
                             stage=row.get("stage"),
+                            total_bags=row.get("total_bags"),
+                            oversized_count=row.get("oversized_count"),
                             source_file=rs_file["name"],
                         ))
                 db.add(SlackIngestLog(

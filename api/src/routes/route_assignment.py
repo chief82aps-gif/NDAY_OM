@@ -39,13 +39,23 @@ from api.src.database import (
     get_db, SessionLocal,
     Cortex, DOP, Vehicle, DriverRosterEntry, DailyRouteAssignment,
     QualityMetricDriver, QualityMetricSnapshot, DriverCallout,
-    get_latest_dop_rows, get_latest_cortex_rows,
+    RouteSheetEntry, get_latest_dop_rows, get_latest_cortex_rows,
+    get_latest_route_sheet_rows,
 )
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/route-assignment", tags=["route-assignment"])
 
 APP_URL = os.getenv("APP_URL", "https://nday-om.vercel.app")
+MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
+
+
+def _slack_client():
+    token = os.getenv("SLACK_BOT_TOKEN")
+    if not token:
+        return None
+    from slack_sdk import WebClient
+    return WebClient(token=token)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Standing rank (higher = better)
@@ -267,6 +277,117 @@ def _assign_van(
     return None, None, "no_van_available"
 
 
+_ICE_SUBSTITUTE_SERVICE_TYPE = "Standard Parcel - Extra Large Van - US"
+
+
+def _load_route_sheet_load_sizes(target: date, db: Session) -> dict[str, tuple[int, int]]:
+    """{route_code: (total_bags, oversized_count)} from today's Route Sheet
+    — the load-size signal used to decide which electric routes keep a
+    real EDV vs. get an ICE/XL substitute when EDVs run short (see
+    assign_vans_for_routes()). Missing/unparsed values default to 0."""
+    rows = get_latest_route_sheet_rows(db, target)
+    return {
+        r.route_code.upper(): (r.total_bags or 0, r.oversized_count or 0)
+        for r in rows if r.route_code
+    }
+
+
+def _adjacent_run_length(route_code: str, all_route_numbers: set[int]) -> int:
+    """Count how many OTHER routes in today's route list have a directly
+    consecutive route number next to this one (walking outward in both
+    directions until the run breaks) — e.g. if today's routes include
+    120-125, CX122's run length is 5 (the other 5 routes in that
+    contiguous block). Used to judge whether a route's load could
+    realistically be redistributed to its geographic neighbors."""
+    from api.src.routes.route_bands import _route_number
+    n = _route_number(route_code)
+    if n is None:
+        return 0
+    run = {n}
+    step = n - 1
+    while step in all_route_numbers:
+        run.add(step)
+        step -= 1
+    step = n + 1
+    while step in all_route_numbers:
+        run.add(step)
+        step += 1
+    return len(run) - 1
+
+
+def _rank_unassigned_for_redistribution(
+    unassigned: list[tuple[str, Optional[str], str]],
+    all_route_codes: list[str],
+    load_sizes: dict[str, tuple[int, int]],
+) -> list[tuple[str, str, int, int]]:
+    """For routes that got NO vehicle at all (real EDV or ICE/XL
+    substitute both exhausted) — rank which one(s) are the best candidate
+    to formally leave unassigned so its packages/totes can be manually
+    redistributed to geographically-adjacent routes at loadout. Prefers a
+    route with >=4 directly-adjacent route numbers in today's list
+    (smallest tote+oversized count among those); falls back to whichever
+    unassigned route has the MOST adjacent routes if none reaches 4.
+    Returns [(route_code, driver_identity, load_size, adjacent_count), ...]
+    sorted best-candidate-first — does not change any van assignment,
+    purely a reporting/decision-support signal."""
+    from api.src.routes.route_bands import _route_number
+    all_numbers = {n for code in all_route_codes if (n := _route_number(code)) is not None}
+
+    scored = []
+    for route_code, driver_identity, _service_type in unassigned:
+        bags, oversized = load_sizes.get(route_code.upper(), (0, 0))
+        adjacent = _adjacent_run_length(route_code, all_numbers)
+        scored.append((route_code, driver_identity or "", bags + oversized, adjacent))
+
+    with_four_plus = [s for s in scored if s[3] >= 4]
+    if with_four_plus:
+        with_four_plus.sort(key=lambda s: s[2])  # smallest load first
+        return with_four_plus
+    scored.sort(key=lambda s: (-s[3], s[2]))  # most adjacent first, then smallest load
+    return scored
+
+
+def _post_electric_van_shortage_warning(
+    substitutions: list[tuple[str, str, str, int, int]],
+    unassigned_ranked: Optional[list[tuple[str, str, int, int]]] = None,
+) -> None:
+    """#nday-mgt heads-up for every electric route that had to take an
+    ICE/XL van instead of a real EDV, per explicit 2026-07-20 decision:
+    fully automatic substitution, notify after the fact rather than gate
+    on approval, so dispatch can watch these specific routes at loadout.
+
+    unassigned_ranked (also 2026-07-20): if the fleet is fully out —
+    no real EDV and no ICE/XL substitute left — this names the routes
+    with nothing at all, ranked by how redistributable their load is
+    (route-number adjacency + tote/oversized count), so dispatch has a
+    starting recommendation instead of an unordered list of problems."""
+    client = _slack_client()
+    if not client:
+        return
+    lines = [
+        f"• *{route_code}* ({driver_name or 'unassigned'}) → *{van_name}* "
+        f"({bags} totes, {oversized} oversized)"
+        for route_code, driver_name, van_name, bags, oversized in substitutions
+    ]
+    text = (
+        f":warning: *Electric van shortage — {len(substitutions)} route(s) got an ICE/XL substitute*\n"
+        + "\n".join(lines)
+        + "\nKeep an eye on these at loadout."
+    )
+    if unassigned_ranked:
+        text += f"\n\n:rotating_light: *Fully out of vans — {len(unassigned_ranked)} route(s) have NO vehicle at all*\n"
+        for route_code, driver_name, load_size, adjacent in unassigned_ranked:
+            note = f"{adjacent} adjacent route(s) — good redistribution candidate" if adjacent >= 4 else (
+                f"only {adjacent} adjacent route(s)" if adjacent else "no adjacent routes — isolated, needs manual coverage"
+            )
+            text += f"• *{route_code}* ({driver_name or 'unassigned'}) — {load_size} totes+oversized, {note}\n"
+        text += "Top of this list is the best candidate to redistribute at loadout; the rest need direct dispatcher attention."
+    try:
+        client.chat_postMessage(channel=MGT_CHANNEL, text=text)
+    except Exception as exc:
+        logger.warning("Electric van shortage warning post failed: %s", exc)
+
+
 def assign_vans_for_routes(
     target: date,
     db: Session,
@@ -283,6 +404,14 @@ def assign_vans_for_routes(
     driver_name) — _load_van_affinity() falls back to driver_name the same
     way, so as long as both sides are consistent the 7-day lookup lines up.
 
+    Electric-van-shortage substitution (added 2026-07-20, explicit
+    go-ahead): electric routes are processed first, largest load (totes +
+    oversized packages from the Route Sheet) first, so the biggest routes
+    get first claim on the limited EDV pool. Any electric route that still
+    can't get a real EDV takes an ICE/XL substitute instead of going
+    unassigned, and every substitution is reported to #nday-mgt in one
+    batch message so dispatch can watch those routes at loadout.
+
     Returns {route_code: van_number} for every route a van was found for;
     routes with no eligible van (or no driver_identity) are simply absent
     from the result, same as a normal "no match" — callers should leave
@@ -290,13 +419,69 @@ def assign_vans_for_routes(
     """
     affinity = _load_van_affinity(target, db)
     fleet = _load_fleet(db)
+    load_sizes = _load_route_sheet_load_sizes(target, db)
     used_vans: set[str] = set()
     result: dict[str, str] = {}
-    for route_code, driver_identity, service_type in routes:
+    substitutions: list[tuple[str, str, str, int, int]] = []
+
+    def _load_size(route_code: str) -> int:
+        bags, oversized = load_sizes.get(route_code.upper(), (0, 0))
+        return bags + oversized
+
+    electric_routes = [r for r in routes if _is_electric_service(r[2])]
+    other_routes = [r for r in routes if not _is_electric_service(r[2])]
+
+    # Pass 1: real EDVs go to the biggest electric routes first.
+    electric_routes.sort(key=lambda r: _load_size(r[0]), reverse=True)
+    shortfall: list[tuple[str, Optional[str], str]] = []
+    for route_code, driver_identity, service_type in electric_routes:
         van_name, van_vin, _warning = _assign_van(service_type, driver_identity, affinity, fleet, used_vans)
         if van_name:
             result[route_code] = van_name
             used_vans.add(van_vin or van_name)
+        else:
+            # Electric routes' fallback chain is [exact service_type] only
+            # (no gas fallback — see _van_fallback_chain), so any failure
+            # here always means "no matching EDV was available" — electric
+            # and gas service_type strings essentially never text-overlap,
+            # so _assign_van's "electric_violation" branch rarely fires in
+            # practice; a bare failure IS the shortage signal here.
+            shortfall.append((route_code, driver_identity, service_type))
+
+    # Pass 2: ICE/XL substitutes go to the SMALLEST of the leftover
+    # electric routes first — if ICE availability is also tight, the
+    # BIGGEST unassigned route is the one left surfacing as needing real
+    # dispatcher attention, rather than losing out arbitrarily.
+    shortfall.sort(key=lambda r: _load_size(r[0]))
+    fully_unassigned: list[tuple[str, Optional[str], str]] = []
+    for route_code, driver_identity, service_type in shortfall:
+        sub_name, sub_vin, _sub_warning = _assign_van(
+            _ICE_SUBSTITUTE_SERVICE_TYPE, driver_identity, affinity, fleet, used_vans,
+        )
+        if sub_name:
+            result[route_code] = sub_name
+            used_vans.add(sub_vin or sub_name)
+            bags, oversized = load_sizes.get(route_code.upper(), (0, 0))
+            substitutions.append((route_code, driver_identity or "", sub_name, bags, oversized))
+        else:
+            # Fully out of vans for this route — no EDV, no ICE/XL left
+            # either. Ranked below by adjacency + load size so dispatch
+            # gets a redistribution recommendation, not just a bare list.
+            fully_unassigned.append((route_code, driver_identity, service_type))
+
+    for route_code, driver_identity, service_type in other_routes:
+        van_name, van_vin, _warning = _assign_van(service_type, driver_identity, affinity, fleet, used_vans)
+        if van_name:
+            result[route_code] = van_name
+            used_vans.add(van_vin or van_name)
+
+    if substitutions or fully_unassigned:
+        unassigned_ranked = None
+        if fully_unassigned:
+            all_route_codes = [r[0] for r in routes]
+            unassigned_ranked = _rank_unassigned_for_redistribution(fully_unassigned, all_route_codes, load_sizes)
+        _post_electric_van_shortage_warning(substitutions, unassigned_ranked)
+
     return result
 
 

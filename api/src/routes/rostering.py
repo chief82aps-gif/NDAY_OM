@@ -1850,6 +1850,47 @@ def send_day_of_dms(shift_date: date, db: Session) -> dict:
     }
 
 
+def send_single_day_of_dm(assignment_id: int, db: Session) -> dict:
+    """Resend the real, button-equipped day-of DM to one driver by
+    assignment id — e.g. a driver reports not receiving the first one.
+    Same content builder as send_day_of_dms() (_build_driver_dm), so this
+    can never drift from the batch send's format. Gated by
+    DRIVER_DM_ACTIVE like every other driver-facing send here."""
+    if not _DM_ACTIVE:
+        return {"status": "inactive", "note": "Set DRIVER_DM_ACTIVE=true on Render to enable driver DMs"}
+
+    a = db.query(DailyRouteAssignment).filter(DailyRouteAssignment.id == assignment_id).first()
+    if not a:
+        return {"status": "not_found", "assignment_id": assignment_id}
+
+    slack_id = _get_driver_slack_id(a.driver_name, db)
+    if not slack_id:
+        return {"status": "no_slack_id", "driver": a.driver_name}
+
+    client = _slack_client()
+    if not client:
+        return {"status": "no_slack_client"}
+
+    from api.src.routes.driver_lead_schedule import get_current_lead, LEAD_ROUTING_ACTIVE
+    wave_lead_name, wave_lead_slack_id, _lead_source = get_current_lead(a.assignment_date, db)
+    if not LEAD_ROUTING_ACTIVE:
+        wave_lead_slack_id = None
+    date_str = a.assignment_date.strftime("%A, %B %-d")
+    fallback_text, blocks = _build_driver_dm(a, wave_lead_name, date_str, wave_lead_slack_id)
+
+    try:
+        resp = client.chat_postMessage(channel=slack_id, text=fallback_text, blocks=blocks)
+        a.dm_sent = True
+        a.dm_sent_at = datetime.utcnow()
+        a.dm_message_ts = resp.get("ts")
+        a.dm_channel = slack_id
+        db.commit()
+        return {"status": "sent", "driver": a.driver_name}
+    except Exception as exc:
+        logger.warning("Single day-of DM resend failed for %s: %s", a.driver_name, exc)
+        return {"status": "error", "detail": str(exc)}
+
+
 def send_test_driver_dm(shift_date: date, sample_driver_name: str, target_slack_id: str, db: Session) -> dict:
     """Send ONE real driver's assignment DM content to an arbitrary reviewer
     (e.g. a manager doing a pre-launch check) for visual/content review.

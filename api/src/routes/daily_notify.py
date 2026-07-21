@@ -55,12 +55,12 @@ CORTEX_CHANNEL = os.getenv("CORTEX_NOTIFY_CHANNEL", "C0BE4ALL1EX")
 MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://nday-om.vercel.app")
 
-# Added 2026-07-16: send_all_dms()/send_sweeper_notifications() are a
-# separate, older driver-DM pipeline than rostering.py's — they had no
-# gate of their own and would fire real driver DMs any time check_and_notify()
-# ran, as soon as the master SLACK_NOTIFICATIONS_ACTIVE switch was on,
-# regardless of rostering.py's DRIVER_DM_ACTIVE flag. Same env var, same
-# semantics, now actually checked here too.
+# Added 2026-07-16: send_sweeper_notifications() (below) is a separate,
+# older driver-DM pipeline than rostering.py's — it had no gate of its
+# own and would fire real driver DMs any time check_and_notify() ran, as
+# soon as the master SLACK_NOTIFICATIONS_ACTIVE switch was on, regardless
+# of rostering.py's DRIVER_DM_ACTIVE flag. Same env var, same semantics,
+# now actually checked here too.
 _DM_ACTIVE = os.getenv("DRIVER_DM_ACTIVE", "false").lower() == "true"
 
 # Ops managers who receive DMs after DOP is detected each morning
@@ -688,66 +688,6 @@ def _tracked_fields(assignment: DailyRouteAssignment) -> dict:
     return {f: getattr(assignment, f) for f in _TRACKED_FIELDS}
 
 
-def send_driver_dm(assignment: DailyRouteAssignment, db: Session) -> bool:
-    """Send a Slack DM to the driver with their route details + confirmation link."""
-    client = _slack_client()
-    if not client:
-        return False
-
-    slack_id = _lookup_slack_id(assignment.driver_name, db)
-    if not slack_id:
-        return False
-
-    first = _first_name(assignment.driver_name or "Driver")
-    date_str = _fmt_date(assignment.assignment_date)
-    confirm_url = f"{FRONTEND_URL}/confirm?token={assignment.ack_token}"
-
-    show_time = _calc_show_time(assignment.wave or "")
-    return_time = _calc_return_time(assignment.wave or "", assignment.route_duration)
-
-    lines = [
-        f"Good morning, {first}!",
-        f"Here are your route details for *{date_str}*:",
-        "",
-    ]
-    if assignment.route_code:
-        lines.append(f"📍 *Route:* {assignment.route_code}")
-    if assignment.van_number:
-        lines.append(f"🚐 *Van:* {assignment.van_number}")
-    if assignment.stage_location:
-        lines.append(f"🏢 *Stage:* {assignment.stage_location}")
-    if show_time:
-        lines.append(f"⏰ *Show Time:* {show_time}")
-    if assignment.wave:
-        lines.append(f"🚦 *Wave:* {assignment.wave}")
-    if return_time:
-        lines.append(f"🏁 *Expected Return:* {return_time}")
-    if assignment.packages:
-        lines.append(f"📦 *Planned Packages:* {assignment.packages}")
-    lines += [
-        "",
-        "For wave lead info, connect on *Zello*.",
-        "",
-        f"✅ *Confirm attendance:* <{confirm_url}|Tap here>",
-    ]
-
-    try:
-        resp = client.chat_postMessage(
-            channel=slack_id,
-            text="\n".join(lines),
-        )
-        assignment.dm_sent = True
-        assignment.dm_sent_at = datetime.utcnow()
-        assignment.dm_message_ts = resp["ts"]
-        assignment.dm_channel = resp["channel"]
-        assignment.notified_snapshot = _tracked_fields(assignment)
-        db.commit()
-        return True
-    except Exception as exc:
-        logger.warning("DM send failed for %s: %s", assignment.driver_name, exc)
-        return False
-
-
 def send_driver_dm_update(assignment: DailyRouteAssignment, old_snapshot: dict, db: Session) -> bool:
     """Send a "your assignment changed" DM — used by rerun_route_assignments()
     for a driver who was already notified once, but one or more tracked
@@ -834,33 +774,6 @@ def send_driver_removal_dm(assignment: DailyRouteAssignment, db: Session) -> boo
     except Exception as exc:
         logger.warning("Removal DM send failed for %s: %s", assignment.driver_name, exc)
         return False
-
-
-def send_all_dms(for_date: date, db: Session) -> Dict:
-    """Send DMs to all drivers with unsent assignments for for_date.
-    Gated by DRIVER_DM_ACTIVE (default false)."""
-    if not _DM_ACTIVE:
-        return {"status": "inactive", "sent": 0, "skipped": 0, "total": 0}
-
-    assignments = (
-        db.query(DailyRouteAssignment)
-        .filter(
-            DailyRouteAssignment.assignment_date == for_date,
-            DailyRouteAssignment.dm_sent == False,
-            DailyRouteAssignment.driver_name != "",
-        )
-        .all()
-    )
-
-    sent = skipped = 0
-    for a in assignments:
-        ok = send_driver_dm(a, db)
-        if ok:
-            sent += 1
-        else:
-            skipped += 1
-
-    return {"sent": sent, "skipped": skipped, "total": len(assignments)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1312,7 +1225,12 @@ def check_and_notify(
         .count()
     )
     if has_assignments:
-        result["dms"] = send_all_dms(for_date, db)
+        # Button-equipped send (rostering.py) is the real driver-facing DM —
+        # see CLAUDE.md's "Driver-Slack linking" / scheduler-reconciliation
+        # notes. send_all_dms()'s plain-text/link DM is retired from this
+        # automatic path but left in place as a manual fallback endpoint.
+        from api.src.routes.rostering import send_day_of_dms
+        result["dms"] = send_day_of_dms(for_date, db)
 
     # ── 6. Send sweeper DMs (only after Cortex is present so the list is accurate)
     has_cortex = db.query(Cortex).filter(Cortex.assignment_date == for_date).count() > 0
@@ -1708,30 +1626,22 @@ def trigger_send_dms(date: Optional[str] = None, db: Session = Depends(get_db)):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date — use YYYY-MM-DD.")
 
-    result = send_all_dms(for_date, db)
+    from api.src.routes.rostering import send_day_of_dms
+    result = send_day_of_dms(for_date, db)
     return result
 
 
 @router.post("/daily-notify/resend-dm/{assignment_id}")
 def resend_single_dm(assignment_id: int, db: Session = Depends(get_db)):
     """Resend DM to a single driver (e.g., if they report not receiving it)."""
-    a = db.query(DailyRouteAssignment).filter(
-        DailyRouteAssignment.id == assignment_id
-    ).first()
-    if not a:
-        raise HTTPException(status_code=404, detail="Assignment not found.")
-
-    # Reset dm_sent so send_driver_dm will re-send
-    a.dm_sent = False
-    db.commit()
-
-    ok = send_driver_dm(a, db)
-    if not ok:
+    from api.src.routes.rostering import send_single_day_of_dm
+    result = send_single_day_of_dm(assignment_id, db)
+    if result.get("status") not in ("sent",):
         raise HTTPException(
             status_code=400,
-            detail="Could not send DM — driver may not have a verified Slack ID.",
+            detail=result.get("note") or f"Could not send DM: {result.get('status')}",
         )
-    return {"sent": True, "driver": a.driver_name}
+    return {"sent": True, "driver": result.get("driver")}
 
 
 @router.post("/daily-notify/send-sweepers")

@@ -515,13 +515,28 @@ def send_driver_shift_dms(shift_date: date, db: Session) -> dict:
 
 # ─── #nday-mgt summary matrix ────────────────────────────────────────────────
 
-def post_mgt_summary(shift_date: date, db: Session, grounded_vans: Optional[list[str]] = None) -> dict:
+def post_mgt_summary(shift_date: date, db: Session, grounded_vans: Optional[list[str]] = None, force: bool = False) -> dict:
     """
     Post (or update) the daily assignment matrix to #nday-mgt.
     Includes extras, van constraint risks, callout impacts, and grounded-van flags.
+
+    force=True clears any stored message ts for the day first, so this
+    posts a genuinely new message instead of chat_update-ing the existing
+    one in place — same silent-update problem post_showtime_summary's
+    docstring describes (Slack doesn't move an edited message or notify
+    on it, so a manual re-post request that just edits an hours-old
+    message looks like nothing happened). The automatic post-ingest call
+    (ops_ingest.py, same shift_date re-triggered as corrections land
+    through the day) deliberately keeps force=False — editing in place
+    there is the wanted behavior, not the bug.
     """
     if not _ACTIVE:
         return {"status": "inactive"}
+
+    if force:
+        existing_row = db.query(MgtSummaryPost).filter(MgtSummaryPost.shift_date == shift_date).first()
+        if existing_row:
+            existing_row.slack_ts = None
 
     suggestions = _build_roster_suggestion(shift_date, db)
     if not suggestions:
@@ -2205,13 +2220,15 @@ def trigger_driver_dms(shift_date: str, db: Session = Depends(get_db)):
 
 
 @router.post("/mgt-summary/{shift_date}")
-def trigger_mgt_summary(shift_date: str, db: Session = Depends(get_db)):
-    """Post (or refresh) the #nday-mgt roster matrix for shift_date."""
+def trigger_mgt_summary(shift_date: str, force: bool = False, db: Session = Depends(get_db)):
+    """Post (or refresh) the #nday-mgt roster matrix for shift_date.
+    Pass ?force=true for a genuinely new post instead of a silent
+    chat_update of an old message (see post_mgt_summary's docstring)."""
     try:
         target = date.fromisoformat(shift_date)
     except ValueError:
         raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
-    return post_mgt_summary(target, db)
+    return post_mgt_summary(target, db, force=force)
 
 
 @router.post("/assignment-matrix/{shift_date}")

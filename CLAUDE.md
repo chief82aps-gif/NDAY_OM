@@ -136,6 +136,46 @@ User confirmed `okami_capacity.py` (submit/finalize, the card-style
 **Do not modify this module unless explicitly asked to** — it's done,
 not a target for opportunistic cleanup while touching adjacent code.
 
+## Daily Scheduler (Showtime + Route Assignment + ingest) — locked 2026-07-21
+
+Verified end-to-end against real production data on 2026-07-21: 43/43
+routes ingested cleanly across DOP/Cortex/Route Sheet, 0 routes left
+without a van (28/28 electric routes correctly got real EDVs, 0
+warnings), 0 driver-name corruption, 0 false route-code mismatches once
+Cortex actually lands for the day. **Do not modify any of the following
+without explicit authorization** — this is done, not a target for
+opportunistic cleanup while touching adjacent code:
+
+- `api/src/routes/daily_notify.py` — `check_and_notify()`,
+  `build_daily_assignments()`, `ingest_dop_bytes()`,
+  `ingest_cortex_bytes()`, `ingest_route_sheet_bytes()`,
+  `check_route_code_reconciliation()`
+- `api/src/routes/rostering.py` — `post_showtime_summary()`,
+  `post_assignment_matrix()`
+- `api/src/routes/route_assignment.py` — `assign_vans_for_routes()`,
+  `_assign_van()`, the electric-van-shortage substitution and
+  adjacency-based redistribution ranking
+- `api/src/ingest/dop.py`, `cortex.py`, `route_sheets.py`, `fleet.py` —
+  the shared parsers
+- `api/src/routes/ops_ingest.py` — Fleet's separate ingest pipeline
+- `api/src/routes/uploads.py`'s diagnostic/recovery endpoints
+  (`/dop/debug`, `/cortex/debug`, `/clear-day`)
+
+**Explicitly NOT covered by this lock** (still open, expected to keep
+changing):
+
+- `post_mgt_summary()` in `rostering.py` — known silent-`chat_update`
+  bug, not yet fixed
+- The driver-DM sending path (`send_driver_shift_dms()`,
+  `send_day_of_dms()`, the older `send_all_dms()`/`send_driver_dm()`)
+  and the scheduler-reconciliation work connecting them — this is the
+  active, in-progress path to getting `DRIVER_DM_ACTIVE` live
+- The Slack Events API push endpoint (`/slack/events` in
+  `slack_interactions.py`) — built, not yet activated (needs Slack App
+  Event Subscriptions configured on Slack's side)
+- `driver_lead_schedule.py` / `LEAD_ROUTING_ACTIVE` — separate,
+  unrelated feature, stays off
+
 ## Production safety gates — do not flip without explicit sign-off
 
 Full detail: `Governance/ROSTERING_DM_RULES.md`.

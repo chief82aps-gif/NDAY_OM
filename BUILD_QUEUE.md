@@ -12,6 +12,15 @@ rather than re-deriving status from scratch each session.
 
 ## Cross-cutting facts (checked 2026-07-19, don't re-derive from stale memory)
 
+- **Locked 2026-07-21 — Daily Scheduler (Showtime + Route Assignment +
+  ingest).** Verified end-to-end against real production data: 43/43
+  routes ingested cleanly, 0 vans missing (28/28 electric routes got
+  real EDVs), 0 driver-name corruption, 0 false route-code mismatches.
+  Full file list and the explicit "not covered" exceptions (post_mgt_
+  summary's known bug, the driver-DM scheduler-reconciliation work still
+  in progress, the built-but-inactive Slack Events push endpoint,
+  driver_lead_schedule.py) are in `CLAUDE.md`'s "Daily Scheduler — locked
+  2026-07-21" section — read that before touching any of those files.
 - **Fixed 2026-07-19 — van assignments hardwired for real.** Root cause:
   Amazon's Route Sheet PDF no longer contains a van/unit number at all
   (confirmed by reading a real file — only a required vehicle class per

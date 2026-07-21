@@ -18,16 +18,20 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import date, datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
 
-from api.src.database import DriverRosterEntry, User
+from api.src.database import DriverRosterEntry, User, SlackIngestLog, OpsIngestJob
 from api.src.routes.document_routing import is_dispatch_staff
 from api.src.routes.slack_home import _client, _dm_driver
 from api.src.routes.slack_interactions import FRONTEND_URL
 from api.src.routes import auth as auth_routes
+
+PACIFIC = ZoneInfo("America/Los_Angeles")
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +47,72 @@ ROLE_OPTIONS = ["admin", "manager", "dispatcher", "driver"]
 INGEST_ALERTS_PIN_CALLBACK_ID = "dispatch_ingest_alerts_pin_submit"
 INGEST_ALERTS_PIN = "2468"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Time-of-day phases (added 2026-07-21) — organizes buttons by when they're
+# normally used, but deliberately NEVER hides one outside its window: every
+# button stays clickable all day. The point is orientation ("what phase are
+# we in"), not access control — dispatch needed these same tools well
+# outside their nominal windows constantly during this week's fixes, and
+# hiding them then would have actively gotten in the way.
+# ─────────────────────────────────────────────────────────────────────────────
+
+PHASES = [
+    {"key": "morning_ingest", "label": "📥 Morning Ingest & Route Prep", "window": "8–10 AM", "start": (8, 0), "end": (10, 0)},
+    {"key": "okami", "label": "📊 Okami / FRT", "window": "3:30–5 PM (ECP)", "start": (15, 30), "end": (17, 0)},
+]
+
+
+def _current_phase_key(now: datetime) -> Optional[str]:
+    t = (now.hour, now.minute)
+    for phase in PHASES:
+        if phase["start"] <= t < phase["end"]:
+            return phase["key"]
+    return None
+
+
+def _phase_header_text(phase: dict, current_key: Optional[str]) -> str:
+    marker = "  ▶ *now*" if phase["key"] == current_key else ""
+    return f"{phase['label']} _({phase['window']})_{marker}"
+
+
+def _ingest_status_today(db: Session) -> dict:
+    """{'dop': bool, 'cortex': bool, 'route_sheet': bool, 'fleet': bool} —
+    True means successfully ingested for today's Pacific date. DOP/Cortex/
+    Route Sheet are tracked in SlackIngestLog; Fleet goes through a
+    completely separate pipeline/table (ops_ingest.py's OpsIngestJob), not
+    SlackIngestLog — mixing them up would silently always show Fleet as
+    undetected."""
+    today = datetime.now(PACIFIC).date()
+    status = {"dop": False, "cortex": False, "route_sheet": False, "fleet": False}
+
+    logs = (
+        db.query(SlackIngestLog)
+        .filter(SlackIngestLog.ingest_date == today, SlackIngestLog.status == "success")
+        .all()
+    )
+    for log in logs:
+        if log.file_type in status:
+            status[log.file_type] = True
+
+    fleet_jobs = (
+        db.query(OpsIngestJob)
+        .filter(OpsIngestJob.detected_type == "fleet", OpsIngestJob.status == "complete")
+        .all()
+    )
+    status["fleet"] = any(j.detected_at and j.detected_at.date() == today for j in fleet_jobs)
+
+    return status
+
+
+def _ingest_status_block(db: Session) -> dict:
+    status = _ingest_status_today(db)
+    labels = {"dop": "DOP", "cortex": "Cortex", "route_sheet": "Route Sheet", "fleet": "Fleet"}
+    line = "   ".join(
+        f"{'✅' if status[key] else '⏳'} {label}"
+        for key, label in labels.items()
+    )
+    return {"type": "context", "elements": [{"type": "mrkdwn", "text": line}]}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Home tab builder
@@ -50,6 +120,12 @@ INGEST_ALERTS_PIN = "2468"
 
 def build_dispatch_home_view_blocks(db: Session) -> list:
     """Pure builder — no Slack API calls in here, so it's unit-testable."""
+    now = datetime.now(PACIFIC)
+    current_phase = _current_phase_key(now)
+
+    morning_phase = PHASES[0]
+    okami_phase = PHASES[1]
+
     return [
         {"type": "header", "text": {"type": "plain_text", "text": "🛠️ Dispatch Home", "emoji": True}},
         {
@@ -57,32 +133,19 @@ def build_dispatch_home_view_blocks(db: Session) -> list:
             "text": {"type": "mrkdwn", "text": "Tools for ops/dispatch staff. More lands here over time."},
         },
         {"type": "divider"},
-        {
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "action_id": "dispatch_open_okami",
-                    "text": {"type": "plain_text", "text": "📊 Enter OKAMI", "emoji": True},
-                    "style": "primary",
-                    "url": f"{FRONTEND_URL}/okami-capacity",
-                },
-                {
-                    "type": "button",
-                    "action_id": "dispatch_open_rescue",
-                    "text": {"type": "plain_text", "text": "🚨 Generate Rescue", "emoji": True},
-                    "style": "primary",
-                    "url": f"{FRONTEND_URL}/rescue/open",
-                },
-                {
-                    "type": "button",
-                    "action_id": "dispatch_open_crash_report",
-                    "text": {"type": "plain_text", "text": "🚗 Generate Crash Report", "emoji": True},
-                    "style": "danger",
-                    "url": f"{FRONTEND_URL}/crash-report",
-                },
-            ],
-        },
+
+        # ── Morning Ingest & Route Prep — status only, no buttons here.
+        # Time-phase headers are for orientation ("what phase are we in"),
+        # never for hiding a button outside its window — see module note.
+        {"type": "section", "text": {"type": "mrkdwn", "text": _phase_header_text(morning_phase, current_phase)}},
+        _ingest_status_block(db),
+        {"type": "divider"},
+
+        # ── Re-Submit / Re-Send — corrective re-triggers, always visible
+        # regardless of time of day (added 2026-07-21, separated out from
+        # the Morning Ingest phase on request: these get used all day when
+        # something needs correcting, not just during the morning window).
+        {"type": "section", "text": {"type": "mrkdwn", "text": "🔁 *Re-Submit / Re-Send*"}},
         {
             "type": "actions",
             "elements": [
@@ -116,6 +179,45 @@ def build_dispatch_home_view_blocks(db: Session) -> list:
                 },
             ],
         },
+        {"type": "divider"},
+
+        # ── Okami / FRT ──────────────────────────────────────────────────
+        {"type": "section", "text": {"type": "mrkdwn", "text": _phase_header_text(okami_phase, current_phase)}},
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": "dispatch_open_okami",
+                    "text": {"type": "plain_text", "text": "📊 Enter OKAMI", "emoji": True},
+                    "style": "primary",
+                    "url": f"{FRONTEND_URL}/okami-capacity",
+                },
+            ],
+        },
+        {"type": "divider"},
+
+        # ── Admin — always available, not tied to any phase ─────────────
+        {"type": "section", "text": {"type": "mrkdwn", "text": "🛠️ *Admin (always available)*"}},
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": "dispatch_open_rescue",
+                    "text": {"type": "plain_text", "text": "🚨 Generate Rescue", "emoji": True},
+                    "style": "primary",
+                    "url": f"{FRONTEND_URL}/rescue/open",
+                },
+                {
+                    "type": "button",
+                    "action_id": "dispatch_open_crash_report",
+                    "text": {"type": "plain_text", "text": "🚗 Generate Crash Report", "emoji": True},
+                    "style": "danger",
+                    "url": f"{FRONTEND_URL}/crash-report",
+                },
+            ],
+        },
         {
             "type": "actions",
             "elements": [
@@ -125,11 +227,6 @@ def build_dispatch_home_view_blocks(db: Session) -> list:
                     "text": {"type": "plain_text", "text": "🗑️ Remove Terminated Employees", "emoji": True},
                     "style": "danger",
                 },
-            ],
-        },
-        {
-            "type": "actions",
-            "elements": [
                 {
                     "type": "button",
                     "action_id": "dispatch_preview_driver_home",

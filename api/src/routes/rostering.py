@@ -2442,9 +2442,11 @@ def ack_schedule(
 
 def decline_shift(shift_date_str: str, driver_name: str, db: Session) -> bool:
     """Driver tapped 'Can't Make It' on their night-before Showtime DM.
-    Records the decline and flags #nday-mgt that the shift needs
-    coverage — this is a distinct signal from a same-day callout (which
-    goes through the existing tokenized /callout web form instead)."""
+    Only logs the DM-response timestamp (parallel to schedule_acked_at/
+    arrived_at) — the real write-up/compliance record and #nday-mgt
+    notification come from the actual callout submission
+    (attendance.py's /callout, via the tokenized link the Slack handler
+    sends immediately after calling this), not from here."""
     try:
         shift_date = date.fromisoformat(shift_date_str)
     except ValueError:
@@ -2460,20 +2462,6 @@ def decline_shift(shift_date_str: str, driver_name: str, db: Session) -> bool:
 
     rec.declined_at = datetime.utcnow()
     db.commit()
-
-    try:
-        client = _slack_client()
-        if client:
-            client.chat_postMessage(
-                channel=MGT_CHANNEL,
-                text=(
-                    f"⚠️ *{driver_name}* tapped *Can't Make It* for their shift on "
-                    f"{shift_date_str} — needs coverage."
-                ),
-            )
-    except Exception as exc:
-        logger.warning("Mgt decline notice failed: %s", exc)
-
     return True
 
 

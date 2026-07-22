@@ -701,28 +701,45 @@ def _handle_driver_decline_shift(payload: dict, db: Session) -> None:
         value = json.loads(action.get("value", "{}"))
         shift_date_str = value.get("shift_date", "")
         driver_name = value.get("driver_name", "")
+        channel_id = payload.get("channel", {}).get("id", "")
+        user_id = payload.get("user", {}).get("id", "")
 
+        # "Can't Make It" the night before is the same real-world event as
+        # a same-day callout, so it goes through the one real write-up/
+        # compliance pipeline (attendance.py's /callout — AttendanceEvent,
+        # points, missed-shift count, #nday-mgt notification) rather than
+        # a separate lighter-weight record. decline_shift() still logs a
+        # DM-response timestamp for quick "did they respond" visibility.
         from api.src.routes.rostering import decline_shift
         decline_shift(shift_date_str, driver_name, db)
 
-        channel_id = payload.get("channel", {}).get("id", "")
+        token = _issue_callout_token(driver_name, shift_date_str)
+        url = f"{FRONTEND_URL}/callout?token={token}"
+
+        _send_ephemeral(
+            channel_id, user_id,
+            f"Your personal absence report link — *only you can see this message.*\n\n"
+            f"<{url}|👆 Tap here to report your absence>\n\n"
+            f"_Expires in {TOKEN_TTL_HOURS} hours. Do not share this link._",
+        )
+
         msg_ts = payload.get("message", {}).get("ts", "")
         if channel_id and msg_ts:
-            token = os.getenv("SLACK_BOT_TOKEN")
-            if token:
+            bot_token = os.getenv("SLACK_BOT_TOKEN")
+            if bot_token:
                 from slack_sdk import WebClient as _WC
-                _WC(token=token).chat_update(
+                _WC(token=bot_token).chat_update(
                     channel=channel_id,
                     ts=msg_ts,
-                    text="Shift decline recorded.",
+                    text="Absence report link sent.",
                     blocks=[
                         {
                             "type": "section",
                             "text": {
                                 "type": "mrkdwn",
                                 "text": (
-                                    f"❌ *Can't Make It* recorded for {driver_name.split()[0]}'s "
-                                    f"shift on {shift_date_str}. Dispatch has been notified."
+                                    f"❌ *Can't Make It* — {driver_name.split()[0]}, check the "
+                                    f"message above for your private absence report link."
                                 ),
                             },
                         },
@@ -737,7 +754,9 @@ def _handle_driver_callout_from_dm(payload: dict, db: Session) -> None:
     Reuses the same tokenized callout link as the standing #nday-team-room
     Call Out button (_handle_callout_button) rather than recording the
     callout a second, different way — per this module's design, no
-    callout business logic lives here beyond issuing the token."""
+    callout business logic lives here beyond issuing the token. The real
+    /callout submission (attendance.py) is what notifies #nday-mgt, once
+    the driver actually completes the form — nothing extra posted here."""
     try:
         action = (payload.get("actions") or [{}])[0]
         value = json.loads(action.get("value", "{}"))
@@ -755,20 +774,6 @@ def _handle_driver_callout_from_dm(payload: dict, db: Session) -> None:
             f"<{url}|👆 Tap here to report your absence>\n\n"
             f"_Expires in {TOKEN_TTL_HOURS} hours. Do not share this link._",
         )
-
-        bot_token = os.getenv("SLACK_BOT_TOKEN")
-        if bot_token:
-            try:
-                from slack_sdk import WebClient as _WC
-                _WC(token=bot_token).chat_postMessage(
-                    channel=MGT_CHANNEL,
-                    text=(
-                        f"🚨 *{driver_name}* tapped Call Out from their route assignment "
-                        f"DM for {shift_date_str}."
-                    ),
-                )
-            except Exception as exc:
-                logger.warning("Mgt callout-from-dm notice failed: %s", exc)
     except Exception as exc:
         logger.warning("driver_callout_from_dm handler error: %s", exc)
 

@@ -291,7 +291,12 @@ export default function CalloutPage() {
     setSignErr('');
     const expectedName = driverStatus?.driver_name ?? driverName;
     if (!signatureName.trim()) { setSignErr('Please type your full name to sign.'); return; }
-    if (signatureName.trim().toLowerCase() !== expectedName.toLowerCase()) {
+    // Collapse internal whitespace runs before comparing — some roster
+    // names carry a double-space artifact from the ADP import (e.g.
+    // "Spencer  Douglas Colby"), which shouldn't force a driver to guess
+    // exact spacing to sign correctly.
+    const normalize = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (normalize(signatureName) !== normalize(expectedName)) {
       setSignErr(`Name must match exactly: "${expectedName}"`);
       return;
     }

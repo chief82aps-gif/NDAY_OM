@@ -7,25 +7,36 @@ weekly scorecard PDF), with two deliberate departures per explicit
   - Team & Fleet (Tenured Workforce 0% + Fleet Execution 5%) is dropped
     entirely from the weighted score -- these are DSP-wide/vehicle-level
     metrics, not something an individual driver's own behavior controls.
-    That 5% is reassigned to a new Attendance component instead.
+    A separate 5.0 Attendance component is added instead (see below) --
+    the two aren't meant to sum to a fixed 100 with everything else;
+    compute_driver_scores() normalizes by whatever weight is actually
+    available, not a hardcoded total.
   - Driver tenure is NOT part of the weighted score at all -- it's a
     pass/fail eligibility gate (the Tenured Workforce report's own
     "Tenure Status" field), same as the 30-route trailing-6-week floor.
 
-Category weights (sum to what's actually available at the per-driver
-level -- Amazon's per-driver CSV gives one combined "CDF DPMO" score, not
-split into Customer Delivery Feedback (5.7%) vs. Customer Escalation
-Defect (11.3%) separately, so CDF here stands in for the full 17.0%
-Customer Delivery Experience category):
+Category weights below match Amazon's current DA Performance Scoring
+config (screenshot, 2026-07-22) -- their own weighting page no longer
+carves out a separate Team & Fleet slice at all (Safety + Quality sum to
+100% on their side), so these updated numbers are simply the 12 metric
+weights straight off that page. Amazon's per-driver CSV still gives one
+combined "CDF DPMO" score rather than Customer Delivery Feedback and
+Customer Escalation Defect (CED) separately, so CDF here continues to
+stand in for both combined (5.9 + 11.9 = 17.8):
 
-  Safety (47.6% of Overall):
-    Speeding 11.7 | Seatbelt 11.7 | Sign/Signal 11.7 | Distractions 7.5 | Following Distance 5.0
-  Quality (47.4% of Overall):
-    DC DPMO 11.3 | DSB 11.3 | POD 2.8 | CDF DPMO 17.0 | PSB 5.0
-  Attendance (5.0% of Overall, reassigned from Fleet Execution):
+  Safety (50.0 total):
+    Speeding 12.5 | Seatbelt 12.5 | Sign/Signal 12.5 | Distractions 7.5 | Following Distance 5.0
+  Quality (50.0 total):
+    DC DPMO 11.9 | DSB 11.9 | POD 2.9 | CDF DPMO (+CED) 17.8 | PSB 5.5
+  Attendance (5.0, same as before -- Amazon's weighting page has no
+  equivalent category, this stays our own addition):
     100 - (trailing-60-day attendance points x 10), floored at 0 -- reuses
     attendance.py's existing HRM-023.1 points ladder (10 points is that
     system's own termination threshold), no new data collection.
+
+  Note: Amazon's own scoring page also lists a Safe Driving Metric
+  (FICO) row, currently weighted 0% -- intentionally excluded here since
+  it carries no weight on Amazon's side either.
 
 A missing/None component score is dropped and the remaining weights in
 that category renormalized -- the same "Coming Soon" handling the real
@@ -37,6 +48,16 @@ Eligibility (ranking + high-performer bonus) requires BOTH:
   - >= 30 routes in the trailing 6 weeks (routes_in_week summed)
 A driver failing either still gets a score shown (useful for coaching),
 just flagged ineligible rather than silently hidden.
+
+Tier thresholds (tier_for()) mirror Amazon's own Platinum/Gold/Silver/
+Bronze cutoffs (screenshot, 2026-07-22: Platinum >99.48, Gold >94,
+Silver >92, Bronze <=92) -- applied here to OUR custom-blended overall
+score, not Amazon's own overall_score, per explicit 2026-07-22 decision.
+high_performer_eligible deliberately keeps the exact same 92.0 floor the
+old green/yellow/red system used (i.e. any named tier, not just
+Platinum) -- switching what counts as "high performer" would be a real
+bonus-eligibility policy change nobody asked for here, so it's
+preserved as-is even though the tier *names* changed.
 """
 from __future__ import annotations
 
@@ -56,29 +77,38 @@ from api.src.database import (
 router = APIRouter(prefix="/driver-scoring", tags=["driver-scoring"])
 
 SAFETY_WEIGHTS = {
-    "speeding_score": 11.7,
-    "seatbelt_score": 11.7,
-    "sign_violation_score": 11.7,
+    "speeding_score": 12.5,
+    "seatbelt_score": 12.5,
+    "sign_violation_score": 12.5,
     "distraction_score": 7.5,
     "following_distance_score": 5.0,
 }
 QUALITY_WEIGHTS = {
-    "dc_dpmo_score": 11.3,
-    "dsb_score": 11.3,
-    "pod_score": 2.8,
-    "cdf_dpmo_score": 17.0,
-    "psb_score": 5.0,
+    "dc_dpmo_score": 11.9,
+    "dsb_score": 11.9,
+    "pod_score": 2.9,
+    "cdf_dpmo_score": 17.8,   # stands in for CDF (5.9) + CED (11.9) combined
+    "psb_score": 5.5,
 }
 CATEGORY_WEIGHTS = {
-    "safety": sum(SAFETY_WEIGHTS.values()),      # 47.6
-    "quality": sum(QUALITY_WEIGHTS.values()),    # 47.4
+    "safety": sum(SAFETY_WEIGHTS.values()),      # 50.0
+    "quality": sum(QUALITY_WEIGHTS.values()),    # 50.0
     "attendance": 5.0,
 }
 
 ROUTE_ELIGIBILITY_THRESHOLD = 30
 ROUTE_ELIGIBILITY_WEEKS = 6
-HIGH_PERFORMER_THRESHOLD = 92.0   # green
-CAUTION_THRESHOLD = 90.0          # yellow; below this is red
+
+# Amazon's current DA Performance tier cutoffs (screenshot, 2026-07-22).
+# Each tier's threshold is its own upper bound per Amazon's UI ("Gold
+# threshold represents the upper bound for Platinum") -- i.e. you need to
+# exceed a tier's own listed number to reach the tier above it.
+TIER_THRESHOLDS = [
+    ("platinum", 99.48),
+    ("gold", 94.0),
+    ("silver", 92.0),
+]
+HIGH_PERFORMER_THRESHOLD = 92.0   # unchanged floor -- see module docstring
 
 
 def _weighted_avg(row: QualityMetricDriver, weights: dict) -> Optional[float]:
@@ -102,14 +132,18 @@ def _attendance_score(driver_name: str, db: Session) -> float:
     return max(0.0, 100.0 - points * 10.0)
 
 
-def color_for(score: Optional[float]) -> str:
+def tier_for(score: Optional[float]) -> str:
+    """Platinum/Gold/Silver/Bronze per Amazon's current cutoffs (see
+    TIER_THRESHOLDS above), applied to our own blended overall/category
+    scores. "gray" for a score we couldn't compute at all (missing data),
+    "bronze" for anything at or below the Silver cutoff -- Amazon's own
+    UI doesn't define a tier below Bronze."""
     if score is None:
         return "gray"
-    if score >= HIGH_PERFORMER_THRESHOLD:
-        return "green"
-    if score >= CAUTION_THRESHOLD:
-        return "yellow"
-    return "red"
+    for tier_name, cutoff in TIER_THRESHOLDS:
+        if score > cutoff:
+            return tier_name
+    return "bronze"
 
 
 def compute_driver_scores(db: Session) -> list[dict]:
@@ -163,10 +197,10 @@ def compute_driver_scores(db: Session) -> list[dict]:
             "safety": round(safety, 1) if safety is not None else None,
             "quality": round(quality, 1) if quality is not None else None,
             "attendance": round(attendance, 1),
-            "overall_color": color_for(overall),
-            "safety_color": color_for(safety),
-            "quality_color": color_for(quality),
-            "attendance_color": color_for(attendance),
+            "overall_tier": tier_for(overall),
+            "safety_tier": tier_for(safety),
+            "quality_tier": tier_for(quality),
+            "attendance_tier": tier_for(attendance),
             "ranking_eligible": ranking_eligible,
             "high_performer_eligible": ranking_eligible and overall is not None and overall >= HIGH_PERFORMER_THRESHOLD,
             "tenure_status": tenure_rec.tenure_status if tenure_rec else "Unknown",

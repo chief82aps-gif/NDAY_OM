@@ -396,7 +396,8 @@ def _build_shift_dm(entry: DriverScheduleEntry, wave_lead_name: str, date_str: s
         f"🕐 *Showtime:* {showtime or 'See dispatch'} | *Wave:* {wave_display}\n"
         f"🚐 *Van/Service:* {service_display}\n"
         f"👤 *Wave Lead:* {wave_lead_name}\n"
-        f"Please confirm your arrival by tapping the button when you arrive."
+        f"Please acknowledge below — you'll confirm arrival separately, on the day-of "
+        f"route assignment DM."
     )
 
     btn_value = json.dumps({"shift_date": shift_date.isoformat(), "driver_name": name})
@@ -428,14 +429,8 @@ def _build_shift_dm(entry: DriverScheduleEntry, wave_lead_name: str, date_str: s
                 {
                     "type": "button",
                     "text": {"type": "plain_text", "text": "📋  I've Got My Schedule", "emoji": True},
-                    "action_id": "driver_schedule_ack",
-                    "value": btn_value,
-                },
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "✅  I Have Arrived for My Shift", "emoji": True},
                     "style": "primary",
-                    "action_id": "driver_arrived_shift",
+                    "action_id": "driver_schedule_ack",
                     "value": btn_value,
                 },
                 {

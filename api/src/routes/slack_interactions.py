@@ -669,7 +669,8 @@ def _handle_schedule_ack(payload: dict, db: Session) -> None:
             token = os.getenv("SLACK_BOT_TOKEN")
             if token:
                 from slack_sdk import WebClient as _WC
-                # Update the two-button block: replace schedule-ack button with confirmation text
+                # Arrival confirmation belongs solely to the day-of Route
+                # Assignment DM, not this one — no button re-added here.
                 _WC(token=token).chat_update(
                     channel=channel_id,
                     ts=msg_ts,
@@ -677,19 +678,15 @@ def _handle_schedule_ack(payload: dict, db: Session) -> None:
                     blocks=[
                         {
                             "type": "section",
-                            "text": {"type": "mrkdwn", "text": f"📋 *Schedule acknowledged* — See you tomorrow, {driver_name.split()[0]}! ✅"},
-                        },
-                        {
-                            "type": "actions",
-                            "elements": [
-                                {
-                                    "type": "button",
-                                    "text": {"type": "plain_text", "text": "✅  I Have Arrived for My Shift", "emoji": True},
-                                    "style": "primary",
-                                    "action_id": "driver_arrived_shift",
-                                    "value": action.get("value", "{}"),
-                                }
-                            ],
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": (
+                                    f"📋 *Schedule acknowledged* — See you tomorrow, "
+                                    f"{driver_name.split()[0]}! You'll get a separate DM "
+                                    f"the day of your shift with route details and an "
+                                    f"arrival confirmation button."
+                                ),
+                            },
                         },
                     ],
                 )

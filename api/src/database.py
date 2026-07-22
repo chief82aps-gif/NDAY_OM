@@ -2082,6 +2082,22 @@ def ensure_driver_shift_dm_callout_column():
         pass  # Column already exists
 
 
+def ensure_dvic_manager_signature_columns():
+    """Add manager_signature_name/at to dvic_counseling_records — added
+    2026-07-22 for the write-up review dashboard's ops-manager sign-off
+    on formal DVIC write-ups (separate from the driver's own ack_status)."""
+    for col, coltype in (("manager_signature_name", "VARCHAR(150)"), ("manager_signature_at", "TIMESTAMP")):
+        try:
+            with engine.begin() as conn:
+                if DATABASE_URL.startswith("sqlite"):
+                    sqlite_type = "TEXT" if "VARCHAR" in coltype else "DATETIME"
+                    conn.execute(text(f"ALTER TABLE dvic_counseling_records ADD COLUMN {col} {sqlite_type}"))
+                else:
+                    conn.execute(text(f"ALTER TABLE dvic_counseling_records ADD COLUMN IF NOT EXISTS {col} {coltype}"))
+        except Exception:
+            pass  # Column already exists
+
+
 def ensure_user_auth_columns():
     """Add slack_user_id/reset_token/reset_token_expires_at to users —
     added 2026-07-17 for the invite/reset-password Dispatch Home flow."""
@@ -2418,6 +2434,12 @@ class DvicCounselingRecord(Base):
     dm_channel = Column(String(50))                       # Slack DM channel id, for chat_update on ack
     dm_ts = Column(String(50))                             # Slack message ts, for chat_update on ack
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Manager sign-off — separate from the driver's own ack_status above.
+    # Added 2026-07-22 for the write-up review dashboard (see
+    # manager_accountability.py's discipline_tracker()).
+    manager_signature_name = Column(String(150))
+    manager_signature_at = Column(DateTime)
 
 
 class DocumentRoutingRule(Base):

@@ -41,6 +41,7 @@ from api.src.database import (
     DriverRosterEntry,
 )
 from api.src.ingest.dvic import parse_dvic_xlsx, extract_week
+from api.src.authorization import require_any_role
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/dvic", tags=["dvic"])
@@ -904,6 +905,32 @@ def record_acknowledgment(transporter_id: str, week: str, signature_name: str, d
 def acknowledge(req: AcknowledgeRequest, db: Session = Depends(get_db)):
     """Driver submits digital acknowledgment of their DVIC violations (web form path)."""
     return record_acknowledgment(req.transporter_id, req.week, req.signature_name, db)
+
+
+class CounselingSignRequest(BaseModel):
+    signed_by: str
+
+
+@router.post("/counseling/{record_id}/sign")
+def sign_counseling_record(
+    record_id: int, req: CounselingSignRequest, db: Session = Depends(get_db),
+    caller_role: str = Depends(require_any_role("ops_manager")),
+):
+    """Ops-manager sign-off on a formal DVIC write-up — separate from the
+    driver's own ack_status. Part of the write-up review dashboard (see
+    manager_accountability.py's discipline_tracker())."""
+    record = db.query(DvicCounselingRecord).filter(DvicCounselingRecord.id == record_id).first()
+    if not record:
+        raise HTTPException(404, "Counseling record not found.")
+    record.manager_signature_name = req.signed_by
+    record.manager_signature_at = datetime.utcnow()
+    db.commit()
+    return {
+        "status": "signed",
+        "id": record.id,
+        "manager_signature_name": record.manager_signature_name,
+        "manager_signature_at": record.manager_signature_at.isoformat(),
+    }
 
 
 @router.get("/violations-for-ack/{transporter_id}")

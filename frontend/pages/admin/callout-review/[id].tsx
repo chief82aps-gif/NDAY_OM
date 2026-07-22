@@ -68,9 +68,13 @@ export default function CalloutReviewPage() {
     if (!managerName.trim()) { setSignErr('Please type your full name to sign.'); return; }
     setSigning(true);
     try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
       const res = await fetch(`${api}/attendance/events/${id}/manager-sign`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ manager_name: managerName.trim() }),
       });
       if (!res.ok) { const d = await res.json(); throw new Error(d.detail ?? 'Sign failed'); }
@@ -85,7 +89,7 @@ export default function CalloutReviewPage() {
   }
 
   if (loading) return (
-    <ProtectedRoute>
+    <ProtectedRoute allowedRoles={['ops_manager', 'admin']}>
       <div style={{ minHeight: '100vh', background: '#0f172a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <p style={{ color: '#64748b' }}>Loading writeup…</p>
       </div>
@@ -93,7 +97,7 @@ export default function CalloutReviewPage() {
   );
 
   if (error || !event) return (
-    <ProtectedRoute>
+    <ProtectedRoute allowedRoles={['ops_manager', 'admin']}>
       <div style={{ minHeight: '100vh', background: '#0f172a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <p style={{ color: '#f87171' }}>{error || 'Event not found.'}</p>
       </div>
@@ -103,7 +107,7 @@ export default function CalloutReviewPage() {
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
   return (
-    <ProtectedRoute>
+    <ProtectedRoute allowedRoles={['ops_manager', 'admin']}>
       <div style={{ minHeight: '100vh', background: '#0f172a', color: '#e2e8f0', fontFamily: 'system-ui, sans-serif', padding: '32px 24px' }}>
         <div style={{ maxWidth: 680, margin: '0 auto' }}>
 

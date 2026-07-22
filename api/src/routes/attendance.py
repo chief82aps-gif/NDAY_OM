@@ -35,6 +35,7 @@ from api.src.database import (
     CalloutQueue,
     DriverScheduleEntry,
 )
+from api.src.authorization import require_any_role
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/attendance", tags=["attendance"])
@@ -1531,8 +1532,14 @@ def delete_event(event_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/events/{event_id}/manager-sign")
-def manager_sign_event(event_id: int, req: ManagerSignRequest, db: Session = Depends(get_db)):
-    """Manager countersigns an attendance writeup."""
+def manager_sign_event(
+    event_id: int, req: ManagerSignRequest, db: Session = Depends(get_db),
+    caller_role: str = Depends(require_any_role("ops_manager")),
+):
+    """Ops-manager countersigns an attendance writeup. Previously had no
+    permission check at all — any caller could sign as anyone; now
+    requires an actual ops_manager (or admin) JWT role, per the write-up
+    review dashboard's real per-role sign-off requirement."""
     event = db.query(AttendanceEvent).filter(AttendanceEvent.id == event_id).first()
     if not event:
         raise HTTPException(404, "Event not found.")

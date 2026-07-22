@@ -1947,6 +1947,26 @@ def send_day_of_dms(shift_date: date, db: Session) -> dict:
 
     db.commit()
 
+    # Team-room heads-up that individual assignments have gone out — per
+    # explicit 2026-07-22 request, the day DRIVER_DM_ACTIVE went live.
+    # Respects the same TEAM_ROOM_MESSAGES_ACTIVE hard-off-switch as
+    # post_showtime_summary()'s team-room copy (see CLAUDE.md) — if that's
+    # still off from the 2026-07-20 incident, this stays off too until
+    # explicitly re-enabled.
+    if sent > 0 and TEAM_ROOM_MESSAGES_ACTIVE:
+        try:
+            team_client = _slack_client()
+            if team_client:
+                team_client.chat_postMessage(
+                    channel=TEAM_CHANNEL,
+                    text=(
+                        f"📬 Individual route assignments for {date_str} have gone out. "
+                        f"Check your Slack DMs for your route, van, and staging details."
+                    ),
+                )
+        except Exception as exc:
+            logger.warning("Team-room assignments-sent announcement failed: %s", exc)
+
     return {
         "status": "done",
         "date": shift_date.isoformat(),

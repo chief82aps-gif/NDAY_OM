@@ -331,6 +331,13 @@ export default function CalloutPage() {
       }
       setResult(await res.json());
       setStep('done');
+      // Clear the one-time token from the URL/history so a refresh or
+      // back-navigation can't return to the form or replay the token —
+      // this page has no login/session to log out of, so wiping the URL
+      // and locking the view to the thank-you screen is the equivalent.
+      if (typeof window !== 'undefined') {
+        window.history.replaceState(null, '', '/callout');
+      }
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : 'Submission failed.');
       setStep('error');
@@ -387,72 +394,21 @@ export default function CalloutPage() {
   }
 
   // ── DONE ───────────────────────────────────────────────────────────────────
+  // Deliberately minimal — drivers reach this page via a one-time Slack
+  // link with no login, and shouldn't be able to view their points,
+  // standing, or any other data here or after. Submission is terminal.
   if (step === 'done' && result) {
     return (
       <>
         <Head><title>Call-Out Received — New Day Logistics</title></Head>
-        <div className="min-h-screen bg-slate-900 px-4 py-10 flex items-start justify-center">
-          <div className="w-full max-w-sm space-y-5">
-            <div className="text-center space-y-2">
-              <div className="text-6xl">{result.roster_tight ? '⚠️' : '✅'}</div>
-              <h1 className="text-2xl font-bold text-white">Call-Out Received</h1>
-              <p className={`text-sm ${result.roster_tight ? 'text-red-400 font-semibold' : 'text-slate-300'}`}>
-                {result.roster_tight
-                  ? 'Management has been alerted — roster is critically short.'
-                  : 'Dispatch has been notified.'}
-              </p>
-            </div>
-
-            {/* Updated points */}
-            <div className="bg-slate-800 rounded-2xl p-5 space-y-3">
-              <p className="text-slate-400 text-xs uppercase tracking-wider">Your Updated Standing</p>
-              <div className="flex items-end justify-between">
-                <span className="text-3xl font-bold text-white">{result.new_total_points.toFixed(1)}</span>
-                <span className="text-slate-400 text-sm">/ 10 pts</span>
-              </div>
-              <PointsBar points={result.new_total_points} />
-              <div className="flex items-center justify-between text-sm">
-                <span className={`font-semibold ${statusColor(result.new_status)}`}>
-                  {statusLabel(result.new_status)}
-                </span>
-                {result.next_threshold && result.new_status !== 'termination' && (
-                  <span className="text-slate-400 text-xs">
-                    {result.next_threshold.points_away} pts to {result.next_threshold.label}
-                  </span>
-                )}
-              </div>
-              <div className="text-xs text-slate-500 border-t border-slate-700 pt-3">
-                This call-out added +{result.points_added} pts · Points reset after 60 days
-              </div>
-            </div>
-
-            {/* Tight roster warning */}
-            {result.roster_tight && (
-              <div className="bg-red-900/40 border border-red-500/60 rounded-xl p-4 space-y-1">
-                <p className="text-red-400 font-bold text-sm">⚠️ Critical Roster Impact</p>
-                <p className="text-red-300 text-sm">
-                  The roster for your wave is critically short. There are no available replacement drivers for your shift.
-                  Your absence will have a significant impact on today's operations and customers.
-                  Management has been notified and is working to resolve coverage immediately.
-                </p>
-              </div>
-            )}
-
-            {/* Not scheduled notice */}
-            {result.not_scheduled && (
-              <div className="bg-blue-900/30 border border-blue-500/40 rounded-xl p-4 text-blue-300 text-sm">
-                Note: You were not on the schedule for {fmtDate(result.shift_date)}. This callout has been recorded and flagged in your attendance record.
-              </div>
-            )}
-
-            {/* Compliance */}
-            {result.compliant === false && result.hours_before_shift !== null && (
-              <div className="bg-amber-900/30 border border-amber-600/40 rounded-xl p-4 text-amber-300 text-sm">
-                ⚠️ Call-in was {Math.abs(result.hours_before_shift).toFixed(1)}h before shift — policy requires 4 hours minimum. Contact your manager.
-              </div>
-            )}
-
-            <p className="text-center text-slate-600 text-xs pb-4">You may close this page.</p>
+        <div className="min-h-screen bg-slate-900 px-4 flex items-center justify-center">
+          <div className="w-full max-w-sm text-center space-y-4">
+            <div className="text-6xl">✅</div>
+            <h1 className="text-2xl font-bold text-white">Thank you for submitting your call-out</h1>
+            <p className="text-slate-400 text-sm leading-relaxed">
+              Dispatch has been notified. Be safe and have a great day.
+            </p>
+            <p className="text-slate-600 text-xs pt-4">You may close this page.</p>
           </div>
         </div>
       </>

@@ -20,7 +20,7 @@ from api.src.routes import rostering, cortex_tracking, adp, rts, mgt_reminders, 
 from api.src.routes.daily_notify import check_and_notify, check_ecp_and_prompt
 from api.src.routes.rostering import send_nightly_roster_reminder, send_wave_lead_pre_wave_dm, send_missing_drivers_summary
 from api.src.schedule_config import SCHEDULE_GAP_CHECK_HOUR
-from api.src.database import Base, engine, SessionLocal, ensure_dop_driver_name_column, ensure_ssn_last4_column, ensure_callout_signature_column, ensure_assignment_board_columns, _ensure_manager_signature_columns, _ensure_position_id_nullable, ensure_driver_shift_dm_checklist_columns, ensure_route_duration_columns, ensure_dvic_raw_fields_column, ensure_driver_roster_tracking_columns, ensure_daily_route_assignment_unique_index, ensure_okami_capacity_finalize_columns, ensure_crash_report_evidence_columns, ensure_daily_route_assignment_notified_snapshot_column, ensure_user_auth_columns, ensure_route_sheet_load_size_columns, ensure_driver_shift_dm_decline_column
+from api.src.database import Base, engine, SessionLocal, ensure_dop_driver_name_column, ensure_ssn_last4_column, ensure_callout_signature_column, ensure_assignment_board_columns, _ensure_manager_signature_columns, _ensure_position_id_nullable, ensure_driver_shift_dm_checklist_columns, ensure_route_duration_columns, ensure_dvic_raw_fields_column, ensure_driver_roster_tracking_columns, ensure_daily_route_assignment_unique_index, ensure_okami_capacity_finalize_columns, ensure_crash_report_evidence_columns, ensure_daily_route_assignment_notified_snapshot_column, ensure_user_auth_columns, ensure_route_sheet_load_size_columns, ensure_driver_shift_dm_decline_column, ensure_driver_shift_dm_callout_column
 from api.src.slack_notification_gate import apply_slack_send_gate
 
 logger = logging.getLogger(__name__)
@@ -131,6 +131,26 @@ async def _associate_data_reminder_loop():
         except Exception as exc:
             logger.warning("Associate Data reminder loop outer error: %s", exc)
         await asyncio.sleep(60)
+
+
+async def _dm_response_summary_loop():
+    """Every 30 min — delegates to rostering.refresh_all_dm_response_summaries(),
+    which rebuilds ONE consolidated #nday-mgt message per shift_date for
+    Showtime responses (green=acked/yellow=no reply/red=declined) and
+    Route Assignment responses (green=arrived/yellow=not yet/red=called
+    out), instead of a new message per individual driver event."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(rostering.refresh_all_dm_response_summaries, db)
+            except Exception as exc:
+                logger.warning("DM response summary loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("DM response summary loop outer error: %s", exc)
+        await asyncio.sleep(1800)
 
 
 async def _misrouted_file_watch_loop():
@@ -411,6 +431,7 @@ async def startup():
     ensure_crash_report_evidence_columns()
     ensure_daily_route_assignment_notified_snapshot_column()
     ensure_driver_shift_dm_decline_column()
+    ensure_driver_shift_dm_callout_column()
     ensure_user_auth_columns()
     from api.src.routes.auth import seed_default_users
     _seed_db = SessionLocal()
@@ -434,6 +455,7 @@ async def startup():
     asyncio.create_task(_mgt_reminders_loop())
     asyncio.create_task(_okami_finalize_reminder_loop())
     asyncio.create_task(_associate_data_reminder_loop())
+    asyncio.create_task(_dm_response_summary_loop())
     asyncio.create_task(_misrouted_file_watch_loop())
     asyncio.create_task(_schedule_escalation_loop())
     asyncio.create_task(_schedule_gap_alert_loop())

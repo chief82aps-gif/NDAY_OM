@@ -1699,17 +1699,10 @@ def mark_driver_arrived(shift_date_str: str, driver_name: str, slack_user_id: st
     except Exception as exc:
         logger.warning("Wave lead arrival ping error: %s", exc)
 
-    # Also surface it in #nday-mgt — the wave-lead DM above is private to
-    # one person, and dispatch/mgt has no other visibility into arrivals.
-    try:
-        client = _slack_client()
-        if client:
-            client.chat_postMessage(
-                channel=MGT_CHANNEL,
-                text=f"✅ *{driver_name}* arrived for their {shift_date_str} shift.",
-            )
-    except Exception as exc:
-        logger.warning("Mgt arrival notice failed: %s", exc)
+    # #nday-mgt visibility comes from the periodic (every 30 min)
+    # consolidated response summary (refresh_all_dm_response_summaries in
+    # main.py's loop), not a message per arrival — avoids a new post for
+    # every one of dozens of drivers checking in around the same time.
 
     return True
 
@@ -2421,21 +2414,12 @@ def ack_schedule(
         rec = DriverShiftDM(shift_date=target, driver_name=driver_name)
         db.add(rec)
 
-    already_acked = bool(rec.schedule_acked_at)
-    if not already_acked:
+    if not rec.schedule_acked_at:
         rec.schedule_acked_at = datetime.utcnow()
     db.commit()
 
-    if not already_acked:
-        try:
-            client = _slack_client()
-            if client:
-                client.chat_postMessage(
-                    channel=MGT_CHANNEL,
-                    text=f"📋 *{driver_name}* acknowledged their schedule for {shift_date}.",
-                )
-        except Exception as exc:
-            logger.warning("Mgt schedule-ack notice failed: %s", exc)
+    # #nday-mgt visibility comes from the periodic (every 30 min)
+    # consolidated response summary, not a message per acknowledgment.
 
     return {"status": "ok", "driver_name": driver_name, "shift_date": shift_date}
 
@@ -2461,6 +2445,31 @@ def decline_shift(shift_date_str: str, driver_name: str, db: Session) -> bool:
         db.add(rec)
 
     rec.declined_at = datetime.utcnow()
+    db.commit()
+    return True
+
+
+def mark_callout_tapped(shift_date_str: str, driver_name: str, db: Session) -> bool:
+    """Driver tapped 'Call Out' on their day-of Route Assignment DM.
+    Only logs the DM-response timestamp — same rationale as
+    decline_shift(): the real write-up/compliance record comes from the
+    actual /callout submission, this just lets the consolidated
+    #nday-mgt summary show red immediately rather than waiting for the
+    driver to finish the web form."""
+    try:
+        shift_date = date.fromisoformat(shift_date_str)
+    except ValueError:
+        return False
+
+    rec = db.query(DriverShiftDM).filter(
+        DriverShiftDM.shift_date == shift_date,
+        DriverShiftDM.driver_name == driver_name,
+    ).first()
+    if not rec:
+        rec = DriverShiftDM(shift_date=shift_date, driver_name=driver_name)
+        db.add(rec)
+
+    rec.callout_tapped_at = datetime.utcnow()
     db.commit()
     return True
 
@@ -2709,4 +2718,202 @@ def test_teardown_mock_shift(shift_date: str, driver_name: str, db: Session = De
     }
     db.commit()
     return {"status": "ok", "deleted": deleted}
+
+
+# ─── Consolidated #nday-mgt response summaries ──────────────────────────────
+# Added 2026-07-21 per explicit request: individual per-driver posts for
+# every Acknowledge/Arrived/Decline/Call-Out event buried #nday-mgt in
+# dozens of messages once more than a handful of drivers responded.
+# These build ONE message per shift_date per DM type, refreshed on a
+# 30-min periodic loop (see main.py's _dm_response_summary_loop()) —
+# not on every individual click — showing a red/yellow/green rollup
+# instead. Manual trigger endpoints below exist for on-demand refresh
+# (e.g. testing, or a date outside the loop's today/tomorrow scope).
+
+def _shift_response_status(rec: Optional[DriverShiftDM]) -> str:
+    if rec and rec.declined_at:
+        return "red"
+    if rec and rec.schedule_acked_at:
+        return "green"
+    return "yellow"
+
+
+def _arrival_response_status(rec: Optional[DriverShiftDM]) -> str:
+    if rec and rec.callout_tapped_at:
+        return "red"
+    if rec and rec.arrival_confirmed:
+        return "green"
+    return "yellow"
+
+
+def refresh_shift_response_summary(shift_date: date, db: Session) -> dict:
+    """Consolidated #nday-mgt summary of Showtime DM responses: 🟢
+    acknowledged / 🟡 no reply / 🔴 declined. One message per
+    shift_date, updated in place."""
+    if not _ACTIVE:
+        return {"status": "inactive"}
+
+    scheduled = (
+        db.query(DriverScheduleEntry)
+        .filter(DriverScheduleEntry.schedule_date == shift_date)
+        .order_by(DriverScheduleEntry.driver_name)
+        .all()
+    )
+    if not scheduled:
+        return {"status": "no_schedule"}
+
+    dm_records = {
+        r.driver_name: r
+        for r in db.query(DriverShiftDM).filter(DriverShiftDM.shift_date == shift_date).all()
+    }
+
+    green, yellow, red = [], [], []
+    for entry in scheduled:
+        status = _shift_response_status(dm_records.get(entry.driver_name))
+        (green if status == "green" else yellow if status == "yellow" else red).append(entry.driver_name)
+
+    client = _slack_client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    date_str = shift_date.strftime("%A, %B %-d")
+    lines = [f"🟢 {len(green)} acknowledged  ·  🟡 {len(yellow)} no reply  ·  🔴 {len(red)} declined"]
+    if red:
+        lines.append("\n*🔴 Declined:*\n" + "\n".join(f"• {n}" for n in red))
+    if yellow:
+        lines.append("\n*🟡 No reply yet:*\n" + "\n".join(f"• {n}" for n in yellow))
+
+    blocks = [
+        {"type": "header", "text": {"type": "plain_text", "text": f"📋 Schedule Responses — {date_str}", "emoji": True}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}},
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": f"_Updated {datetime.utcnow().strftime('%H:%M UTC')}_"}]},
+    ]
+
+    state_key = f"shift_response_summary_{shift_date.isoformat()}"
+    state = get_reminder_state(db, state_key)
+    existing_ts = state.get("mgt_slack_ts")
+
+    try:
+        if existing_ts:
+            client.chat_update(channel=MGT_CHANNEL, ts=existing_ts, text=f"Schedule Responses — {date_str}", blocks=blocks)
+            ts = existing_ts
+        else:
+            resp = client.chat_postMessage(channel=MGT_CHANNEL, text=f"Schedule Responses — {date_str}", blocks=blocks)
+            ts = resp.get("ts")
+        set_reminder_state(db, state_key, {"mgt_slack_ts": ts})
+        return {"status": "ok", "green": len(green), "yellow": len(yellow), "red": len(red)}
+    except Exception as exc:
+        logger.warning("Shift response summary post failed: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+
+def refresh_arrival_response_summary(shift_date: date, db: Session) -> dict:
+    """Consolidated #nday-mgt summary of Route Assignment DM responses:
+    🟢 arrived / 🟡 not yet arrived / 🔴 called out. One message per
+    shift_date, updated in place."""
+    if not _ACTIVE:
+        return {"status": "inactive"}
+
+    assignments = (
+        db.query(DailyRouteAssignment)
+        .filter(
+            DailyRouteAssignment.assignment_date == shift_date,
+            DailyRouteAssignment.driver_name.isnot(None),
+            DailyRouteAssignment.driver_name != "",
+        )
+        .order_by(DailyRouteAssignment.driver_name)
+        .all()
+    )
+    if not assignments:
+        return {"status": "no_assignments"}
+
+    dm_records = {
+        r.driver_name: r
+        for r in db.query(DriverShiftDM).filter(DriverShiftDM.shift_date == shift_date).all()
+    }
+
+    green, yellow, red = [], [], []
+    seen = set()
+    for a in assignments:
+        if a.driver_name in seen:
+            continue
+        seen.add(a.driver_name)
+        status = _arrival_response_status(dm_records.get(a.driver_name))
+        (green if status == "green" else yellow if status == "yellow" else red).append(a.driver_name)
+
+    client = _slack_client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    date_str = shift_date.strftime("%A, %B %-d")
+    lines = [f"🟢 {len(green)} arrived  ·  🟡 {len(yellow)} not yet  ·  🔴 {len(red)} called out"]
+    if red:
+        lines.append("\n*🔴 Called Out:*\n" + "\n".join(f"• {n}" for n in red))
+
+    blocks = [
+        {"type": "header", "text": {"type": "plain_text", "text": f"🚐 Route Assignment Responses — {date_str}", "emoji": True}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}},
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": f"_Updated {datetime.utcnow().strftime('%H:%M UTC')}_"}]},
+    ]
+
+    state_key = f"arrival_response_summary_{shift_date.isoformat()}"
+    state = get_reminder_state(db, state_key)
+    existing_ts = state.get("mgt_slack_ts")
+
+    try:
+        if existing_ts:
+            client.chat_update(channel=MGT_CHANNEL, ts=existing_ts, text=f"Route Assignment Responses — {date_str}", blocks=blocks)
+            ts = existing_ts
+        else:
+            resp = client.chat_postMessage(channel=MGT_CHANNEL, text=f"Route Assignment Responses — {date_str}", blocks=blocks)
+            ts = resp.get("ts")
+        set_reminder_state(db, state_key, {"mgt_slack_ts": ts})
+        return {"status": "ok", "green": len(green), "yellow": len(yellow), "red": len(red)}
+    except Exception as exc:
+        logger.warning("Arrival response summary post failed: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+
+def refresh_all_dm_response_summaries(db: Session) -> dict:
+    """Called every 30 min by main.py's _dm_response_summary_loop().
+    Refreshes tomorrow's Showtime response summary and today's Route
+    Assignment response summary — the two dates each DM type is
+    realistically active for."""
+    from zoneinfo import ZoneInfo
+    today = datetime.now(ZoneInfo("America/Los_Angeles")).date()
+    tomorrow = today + timedelta(days=1)
+    results = {}
+    try:
+        results["shift_tomorrow"] = refresh_shift_response_summary(tomorrow, db)
+    except Exception as exc:
+        logger.warning("Shift response summary refresh failed: %s", exc)
+        results["shift_tomorrow"] = {"status": "error", "detail": str(exc)}
+    try:
+        results["arrival_today"] = refresh_arrival_response_summary(today, db)
+    except Exception as exc:
+        logger.warning("Arrival response summary refresh failed: %s", exc)
+        results["arrival_today"] = {"status": "error", "detail": str(exc)}
+    return results
+
+
+@router.post("/shift-response-summary/{shift_date}")
+def trigger_shift_response_summary(shift_date: str, db: Session = Depends(get_db)):
+    """Manual/on-demand refresh of the Showtime response summary for
+    shift_date — the periodic loop only covers tomorrow automatically."""
+    try:
+        target = date.fromisoformat(shift_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
+    return refresh_shift_response_summary(target, db)
+
+
+@router.post("/arrival-response-summary/{shift_date}")
+def trigger_arrival_response_summary(shift_date: str, db: Session = Depends(get_db)):
+    """Manual/on-demand refresh of the Route Assignment response summary
+    for shift_date — the periodic loop only covers today automatically."""
+    try:
+        target = date.fromisoformat(shift_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
+    return refresh_arrival_response_summary(target, db)
 

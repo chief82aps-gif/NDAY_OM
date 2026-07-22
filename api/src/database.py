@@ -2067,6 +2067,21 @@ def ensure_driver_shift_dm_decline_column():
         pass  # Column already exists
 
 
+def ensure_driver_shift_dm_callout_column():
+    """Add callout_tapped_at to driver_shift_dms — added 2026-07-21 for
+    the Route Assignment DM's "Call Out" button, so the consolidated
+    #nday-mgt response summary can show red immediately on tap rather
+    than waiting for the driver to finish the /callout web form."""
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE driver_shift_dms ADD COLUMN callout_tapped_at DATETIME"))
+            else:
+                conn.execute(text("ALTER TABLE driver_shift_dms ADD COLUMN IF NOT EXISTS callout_tapped_at TIMESTAMP"))
+    except Exception:
+        pass  # Column already exists
+
+
 def ensure_user_auth_columns():
     """Add slack_user_id/reset_token/reset_token_expires_at to users —
     added 2026-07-17 for the invite/reset-password Dispatch Home flow."""
@@ -3027,6 +3042,7 @@ class DriverShiftDM(Base):
     schedule_acked_at = Column(DateTime)   # when driver tapped 'I've Got My Schedule'
     eod_checklist_at = Column(DateTime)    # when driver tapped 'EOD Complete'
     declined_at = Column(DateTime)         # when driver tapped 'Can't Make It' (Showtime DM)
+    callout_tapped_at = Column(DateTime)   # when driver tapped 'Call Out' (Route Assignment DM)
 
     __table_args__ = (
         Index("idx_dsdm_date_driver", "shift_date", "driver_name"),

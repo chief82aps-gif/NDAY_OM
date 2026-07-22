@@ -765,6 +765,9 @@ def _handle_driver_callout_from_dm(payload: dict, db: Session) -> None:
         channel_id = payload.get("channel", {}).get("id", "")
         user_id = payload.get("user", {}).get("id", "")
 
+        from api.src.routes.rostering import mark_callout_tapped
+        mark_callout_tapped(shift_date_str, driver_name, db)
+
         token = _issue_callout_token(driver_name, shift_date_str)
         url = f"{FRONTEND_URL}/callout?token={token}"
 

@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import re
+import uuid
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -2640,4 +2641,89 @@ def get_shift_dm_status(shift_date: str, db: Session = Depends(get_db)):
             for r in records
         ],
     }
+
+
+# ─── Test scaffolding (end-to-end button-interactivity testing) ─────────────
+# Added 2026-07-21 to test the full driver DM pipeline (Showtime DM +
+# Route Assignment DM, all four buttons) against a real Slack account
+# before flipping DRIVER_DM_ACTIVE on for everyone. Creates/deletes mock
+# DriverScheduleEntry + DailyRouteAssignment rows scoped to one
+# driver_name + shift_date at a time — always use a shift_date far
+# outside any real scheduling horizon so it can never collide with real
+# ops data or show up in a real matrix/reconciliation.
+
+@router.post("/test-setup")
+def test_setup_mock_shift(
+    shift_date: str, driver_name: str,
+    db: Session = Depends(get_db),
+):
+    """Create (or refresh) a mock DriverScheduleEntry + DailyRouteAssignment
+    for one driver on a test date. Clean up afterward with /test-teardown."""
+    try:
+        target = date.fromisoformat(shift_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
+
+    entry = db.query(DriverScheduleEntry).filter(
+        DriverScheduleEntry.schedule_date == target,
+        DriverScheduleEntry.driver_name == driver_name,
+    ).first()
+    if not entry:
+        entry = DriverScheduleEntry(schedule_date=target, driver_name=driver_name)
+        db.add(entry)
+    entry.wave_time = "8:00 AM"
+    entry.show_time = "7:35 AM"
+    entry.service_type = "TEST — Standard Parcel"
+    entry.is_sweeper = False
+    entry.source_file = "manual_test_setup"
+
+    assignment = db.query(DailyRouteAssignment).filter(
+        DailyRouteAssignment.assignment_date == target,
+        DailyRouteAssignment.driver_name == driver_name,
+    ).first()
+    if not assignment:
+        assignment = DailyRouteAssignment(
+            assignment_date=target, driver_name=driver_name,
+            ack_token=str(uuid.uuid4()).replace("-", ""),
+        )
+        db.add(assignment)
+    assignment.route_code = "TEST-001"
+    assignment.van_number = "TEST-VAN"
+    assignment.stage_location = "TEST STAGE"
+    assignment.wave = "8:00 AM"
+    assignment.packages = 0
+    assignment.route_duration = 180
+    assignment.service_type = "TEST — Standard Parcel"
+    assignment.assignment_status = "pending"
+    assignment.dm_sent = False
+
+    db.commit()
+    return {"status": "ok", "shift_date": shift_date, "driver_name": driver_name}
+
+
+@router.post("/test-teardown")
+def test_teardown_mock_shift(shift_date: str, driver_name: str, db: Session = Depends(get_db)):
+    """Delete the mock schedule entry, assignment, and DriverShiftDM
+    tracking row created by /test-setup for the given test date + driver."""
+    try:
+        target = date.fromisoformat(shift_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
+
+    deleted = {
+        "schedule_entries": db.query(DriverScheduleEntry).filter(
+            DriverScheduleEntry.schedule_date == target,
+            DriverScheduleEntry.driver_name == driver_name,
+        ).delete(),
+        "assignments": db.query(DailyRouteAssignment).filter(
+            DailyRouteAssignment.assignment_date == target,
+            DailyRouteAssignment.driver_name == driver_name,
+        ).delete(),
+        "shift_dms": db.query(DriverShiftDM).filter(
+            DriverShiftDM.shift_date == target,
+            DriverShiftDM.driver_name == driver_name,
+        ).delete(),
+    }
+    db.commit()
+    return {"status": "ok", "deleted": deleted}
 

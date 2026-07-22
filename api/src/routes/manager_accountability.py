@@ -351,21 +351,42 @@ def pending_notices(db: Session = Depends(get_db)):
 
 @router.get("/discipline-tracker")
 def discipline_tracker(db: Session = Depends(get_db)):
-    """Unified pending-review dashboard for NDAY Management.
+    """Unified write-up review dashboard for NDAY Management.
 
-    Combines every write-up type awaiting review/acknowledgment:
+    Combines every write-up type awaiting review/sign-off:
       - ManagerAccountabilityEvent rows not yet acknowledged (unsigned
         callouts, DVIC stage-4 formal write-ups, and any future writeup_type
         — see the module docstring for how to add a new catalyst)
       - DvicCounselingRecord rows still pending driver acknowledgment
         (every stage 1-4, so early soft reminders are visible too, not
         just formal stage-4 write-ups)
-    """
-    from api.src.database import DvicCounselingRecord
+      - AttendanceEvent rows the driver has signed but ops manager hasn't
+        countersigned yet (same query attendance.py's /unsigned-writeups
+        uses)
+      - InjuryReport rows not yet fully signed (ops_manager, then hr)
+      - CrashReport rows still in their Slack-driven approval chain
+        (read-only here — status only, no sign action from this
+        dashboard; see crash_report.py)
 
+    needs_sign_role tells the frontend which sign button applies
+    ("ops_manager" is the default for everything except injury-after-
+    ops-manager-signed and crash's per-stage role; None for crash rows
+    since those aren't signable from here).
+    """
+    from api.src.database import DvicCounselingRecord, AttendanceEvent, InjuryReport, CrashReport, CrashReportApproval
+
+    # unsigned_callout/dvic_repeat_violation are now fully covered by the
+    # direct attendance/dvic queries below (with real occurrence counts
+    # and sign buttons) — excluding them here avoids double-listing the
+    # same underlying write-up. Any *other* writeup_type (a future
+    # catalyst not yet migrated to its own direct query) still shows.
+    _SUPERSEDED_WRITEUP_TYPES = {"unsigned_callout", "dvic_repeat_violation"}
     accountability_items = (
         db.query(ManagerAccountabilityEvent)
-        .filter(ManagerAccountabilityEvent.acknowledged_at == None)
+        .filter(
+            ManagerAccountabilityEvent.acknowledged_at == None,
+            ManagerAccountabilityEvent.writeup_type.notin_(_SUPERSEDED_WRITEUP_TYPES),
+        )
         .order_by(ManagerAccountabilityEvent.shift_date.desc())
         .all()
     )
@@ -375,16 +396,48 @@ def discipline_tracker(db: Session = Depends(get_db)):
         .order_by(DvicCounselingRecord.stage.desc(), DvicCounselingRecord.last_actioned_at.desc())
         .all()
     )
+    attendance_items = (
+        db.query(AttendanceEvent)
+        .filter(AttendanceEvent.signature_name != None, AttendanceEvent.manager_signature_name == None)
+        .order_by(AttendanceEvent.created_at.desc())
+        .all()
+    )
+    injury_items = (
+        db.query(InjuryReport)
+        .filter((InjuryReport.ops_manager_signed_at == None) | (InjuryReport.hr_signed_at == None))
+        .order_by(InjuryReport.created_at.desc())
+        .all()
+    )
+    crash_items = (
+        db.query(CrashReport)
+        .filter(CrashReport.status == "submitted")
+        .order_by(CrashReport.created_at.desc())
+        .all()
+    )
+    crash_approvals_by_report: dict[int, list] = {}
+    if crash_items:
+        report_ids = [c.id for c in crash_items]
+        approvals = (
+            db.query(CrashReportApproval)
+            .filter(CrashReportApproval.report_id.in_(report_ids))
+            .order_by(CrashReportApproval.stage_order)
+            .all()
+        )
+        for a in approvals:
+            crash_approvals_by_report.setdefault(a.report_id, []).append(a)
 
     items = [
         {
             "source": "manager_accountability",
             "id": r.id,
             "shift_date": r.shift_date.isoformat() if r.shift_date else None,
+            "driver_name": None,
             "manager_name": r.manager_name,
             "writeup_type": r.writeup_type,
             "source_detail": r.source_detail,
             "dm_sent_at": r.dm_sent_at.isoformat() if r.dm_sent_at else None,
+            "needs_sign_role": "ops_manager",
+            "occurrence_count": None,
         }
         for r in accountability_items
     ] + [
@@ -392,6 +445,7 @@ def discipline_tracker(db: Session = Depends(get_db)):
             "source": "dvic",
             "id": d.id,
             "shift_date": d.last_actioned_at.date().isoformat() if d.last_actioned_at else None,
+            "driver_name": d.transporter_name,
             "manager_name": None,
             "writeup_type": f"dvic_stage_{d.stage}",
             "source_detail": (
@@ -399,8 +453,55 @@ def discipline_tracker(db: Session = Depends(get_db)):
                 f"stage {d.stage}"
             ),
             "dm_sent_at": d.last_actioned_at.isoformat() if d.last_actioned_at else None,
+            "needs_sign_role": "ops_manager",
+            "occurrence_count": d.last_instance_count,
         }
         for d in dvic_items
+    ] + [
+        {
+            "source": "attendance",
+            "id": e.id,
+            "shift_date": e.event_date.isoformat() if e.event_date else None,
+            "driver_name": e.driver_name,
+            "manager_name": None,
+            "writeup_type": f"attendance_{e.event_type}",
+            "source_detail": f"{e.driver_name} — {e.reason_code or e.event_type} callout",
+            "dm_sent_at": None,
+            "needs_sign_role": "ops_manager",
+            "occurrence_count": e.missed_shift_count,
+        }
+        for e in attendance_items
+    ] + [
+        {
+            "source": "injury",
+            "id": i.id,
+            "shift_date": i.incident_date.isoformat() if i.incident_date else None,
+            "driver_name": i.employee_name,
+            "manager_name": None,
+            "writeup_type": "injury_report",
+            "source_detail": f"{i.employee_name} — {i.body_parts_injured or 'injury'} on {i.incident_date or '—'}",
+            "dm_sent_at": None,
+            "needs_sign_role": "ops_manager" if not i.ops_manager_signed_at else "hr",
+            "occurrence_count": None,
+        }
+        for i in injury_items
+    ] + [
+        {
+            "source": "crash",
+            "id": c.id,
+            "shift_date": c.accident_date.isoformat() if c.accident_date else None,
+            "driver_name": c.driver_name,
+            "manager_name": None,
+            "writeup_type": "crash_report",
+            "source_detail": f"{c.driver_name} — crash report {c.report_number}",
+            "dm_sent_at": None,
+            "needs_sign_role": next(
+                (a.role for a in crash_approvals_by_report.get(c.id, []) if a.status != "approved"),
+                None,
+            ),
+            "occurrence_count": None,
+        }
+        for c in crash_items
     ]
     return {"total_pending": len(items), "items": items}
 

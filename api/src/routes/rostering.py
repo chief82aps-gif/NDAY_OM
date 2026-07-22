@@ -379,6 +379,77 @@ def _get_driver_slack_id(driver_name: str, db: Session) -> Optional[str]:
     return None
 
 
+def _build_shift_dm(entry: DriverScheduleEntry, wave_lead_name: str, date_str: str, shift_date: date) -> tuple[str, list, Optional[str]]:
+    """Build the (fallback_text, blocks, showtime) for one driver's
+    night-before Showtime DM. Shared by send_driver_shift_dms() (the
+    real, gated batch send) and send_test_shift_dm() (a single-target
+    preview/test send bypassing DRIVER_DM_ACTIVE) so the two can never
+    drift apart in content — same precedent as _build_driver_dm()."""
+    name = entry.driver_name
+    showtime = _calc_showtime(entry.wave_time) or entry.show_time
+    wave_display = entry.wave_time or "TBD"
+    service_display = entry.service_type or ("Sweeper — van assigned morning-of" if entry.is_sweeper else "TBD")
+
+    text_fallback = (
+        f"👋 Hi {name.split()[0]}! Your shift is tomorrow ({date_str}).\n"
+        f"🕐 *Showtime:* {showtime or 'See dispatch'} | *Wave:* {wave_display}\n"
+        f"🚐 *Van/Service:* {service_display}\n"
+        f"👤 *Wave Lead:* {wave_lead_name}\n"
+        f"Please confirm your arrival by tapping the button when you arrive."
+    )
+
+    btn_value = json.dumps({"shift_date": shift_date.isoformat(), "driver_name": name})
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"👋 *Shift Reminder — {date_str}*\n\n"
+                    f"Hi {name.split()[0]}! Here are your details for tomorrow:"
+                ),
+            },
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Showtime:*\n{showtime or 'See dispatch'}"},
+                {"type": "mrkdwn", "text": f"*Wave:*\n{wave_display}"},
+                {"type": "mrkdwn", "text": f"*Van/Service:*\n{service_display}"},
+                {"type": "mrkdwn", "text": f"*Wave Lead:*\n{wave_lead_name}"},
+                {"type": "mrkdwn", "text": f"*Date:*\n{date_str}"},
+            ],
+        },
+        {"type": "divider"},
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "📋  I've Got My Schedule", "emoji": True},
+                    "action_id": "driver_schedule_ack",
+                    "value": btn_value,
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "✅  I Have Arrived for My Shift", "emoji": True},
+                    "style": "primary",
+                    "action_id": "driver_arrived_shift",
+                    "value": btn_value,
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "❌  Can't Make It", "emoji": True},
+                    "style": "danger",
+                    "action_id": "driver_decline_shift",
+                    "value": btn_value,
+                },
+            ],
+        },
+    ]
+    return text_fallback, blocks, showtime
+
+
 def send_driver_shift_dms(shift_date: date, db: Session) -> dict:
     """
     Send pre-shift DMs to all drivers scheduled for shift_date.
@@ -420,67 +491,7 @@ def send_driver_shift_dms(shift_date: date, db: Session) -> dict:
             continue
 
         slack_id = _get_driver_slack_id(name, db)
-        showtime = _calc_showtime(entry.wave_time) or entry.show_time
-        wave_display = entry.wave_time or "TBD"
-        service_display = entry.service_type or ("Sweeper — van assigned morning-of" if entry.is_sweeper else "TBD")
-
-        text_fallback = (
-            f"👋 Hi {name.split()[0]}! Your shift is tomorrow ({date_str}).\n"
-            f"🕐 *Showtime:* {showtime or 'See dispatch'} | *Wave:* {wave_display}\n"
-            f"🚐 *Van/Service:* {service_display}\n"
-            f"👤 *Wave Lead:* {wave_lead_name}\n"
-            f"Please confirm your arrival by tapping the button when you arrive."
-        )
-
-        btn_value = json.dumps({"shift_date": shift_date.isoformat(), "driver_name": name})
-        blocks = [
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": (
-                        f"👋 *Shift Reminder — {date_str}*\n\n"
-                        f"Hi {name.split()[0]}! Here are your details for tomorrow:"
-                    ),
-                },
-            },
-            {
-                "type": "section",
-                "fields": [
-                    {"type": "mrkdwn", "text": f"*Showtime:*\n{showtime or 'See dispatch'}"},
-                    {"type": "mrkdwn", "text": f"*Wave:*\n{wave_display}"},
-                    {"type": "mrkdwn", "text": f"*Van/Service:*\n{service_display}"},
-                    {"type": "mrkdwn", "text": f"*Wave Lead:*\n{wave_lead_name}"},
-                    {"type": "mrkdwn", "text": f"*Date:*\n{date_str}"},
-                ],
-            },
-            {"type": "divider"},
-            {
-                "type": "actions",
-                "elements": [
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "📋  I've Got My Schedule", "emoji": True},
-                        "action_id": "driver_schedule_ack",
-                        "value": btn_value,
-                    },
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "✅  I Have Arrived for My Shift", "emoji": True},
-                        "style": "primary",
-                        "action_id": "driver_arrived_shift",
-                        "value": btn_value,
-                    },
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "❌  Can't Make It", "emoji": True},
-                        "style": "danger",
-                        "action_id": "driver_decline_shift",
-                        "value": btn_value,
-                    },
-                ],
-            },
-        ]
+        text_fallback, blocks, showtime = _build_shift_dm(entry, wave_lead_name, date_str, shift_date)
 
         dm_ts = None
         if client and slack_id:
@@ -518,6 +529,45 @@ def send_driver_shift_dms(shift_date: date, db: Session) -> dict:
         "skipped": skipped,
         "no_slack_id": no_slack,
     }
+
+
+def send_test_shift_dm(shift_date: date, sample_driver_name: str, target_slack_id: str, db: Session) -> dict:
+    """Send ONE real driver's Showtime DM content to an arbitrary target
+    (e.g. a live end-to-end test, or a manager doing a pre-launch check).
+
+    Deliberately bypasses DRIVER_DM_ACTIVE — the whole point is to test
+    before that gate is ever flipped on for everyone. Unlike
+    send_test_driver_dm() (day-of DM preview), this does NOT redirect to
+    a different reviewer than the sampled driver — the button values
+    carry the real shift_date/driver_name from the DriverScheduleEntry,
+    so clicking Acknowledge/Arrived/Can't Make It writes real records
+    for that driver, same as a real send. Still subject to
+    SLACK_NOTIFICATIONS_ACTIVE like every other send here."""
+    entry = (
+        db.query(DriverScheduleEntry)
+        .filter(
+            DriverScheduleEntry.schedule_date == shift_date,
+            DriverScheduleEntry.driver_name == sample_driver_name,
+        )
+        .first()
+    )
+    if not entry:
+        return {"status": "no_schedule_entry", "date": shift_date.isoformat(), "sample_driver_name": sample_driver_name}
+
+    client = _slack_client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    wave_lead_name, _ = _wave_lead_name(shift_date)
+    date_str = shift_date.strftime("%A, %B %-d")
+    text_fallback, blocks, _showtime = _build_shift_dm(entry, wave_lead_name, date_str, shift_date)
+
+    try:
+        client.chat_postMessage(channel=target_slack_id, text=text_fallback, blocks=blocks)
+        return {"status": "sent", "target_slack_id": target_slack_id, "sample_driver_name": sample_driver_name, "date": shift_date.isoformat()}
+    except Exception as exc:
+        logger.warning("Test shift DM send failed: %s", exc)
+        return {"status": "failed", "error": str(exc)}
 
 
 # ─── #nday-mgt summary matrix ────────────────────────────────────────────────
@@ -2336,6 +2386,21 @@ def trigger_test_driver_dm(
     except ValueError:
         raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
     return send_test_driver_dm(target, sample_driver_name, target_slack_id, db)
+
+
+@router.post("/driver-dms/{shift_date}/test")
+def trigger_test_shift_dm(
+    shift_date: str, sample_driver_name: str, target_slack_id: str,
+    db: Session = Depends(get_db),
+):
+    """Preview/test one real driver's Showtime DM content and button
+    interactivity. Bypasses DRIVER_DM_ACTIVE on purpose — for pre-launch
+    testing before that gate is ever flipped on for everyone."""
+    try:
+        target = date.fromisoformat(shift_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
+    return send_test_shift_dm(target, sample_driver_name, target_slack_id, db)
 
 
 @router.post("/ack-schedule")

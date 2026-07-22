@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from api.src.database import (
     SessionLocal, get_db,
     EodSurveyResponse, DriverRosterEntry, DailyRouteAssignment,
+    get_reminder_state, set_reminder_state,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,10 +33,15 @@ router = APIRouter(prefix="/eod-survey", tags=["eod-survey"])
 DRIVER_DASHBOARD_CHANNEL = os.getenv("DRIVER_DASHBOARD_CHANNEL_ID", "C0BEDCXNQNT")
 APP_URL = os.getenv("APP_URL", "https://nday-om.vercel.app")
 
-# Module-level state — tracks whether today's channel post went out
-_daily_post_state: dict = {"last_posted_date": None}
-# Tracks last reminder run to avoid double-firing
-_reminder_state: dict = {"last_run_date": None, "runs_today": 0}
+# DB-backed (ReminderThrottleState) as of 2026-07-22 — these were plain
+# module-level dicts before, which reset to empty on every process
+# restart/redeploy, silently forgetting "already sent today" and risking
+# a duplicate send on the next deploy during the same window. Same root
+# cause ReminderThrottleState itself was built to fix for other loops
+# (see its docstring in database.py) — this module just hadn't been
+# migrated onto it yet.
+_DAILY_POST_KEY = "eod_survey_daily_post"
+_REMINDER_KEY = "eod_survey_reminder"
 
 
 # ─── Slack helpers ────────────────────────────────────────────────────────────
@@ -294,6 +300,23 @@ def list_responses(survey_date: Optional[str] = None, db: Session = Depends(get_
     return [_row_to_dict(r) for r in rows]
 
 
+@router.post("/trigger-daily-post")
+def trigger_daily_post(force: bool = False):
+    """Manual trigger for the 3 PM daily survey-link DM — for recovery if
+    the automatic 3-4 PM window was missed (e.g. a redeploy landed
+    mid-window, which also resets the old in-memory guard this used to
+    rely on). Safe to call any time; force=True bypasses the hour check
+    but still respects "already sent today"."""
+    return post_daily_survey_message(force=force)
+
+
+@router.post("/trigger-reminders")
+def trigger_reminders(force: bool = False):
+    """Manual trigger for the 7:30 PM not-yet-submitted reminder DM. Same
+    recovery/safety rationale as /trigger-daily-post."""
+    return send_eod_reminders(force=force)
+
+
 @router.get("/missing")
 def missing_drivers(survey_date: Optional[str] = None, db: Session = Depends(get_db)):
     """Admin: drivers scheduled today who haven't submitted."""
@@ -367,25 +390,30 @@ def _row_to_dict(r: EodSurveyResponse) -> dict:
 
 # ─── Background tasks ─────────────────────────────────────────────────────────
 
-def post_daily_survey_message() -> None:
-    """3 PM Pacific: DM every driver on today's schedule with their personal survey link."""
+def post_daily_survey_message(force: bool = False) -> dict:
+    """3 PM Pacific: DM every driver on today's schedule with their personal
+    survey link. Pass force=True to send regardless of the 3-4 PM window
+    (manual recovery if the automatic window was missed, e.g. a redeploy
+    landed mid-window) — still respects the "already sent today" guard
+    either way, so this is always safe to call."""
     import zoneinfo
     tz = zoneinfo.ZoneInfo("America/Los_Angeles")
     now = datetime.now(tz)
     today = now.date()
 
-    if _daily_post_state["last_posted_date"] == today:
-        return
-    if now.hour < 15 or now.hour >= 16:
-        return
-
     db = SessionLocal()
     try:
+        state = get_reminder_state(db, _DAILY_POST_KEY)
+        if state.get("last_posted_date") == today.isoformat():
+            return {"status": "already_sent", "date": today.isoformat()}
+        if not force and (now.hour < 15 or now.hour >= 16):
+            return {"status": "outside_window", "date": today.isoformat()}
+
         scheduled = db.query(DailyRouteAssignment).filter_by(assignment_date=today).all()
         if not scheduled:
             logger.info("EOD daily DM: no drivers scheduled today, skipping.")
-            _daily_post_state["last_posted_date"] = today
-            return
+            set_reminder_state(db, _DAILY_POST_KEY, {"last_posted_date": today.isoformat()})
+            return {"status": "no_schedule", "date": today.isoformat()}
 
         # Build name→roster lookup
         roster_entries = db.query(DriverRosterEntry).filter_by(is_active=True).all()
@@ -416,35 +444,41 @@ def post_daily_survey_message() -> None:
             _dm(roster_entry.slack_member_id, msg)
             sent += 1
 
-        _daily_post_state["last_posted_date"] = today
+        set_reminder_state(db, _DAILY_POST_KEY, {"last_posted_date": today.isoformat()})
         logger.info("EOD daily DMs sent to %d driver(s) (%d had no Slack ID)", sent, no_slack)
+        return {"status": "sent", "date": today.isoformat(), "sent": sent, "no_slack_id": no_slack, "total": len(scheduled)}
     except Exception as exc:
         logger.warning("EOD daily DM loop failed: %s", exc)
+        return {"status": "error", "detail": str(exc)}
     finally:
         db.close()
 
 
-def send_eod_reminders() -> None:
-    """7:30 PM Pacific: DM any scheduled driver who hasn't submitted yet."""
+def send_eod_reminders(force: bool = False) -> dict:
+    """7:30 PM Pacific: DM any scheduled driver who hasn't submitted yet.
+    Pass force=True for manual recovery outside the normal window — still
+    respects the "already ran today" guard, safe to call any time."""
     import zoneinfo
     tz = zoneinfo.ZoneInfo("America/Los_Angeles")
     now = datetime.now(tz)
     today = now.date()
 
-    if _reminder_state["last_run_date"] == today:
-        return
-    if now.hour < 19 or (now.hour == 19 and now.minute < 30):
-        return
-    if now.hour >= 22:
-        return
-
-    _reminder_state["last_run_date"] = today
-
     db = SessionLocal()
     try:
+        state = get_reminder_state(db, _REMINDER_KEY)
+        if state.get("last_run_date") == today.isoformat():
+            return {"status": "already_sent", "date": today.isoformat()}
+        if not force:
+            if now.hour < 19 or (now.hour == 19 and now.minute < 30):
+                return {"status": "outside_window", "date": today.isoformat()}
+            if now.hour >= 22:
+                return {"status": "outside_window", "date": today.isoformat()}
+
+        set_reminder_state(db, _REMINDER_KEY, {"last_run_date": today.isoformat()})
+
         scheduled = db.query(DailyRouteAssignment).filter_by(assignment_date=today).all()
         if not scheduled:
-            return
+            return {"status": "no_schedule", "date": today.isoformat()}
 
         submitted_names = {
             r.driver_name.lower()
@@ -492,5 +526,6 @@ def send_eod_reminders() -> None:
         if sent:
             db.commit()
             logger.info("EOD reminders sent to %d driver(s)", sent)
+        return {"status": "sent", "date": today.isoformat(), "sent": sent, "total": len(scheduled)}
     finally:
         db.close()

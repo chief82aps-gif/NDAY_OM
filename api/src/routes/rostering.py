@@ -411,14 +411,22 @@ def send_nightly_roster_reminder(shift_date: date, db: Session) -> dict:
 def _get_driver_slack_id(driver_name: str, db: Session) -> Optional[str]:
     """Look up Slack user ID from driver_roster (populated by SSN import script).
 
-    2026-07-22 fix: this read entry.slack_user_id via getattr(..., None),
+    2026-07-22 fix #1: this read entry.slack_user_id via getattr(..., None),
     but DriverRosterEntry's real column is slack_member_id (slack_user_id
     is a field on other models — User, DriverShiftDM — not this one). The
     getattr default silently masked the AttributeError, so this returned
-    None for every real driver, every time — the batch day-of/Showtime DM
-    sends have never actually reached a real driver as a result; only
-    Spencer's tests worked, since those passed target_slack_id directly
-    and never called this function at all.
+    None for every real driver, every time.
+
+    2026-07-22 fix #2: exact-match alone still missed most real drivers
+    even after fix #1 — DailyRouteAssignment/DriverScheduleEntry driver
+    names come from DOP/Cortex/the schedule file as "First Last", while
+    DriverRosterEntry.payroll_name (ADP import) commonly includes a
+    middle name ("First Middle Last"), e.g. "Austin Gilmore" (assignment)
+    vs. "Austin Lee Gilmore" (roster) — confirmed live: 44 of 50 real
+    routes failed with no_slack_id despite all 44 drivers being properly
+    Slack-linked. Falls back to the same token-overlap match (>=2 shared
+    name tokens) eod_survey.py and driver_matching.py already use for
+    this exact mismatch, only after an exact match fails.
     """
     entry = (
         db.query(DriverRosterEntry)
@@ -427,6 +435,15 @@ def _get_driver_slack_id(driver_name: str, db: Session) -> Optional[str]:
     )
     if entry:
         return entry.slack_member_id
+
+    name_tokens = frozenset((driver_name or "").lower().replace(",", "").split())
+    if not name_tokens:
+        return None
+    candidates = db.query(DriverRosterEntry).filter(DriverRosterEntry.is_active == True).all()
+    for c in candidates:
+        c_tokens = frozenset((c.payroll_name or "").lower().replace(",", "").split())
+        if len(name_tokens & c_tokens) >= 2:
+            return c.slack_member_id
     return None
 
 
@@ -1822,6 +1839,24 @@ def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str
             )
             .first()
         )
+        if not schedule_entry:
+            # Same middle-name mismatch confirmed for _get_driver_slack_id()
+            # (e.g. "Ross Michael Reinberg" in the schedule file vs. "Ross
+            # Reinberg" in the DOP-derived assignment) — exact match alone
+            # misses most drivers here too. Token-overlap fallback, same
+            # as everywhere else this mismatch shows up.
+            a_tokens = frozenset((a.driver_name or "").lower().replace(",", "").split())
+            if a_tokens:
+                candidates = (
+                    db.query(DriverScheduleEntry)
+                    .filter(DriverScheduleEntry.schedule_date == a.assignment_date)
+                    .all()
+                )
+                for c in candidates:
+                    c_tokens = frozenset((c.driver_name or "").lower().replace(",", "").split())
+                    if len(a_tokens & c_tokens) >= 2:
+                        schedule_entry = c
+                        break
         if schedule_entry:
             night_prior_showtime = _calc_showtime(schedule_entry.wave_time) or schedule_entry.show_time
 

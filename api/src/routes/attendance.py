@@ -1516,6 +1516,20 @@ def get_event(event_id: int, db: Session = Depends(get_db)):
     }
 
 
+@router.delete("/events/{event_id}")
+def delete_event(event_id: int, db: Session = Depends(get_db)):
+    """Delete an attendance event — for correcting test/erroneous
+    entries (e.g. a real driver used for end-to-end callout-button
+    testing). Not exposed on any dashboard UI; call directly when
+    cleanup is needed."""
+    event = db.query(AttendanceEvent).filter(AttendanceEvent.id == event_id).first()
+    if not event:
+        raise HTTPException(404, "Event not found.")
+    db.delete(event)
+    db.commit()
+    return {"status": "deleted", "event_id": event_id}
+
+
 @router.post("/events/{event_id}/manager-sign")
 def manager_sign_event(event_id: int, req: ManagerSignRequest, db: Session = Depends(get_db)):
     """Manager countersigns an attendance writeup."""

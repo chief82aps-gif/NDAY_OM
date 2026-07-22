@@ -205,6 +205,43 @@ changing):
   terminations) is expected and not itself a "modification" of the
   matching logic
 
+## Driver-DM button pipeline (Showtime + Route Assignment + callout) — locked 2026-07-21
+
+Verified end-to-end 2026-07-21 against a real Slack account (driver
+Spencer Colby, roster id 95) using mock schedule/assignment data on a
+throwaway test date, then cleaned up: all four buttons confirmed
+working through the real backend (Acknowledge, Arrived, Can't Make It,
+Call Out), including the real `/callout` write-up submission
+(`AttendanceEvent` + points) both negative buttons feed into. **Do not
+modify without explicit authorization**:
+
+- `api/src/routes/rostering.py` — `_build_shift_dm()`,
+  `_build_driver_dm()`, `send_driver_shift_dms()`, `send_day_of_dms()`,
+  `ack_schedule()`, `decline_shift()`, `mark_driver_arrived()`,
+  `mark_callout_tapped()`, `refresh_shift_response_summary()`,
+  `refresh_arrival_response_summary()`, `refresh_all_dm_response_summaries()`
+- `api/src/routes/slack_interactions.py` — `_handle_schedule_ack()`,
+  `_handle_driver_decline_shift()`, `_handle_driver_arrived()`,
+  `_handle_driver_callout_from_dm()`, `_issue_callout_token()`
+- `frontend/pages/callout.tsx` — the signature-match normalization fix
+- The Showtime DM only ever offers Acknowledge/Can't Make It; the Route
+  Assignment DM only ever offers Arrived/Call Out — never both pairs
+  on one message. "Can't Make It" and "Call Out" are genuine one-click
+  buttons (Slack `url` field baked in at send-time, 48h TTL) straight
+  to the real `/callout` page — do not revert to the old two-tap
+  (button → ephemeral link → tap again) pattern.
+- `#nday-mgt` visibility for Acknowledge/Arrived/Decline/Call-Out comes
+  ONLY from the consolidated periodic summary
+  (`_dm_response_summary_loop()` in `main.py`, every 30 min) — do not
+  reintroduce a per-event message per driver response.
+
+**Explicitly NOT covered by this lock** (still open):
+
+- Everything under "Production safety gates" below — `DRIVER_DM_ACTIVE`
+  is still off pending the dry-run + explicit sign-off
+- The write-up/sign-off review dashboard (ops manager / HR / owner
+  sign-off chain) — new work, not yet built as of 2026-07-21
+
 ## Production safety gates — do not flip without explicit sign-off
 
 Full detail: `Governance/ROSTERING_DM_RULES.md`.

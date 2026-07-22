@@ -131,6 +131,45 @@ def _calc_showtime(wave_time_str: Optional[str]) -> Optional[str]:
     return None
 
 
+def _showtime_to_minutes(showtime_str: str) -> Optional[int]:
+    """Parse an 'H:MM AM/PM'-style showtime string to minutes since midnight,
+    for comparing a night-before showtime against a day-of one. Returns None
+    if unparseable rather than raising, since these strings come from free-
+    form ingest data."""
+    for fmt in ("%I:%M %p", "%H:%M", "%I:%M%p"):
+        try:
+            t = datetime.strptime(showtime_str.strip(), fmt)
+            return t.hour * 60 + t.minute
+        except ValueError:
+            continue
+    return None
+
+
+def _resolve_showtime(night_prior: Optional[str], day_of: Optional[str]) -> Optional[str]:
+    """Reconcile the showtime shown on the day-of assignment DM.
+
+    Prefer the day-of, DOP-wave-derived showtime when it's genuinely
+    earlier than what the driver was told the night before (from
+    DriverScheduleEntry) — a real schedule improvement should be passed
+    along. Cap it at the night-before value whenever the day-of one would
+    be later, or is missing/unparseable, or no comparison is possible.
+
+    Hard rule: never show a time later than the night-before value. Quietly
+    pushing a driver's showtime later than what they were already told is a
+    real problem even if the day-of DOP wave technically justifies it — the
+    driver should never find out their day got longer only by comparing two
+    DMs themselves.
+    """
+    if not night_prior:
+        return day_of
+    if day_of:
+        night_prior_mins = _showtime_to_minutes(night_prior)
+        day_of_mins = _showtime_to_minutes(day_of)
+        if night_prior_mins is not None and day_of_mins is not None and day_of_mins <= night_prior_mins:
+            return day_of
+    return night_prior
+
+
 def _latest_quality_map(db: Session) -> dict[str, dict]:
     """Return {driver_name: {standing, score}} from the most recent quality snapshot."""
     latest = (
@@ -1743,7 +1782,7 @@ def _calc_return_time(wave_str: str, duration_minutes: Optional[int]) -> Optiona
     return (dt + timedelta(minutes=int(duration_minutes) - 30)).strftime("%-I:%M %p")
 
 
-def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str, wave_lead_slack_id: Optional[str] = None) -> tuple[str, list]:
+def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str, wave_lead_slack_id: Optional[str] = None, db: Optional[Session] = None) -> tuple[str, list]:
     """Build the (fallback_text, blocks) for one driver's day-of assignment
     DM. Shared by send_day_of_dms() (the real, gated send) and the
     /day-of-dms/test endpoint (an explicit preview send to a reviewer,
@@ -1754,10 +1793,29 @@ def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str
     driver_lead_schedule.py) — when present, a "Talk to My Lead" button
     replaces the "contact your wave lead on Zello" text, per
     Governance/SRD_DRIVER_SCHEDULE_PTT_MODULE.md §7.
+
+    Showtime is resolved via _resolve_showtime(): the night-before value
+    from DriverScheduleEntry (what the driver was already told) wins over
+    the day-of DOP-wave-derived value whenever both exist — see
+    _resolve_showtime()'s docstring for why. db is optional only so callers
+    that truly have no session can still get the day-of-only fallback.
     """
     first_name = a.driver_name.split(",")[1].strip().split()[0] if "," in (a.driver_name or "") else (a.driver_name or "Driver").split()[0]
 
-    showtime = _calc_showtime(a.wave)
+    night_prior_showtime = None
+    if db is not None:
+        schedule_entry = (
+            db.query(DriverScheduleEntry)
+            .filter(
+                DriverScheduleEntry.schedule_date == a.assignment_date,
+                DriverScheduleEntry.driver_name == a.driver_name,
+            )
+            .first()
+        )
+        if schedule_entry:
+            night_prior_showtime = _calc_showtime(schedule_entry.wave_time) or schedule_entry.show_time
+
+    showtime = _resolve_showtime(night_prior_showtime, _calc_showtime(a.wave))
     return_time = _calc_return_time(a.wave or "", a.route_duration)
 
     fields = []
@@ -1921,7 +1979,7 @@ def send_day_of_dms(shift_date: date, db: Session) -> dict:
             # Still mark dm_sent so daily_notify plain-text fallback can pick it up
             continue
 
-        fallback_text, blocks = _build_driver_dm(a, wave_lead_name, date_str, wave_lead_slack_id)
+        fallback_text, blocks = _build_driver_dm(a, wave_lead_name, date_str, wave_lead_slack_id, db)
 
         dm_ts = None
         if client:
@@ -2003,7 +2061,7 @@ def send_single_day_of_dm(assignment_id: int, db: Session) -> dict:
     if not LEAD_ROUTING_ACTIVE:
         wave_lead_slack_id = None
     date_str = a.assignment_date.strftime("%A, %B %-d")
-    fallback_text, blocks = _build_driver_dm(a, wave_lead_name, date_str, wave_lead_slack_id)
+    fallback_text, blocks = _build_driver_dm(a, wave_lead_name, date_str, wave_lead_slack_id, db)
 
     try:
         resp = client.chat_postMessage(channel=slack_id, text=fallback_text, blocks=blocks)
@@ -2048,7 +2106,7 @@ def send_test_driver_dm(shift_date: date, sample_driver_name: str, target_slack_
     if not LEAD_ROUTING_ACTIVE:
         wave_lead_slack_id = None
     date_str = shift_date.strftime("%A, %B %-d")
-    fallback_text, blocks = _build_driver_dm(a, wave_lead_name, date_str, wave_lead_slack_id)
+    fallback_text, blocks = _build_driver_dm(a, wave_lead_name, date_str, wave_lead_slack_id, db)
 
     banner = {
         "type": "context",

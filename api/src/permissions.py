@@ -17,6 +17,9 @@ class Role(str, Enum):
     MANAGER = "manager"          # Financial data access, reporting, no code editing
     DISPATCHER = "dispatcher"    # Route/assignment management, no financial access
     DRIVER = "driver"            # Driver portal only, assignment viewing
+    OPS_MANAGER = "ops_manager"  # Write-up review dashboard — default signer for all write-ups
+    HR = "hr"                    # Write-up review dashboard — signs injuries, and crashes after ops_manager
+    OWNER = "owner"               # Write-up review dashboard — signs crashes after HR
 
 
 # ============================================================================
@@ -100,6 +103,24 @@ ROLE_PERMISSIONS: dict[Role, Set[Permission]] = {
         # Driver portal only
         Permission.VIEW_ASSIGNMENTS,
         Permission.VIEW_SCHEDULE,
+    },
+
+    Role.OPS_MANAGER: {
+        Permission.VIEW_REPORTS,
+        Permission.MANAGE_ASSIGNMENTS,
+        Permission.VIEW_ASSIGNMENTS,
+        Permission.VIEW_SCHEDULE,
+    },
+
+    Role.HR: {
+        Permission.VIEW_REPORTS,
+        Permission.VIEW_ASSIGNMENTS,
+    },
+
+    Role.OWNER: {
+        Permission.VIEW_REPORTS,
+        Permission.VIEW_FINANCIAL,
+        Permission.VIEW_ASSIGNMENTS,
     },
 }
 

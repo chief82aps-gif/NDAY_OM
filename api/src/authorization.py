@@ -9,21 +9,22 @@ from fastapi import HTTPException, status, Depends, Header
 from typing import List, Optional, Callable
 import jwt
 from api.src.permissions import Permission, Role, get_permissions, has_permission
+from api.src.routes.auth import JWT_SECRET, JWT_ALGORITHM
 
 
 def get_current_user_role(authorization: Optional[str] = Header(None)) -> str:
     """
     Extract and validate JWT token from Authorization header, return user role.
-    
+
     Expected header: Authorization: Bearer <token>
-    Expected JWT payload: {"role": "admin|manager|dispatcher|driver", ...}
+    Expected JWT payload: {"role": "admin|manager|dispatcher|driver|ops_manager|hr|owner", ...}
     """
     if not authorization:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing Authorization header"
         )
-    
+
     try:
         # Extract token from "Bearer <token>"
         scheme, token = authorization.split()
@@ -32,9 +33,12 @@ def get_current_user_role(authorization: Optional[str] = Header(None)) -> str:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid authentication scheme"
             )
-        
-        # Decode token (without signature verification for dev - use proper verification in prod)
-        payload = jwt.decode(token, options={"verify_signature": False})
+
+        # Verify against the same secret auth.py's /login signs with — was
+        # previously verify_signature: False, which meant any caller could
+        # forge a role claim. Real per-role enforcement (write-up sign-off
+        # dashboard) requires this actually be checked.
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         role = payload.get("role")
         
         if not role:
@@ -162,6 +166,22 @@ def require_admin_or_manager(role: str = Depends(get_current_user_role)) -> str:
             detail="Admin or Manager access required"
         )
     return role
+
+
+def require_any_role(*roles: str) -> Callable:
+    """Dependency factory for the write-up sign-off dashboard — e.g.
+    Depends(require_any_role("ops_manager", "hr")). Admin always passes
+    as an override, matching require_admin_or_manager's pattern."""
+    allowed = set(roles) | {Role.ADMIN.value}
+
+    def _dependency(role: str = Depends(get_current_user_role)) -> str:
+        if role not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"This action requires one of: {', '.join(sorted(allowed))}"
+            )
+        return role
+    return _dependency
 
 
 def require_financial_access(role: str = Depends(get_current_user_role)) -> str:

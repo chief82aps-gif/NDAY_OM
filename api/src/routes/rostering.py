@@ -54,6 +54,7 @@ router = APIRouter(prefix="/rostering", tags=["rostering"])
 # ─── Slack constants ──────────────────────────────────────────────────────────
 MGT_CHANNEL   = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
 TEAM_CHANNEL  = os.getenv("SLACK_TEAM_CHANNEL", "C0BAQAYKANS")  # #nday-team-room
+FRONTEND_URL  = os.getenv("FRONTEND_URL", "https://nday-om.vercel.app")
 
 # Hard off-switch for ALL automatic messages to #nday-team-room, per
 # explicit 2026-07-20 decision made during a run of same-day production
@@ -401,6 +402,18 @@ def _build_shift_dm(entry: DriverScheduleEntry, wave_lead_name: str, date_str: s
     )
 
     btn_value = json.dumps({"shift_date": shift_date.isoformat(), "driver_name": name})
+
+    # Baked in at send-time (not issued fresh on click) so "Can't Make
+    # It" can be a genuine one-click button straight to the callout
+    # page — Slack still delivers the interaction payload to our
+    # handler (for decline_shift()'s tracking) AND opens this URL in
+    # the same click. Needs a much longer TTL than the standing
+    # button's 4-hour click-time token, since this DM might sit unread
+    # for hours before the driver taps it.
+    from api.src.routes.slack_interactions import _issue_callout_token
+    callout_token = _issue_callout_token(name, shift_date.isoformat(), ttl_hours=48)
+    callout_url = f"{FRONTEND_URL}/callout?token={callout_token}"
+
     blocks = [
         {
             "type": "section",
@@ -439,6 +452,7 @@ def _build_shift_dm(entry: DriverScheduleEntry, wave_lead_name: str, date_str: s
                     "style": "danger",
                     "action_id": "driver_decline_shift",
                     "value": btn_value,
+                    "url": callout_url,
                 },
             ],
         },
@@ -1770,6 +1784,14 @@ def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str
         "driver_name": a.driver_name,
     })
 
+    # Same one-click treatment as _build_shift_dm()'s "Can't Make It" —
+    # token baked in at send-time (long TTL) so "Call Out" opens the
+    # callout page directly in the same click that fires the
+    # interaction payload to our handler.
+    from api.src.routes.slack_interactions import _issue_callout_token
+    callout_token = _issue_callout_token(a.driver_name, a.assignment_date.isoformat(), ttl_hours=48)
+    callout_url = f"{FRONTEND_URL}/callout?token={callout_token}"
+
     blocks = [
         {
             "type": "header",
@@ -1836,6 +1858,7 @@ def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str
                     "style": "danger",
                     "action_id": "driver_callout_from_dm",
                     "value": arrival_value,
+                    "url": callout_url,
                 },
             ],
         },

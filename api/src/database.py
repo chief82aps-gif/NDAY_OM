@@ -2610,6 +2610,66 @@ class EmployeeDocument(Base):
     routed_to = Column(JSON)           # list of role names actually notified
 
 
+class InjuryReport(Base):
+    """Digital version of the two-part paper incident/injury report:
+    employee self-report + supervisor's accident investigation. Filled
+    together in one submission (a supervisor is present at/soon after
+    the incident) — unlike CrashReport's multi-stage Slack approval
+    chain, sign-off here is two flat fields since it only ever goes
+    Ops Manager -> HR (see write-up review dashboard,
+    manager_accountability.py's discipline_tracker()).
+    """
+    __tablename__ = "injury_reports"
+
+    id = Column(Integer, primary_key=True)
+    submitted_by = Column(String(150))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Employee self-report
+    employee_name = Column(String(150), nullable=False)
+    supervisor_notified_at = Column(String(20))       # time, as written on the form
+    incident_date = Column(Date)
+    incident_time = Column(String(20))
+    location = Column(String(300))
+    activity_at_time = Column(Text)
+    incident_description = Column(Text)               # step-by-step what led up to it
+    prevention_suggestion = Column(Text)
+    body_parts_injured = Column(String(300))
+    wants_medical_care = Column(Boolean)
+    medical_provider_name = Column(String(200))
+    medical_provider_phone = Column(String(50))
+    prior_injury = Column(Boolean)
+    prior_injury_when = Column(String(100))
+    supervisor_name = Column(String(150))
+    employee_signature_name = Column(String(150))
+    employee_signature_at = Column(DateTime)
+
+    # Supervisor's Accident Investigation
+    investigation_body_part_detail = Column(Text)
+    incident_nature = Column(Text)
+    investigation_description = Column(Text)          # full account, equipment/tools used
+    event_date = Column(Date)
+    event_time = Column(String(20))
+    event_location_detail = Column(Text)
+    weather = Column(String(200))
+    cause_and_preventable = Column(Text)
+    safety_regs_followed = Column(Boolean)
+    safety_regs_detail = Column(Text)
+    recommended_preventive_action = Column(Text)
+    medical_care_offered = Column(Boolean)
+    approved_provider_list_given = Column(Boolean)
+    actual_doctor_name = Column(String(200))
+    actual_hospital_name = Column(String(200))
+    supervisor_signature_name = Column(String(150))
+    supervisor_signature_at = Column(DateTime)
+
+    # Sign-off — Ops Manager first, then HR (per write-up dashboard routing)
+    ops_manager_signed_by = Column(String(150))
+    ops_manager_signed_at = Column(DateTime)
+    hr_signed_by = Column(String(150))
+    hr_signed_at = Column(DateTime)
+
+
 class EodSurveyResponse(Base):
     """Driver end-of-day check-out survey. One row per driver per calendar day."""
     __tablename__ = "eod_survey_responses"

@@ -38,6 +38,7 @@ from api.src.database import (
     DOP,
     Cortex,
     DriverRosterEntry,
+    DriverScheduleEntry,
     get_latest_dop_rows,
     get_latest_cortex_rows,
     get_reminder_state,
@@ -930,6 +931,32 @@ def send_sweeper_notifications(for_date: date, db: Session) -> Dict:
             return False
         return any(len(tokens & a_tokens) >= 2 for a_tokens in assigned_token_sets)
 
+    # Names actually on today's schedule — the roster query above pulls
+    # EVERY active, Slack-linked driver regardless of whether they're
+    # working today at all, so without this check someone off, on
+    # vacation, or just not rostered this week still gets swept in as a
+    # "sweeper" (confirmed live 2026-07-23). Same token-overlap fallback
+    # as _has_route_today for the same DOP-vs-ADP name-format mismatch.
+    scheduled_lower = {
+        (n or "").lower()
+        for (n,) in db.query(DriverScheduleEntry.driver_name)
+        .filter(DriverScheduleEntry.schedule_date == for_date)
+        .all()
+    }
+    scheduled_token_sets = [
+        frozenset(name.replace(",", "").split())
+        for name in scheduled_lower if name
+    ]
+
+    def _is_scheduled_today(payroll_name: str) -> bool:
+        name = (payroll_name or "").lower()
+        if name in scheduled_lower:
+            return True
+        tokens = frozenset(name.replace(",", "").split())
+        if not tokens:
+            return False
+        return any(len(tokens & s_tokens) >= 2 for s_tokens in scheduled_token_sets)
+
     date_str = _fmt_date(for_date)
 
     # Final wave's showtime — sweepers should arrive by the LAST wave's
@@ -963,6 +990,8 @@ def send_sweeper_notifications(for_date: date, db: Session) -> Dict:
 
     sent = failed = 0
     for driver in roster:
+        if not _is_scheduled_today(driver.payroll_name):
+            continue  # not on today's schedule at all — never a sweeper candidate
         if _has_route_today(driver.payroll_name):
             continue  # has a route — skip
         try:

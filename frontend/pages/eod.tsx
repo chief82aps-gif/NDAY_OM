@@ -47,7 +47,8 @@ const s = {
 
 export default function EodPage() {
   const router = useRouter();
-  const { tid } = router.query as { tid?: string };
+  const { tid, token } = router.query as { tid?: string; token?: string };
+  const hasAuth = Boolean(tid || token);
   const api = resolveApi();
   const today = new Date().toISOString().slice(0, 10);
 
@@ -92,13 +93,19 @@ export default function EodPage() {
   const [missingEquip, setMissingEquip] = useState('');
 
   const authenticate = async () => {
-    if (!pin) return;
+    if (!hasAuth && !pin) return;   // token/tid (Slack DM link) alone is sufficient; otherwise PIN is required
     setAuthLoading(true);
     setErrorMsg('');
     try {
-      const params = new URLSearchParams({ pin });
-      if (tid) params.set('transporter_id', tid);
-      else if (nameHint.trim()) params.set('driver_name_hint', nameHint.trim());
+      const params = new URLSearchParams();
+      if (token) {
+        params.set('token', token);
+      } else if (tid) {
+        params.set('transporter_id', tid);
+      } else {
+        params.set('pin', pin);
+        if (nameHint.trim()) params.set('driver_name_hint', nameHint.trim());
+      }
       const res = await fetch(`${api}/eod-survey/driver-lookup?${params}`);
       if (!res.ok) {
         const e = await res.json();
@@ -143,7 +150,8 @@ export default function EodPage() {
     setSubmitting(true);
     try {
       const body = {
-        transporter_id: driverInfo.transporter_id,
+        token: token || undefined,
+        transporter_id: token ? undefined : driverInfo.transporter_id,
         pin,
         survey_date: today,
         van_number: vanNumber || driverInfo.van_number,
@@ -212,22 +220,27 @@ export default function EodPage() {
         <p style={{ margin: '0 0 20px', color: '#64748b', fontSize: 13 }}>
           {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
         </p>
-        {!tid && (
+        {!hasAuth && (
           <>
             <label style={s.label}>Your Full Name</label>
             <input style={s.input} placeholder="First Last" value={nameHint} onChange={e => setNameHint(e.target.value)} />
+            <label style={s.label}>PIN (SSN Last 4)</label>
+            <input style={s.input} type="password" placeholder="••••" maxLength={4} value={pin}
+              onChange={e => setPin(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && authenticate()}
+            />
           </>
         )}
-        <label style={s.label}>PIN (SSN Last 4)</label>
-        <input style={s.input} type="password" placeholder="••••" maxLength={4} value={pin}
-          onChange={e => setPin(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && authenticate()}
-        />
+        {hasAuth && (
+          <p style={{ color: '#64748b', fontSize: 13, margin: '0 0 16px' }}>
+            You're accessing this from your personal Slack link — no PIN needed.
+          </p>
+        )}
         {errorMsg && <p style={{ color: '#f87171', fontSize: 13, margin: '-8px 0 10px' }}>{errorMsg}</p>}
         <button
           onClick={authenticate}
-          disabled={authLoading || !pin}
-          style={s.submit(!pin || authLoading)}
+          disabled={authLoading || (!hasAuth && !pin)}
+          style={s.submit((!hasAuth && !pin) || authLoading)}
         >
           {authLoading ? 'Verifying…' : 'Start Survey'}
         </button>

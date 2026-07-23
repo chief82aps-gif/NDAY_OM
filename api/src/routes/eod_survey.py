@@ -2,11 +2,12 @@
 End of Day Survey module.
 
 Flow:
-  1. Daily 3 PM Pacific: post a survey button to #driver-dashboard.
-  2. Driver taps link → /eod?tid=XXXX (or just /eod).
-  3. Driver enters SSN last 4 PIN → authenticated, sees pre-filled form.
-  4. Answers ~10 questions, submits.
-  5. 7:30 PM Pacific: gentle DM reminder to any scheduled driver who hasn't submitted.
+  1. Daily 3 PM Pacific: DM every scheduled driver their personal, signed
+     survey link → /eod?token=XXXX (or just /eod, generic/no-auth-token path).
+  2. Driver taps link — the token alone authenticates them (see
+     _issue_eod_token()'s docstring for the trust model) — no PIN needed.
+  3. Answers ~14 questions, submits.
+  4. 7:30 PM Pacific: gentle DM reminder to any scheduled driver who hasn't submitted.
 
 Admin view: /eod-admin — daily response grid with flags for outstanding items.
 """
@@ -14,9 +15,11 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from datetime import datetime, date, timedelta
 from typing import Optional
 
+import jwt
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -32,6 +35,40 @@ router = APIRouter(prefix="/eod-survey", tags=["eod-survey"])
 
 DRIVER_DASHBOARD_CHANNEL = os.getenv("DRIVER_DASHBOARD_CHANNEL_ID", "C0BEDCXNQNT")
 APP_URL = os.getenv("APP_URL", "https://nday-om.vercel.app")
+
+# 2026-07-22: replaced the bare ?tid=<transporter_id> link with a signed,
+# expiring token (same JWT-signing approach as slack_interactions.py's
+# _issue_callout_token) — a bare transporter_id is guessable/enumerable,
+# so anyone who learned another driver's ID could construct their link
+# without ever seeing the real DM. The token can't be forged (signature
+# verified against JWT_SECRET) and expires, while still carrying the
+# driver's identity as a signed claim — so we can always determine
+# exactly who submitted, same as before, just no longer via a value
+# that doubles as a guessable URL parameter.
+EOD_TOKEN_TTL_HOURS = 30   # covers a full shift + evening; sent as early as 3 PM the same day
+
+
+def _issue_eod_token(roster_id: int, transporter_id: Optional[str], driver_name: str) -> str:
+    secret = os.getenv("JWT_SECRET", "dev-secret")
+    payload = {
+        "purpose": "eod_survey",
+        "roster_id": roster_id,
+        "transporter_id": transporter_id,
+        "driver_name": driver_name,
+        "exp": int(time.time()) + EOD_TOKEN_TTL_HOURS * 3600,
+    }
+    return jwt.encode(payload, secret, algorithm="HS256")
+
+
+def _verify_eod_token(token: str) -> Optional[dict]:
+    secret = os.getenv("JWT_SECRET", "dev-secret")
+    try:
+        payload = jwt.decode(token, secret, algorithms=["HS256"])
+    except Exception:
+        return None
+    if payload.get("purpose") != "eod_survey":
+        return None
+    return payload
 
 # DB-backed (ReminderThrottleState) as of 2026-07-22 — these were plain
 # module-level dicts before, which reset to empty on every process
@@ -63,17 +100,49 @@ def _dm(user_id: str, text: str) -> None:
 def _authenticate_driver(
     transporter_id: Optional[str],
     driver_name_hint: Optional[str],
-    pin: str,
+    pin: Optional[str],
     db: Session,
+    token: Optional[str] = None,
 ) -> DriverRosterEntry:
-    """Resolve driver by transporter_id or name, verify SSN last 4 PIN."""
+    """Resolve driver by signed token, transporter_id, or name.
+
+    token (preferred): a signed, expiring JWT (_issue_eod_token()) — can't
+    be forged or guessed, unlike a bare transporter_id, while still
+    carrying the driver's identity as a verified claim. This is what
+    post_daily_survey_message()/send_eod_reminders() put in the real DM
+    link as of 2026-07-22.
+
+    transporter_id (legacy/manual): still accepted directly, same trust
+    model as before (link possession = identity) — kept for any old
+    links or manual testing, but no longer generated for new DMs.
+
+    Both skip the PIN check entirely. PIN is only required as a fallback
+    on the generic /eod link (no token/transporter_id) — a bare typed
+    name alone isn't proof of identity, unlike a link only that one
+    person ever received.
+    """
     entry: Optional[DriverRosterEntry] = None
+
+    if token:
+        claims = _verify_eod_token(token)
+        if not claims:
+            raise HTTPException(status_code=401, detail="This link has expired or is invalid.")
+        entry = db.query(DriverRosterEntry).filter_by(
+            id=claims.get("roster_id"), is_active=True
+        ).first()
+        if not entry:
+            raise HTTPException(status_code=404, detail="Driver not found.")
+        return entry
 
     if transporter_id:
         entry = db.query(DriverRosterEntry).filter_by(
             position_id=transporter_id, is_active=True
         ).first()
-    elif driver_name_hint:
+        if not entry:
+            raise HTTPException(status_code=404, detail="Driver not found.")
+        return entry
+
+    if driver_name_hint:
         # Token-overlap match (Last, First vs First Last)
         hint_tokens = frozenset(driver_name_hint.lower().split())
         candidates = db.query(DriverRosterEntry).filter_by(is_active=True).all()
@@ -86,6 +155,8 @@ def _authenticate_driver(
     if not entry:
         raise HTTPException(status_code=404, detail="Driver not found.")
 
+    if not pin:
+        raise HTTPException(status_code=401, detail="PIN required.")
     stored_pin = entry.ssn_last4 or "1234"
     if pin.strip() != stored_pin:
         raise HTTPException(status_code=401, detail="Incorrect PIN.")
@@ -123,10 +194,12 @@ class DriverLookupResponse(BaseModel):
 
 
 class EodSubmitRequest(BaseModel):
-    # Auth
+    # Auth — token (preferred) or transporter_id skip the PIN check; pin
+    # is only required with neither (see _authenticate_driver()'s docstring)
+    token: Optional[str] = None
     transporter_id: Optional[str] = None
     driver_name_hint: Optional[str] = None
-    pin: str
+    pin: Optional[str] = None
 
     # Survey fields
     survey_date: str                          # YYYY-MM-DD
@@ -174,13 +247,16 @@ class EodSubmitRequest(BaseModel):
 
 @router.get("/driver-lookup")
 def driver_lookup(
-    pin: str,
+    pin: Optional[str] = None,
     transporter_id: Optional[str] = None,
     driver_name_hint: Optional[str] = None,
+    token: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """Validate PIN and return driver info + today's pre-fill data."""
-    entry = _authenticate_driver(transporter_id, driver_name_hint, pin, db)
+    """Return driver info + today's pre-fill data. PIN only required
+    with neither token nor transporter_id — see _authenticate_driver()'s
+    docstring."""
+    entry = _authenticate_driver(transporter_id, driver_name_hint, pin, db, token=token)
     today = date.today()
     assignment = _load_today_assignment(entry.id, today, db)
 
@@ -218,7 +294,7 @@ def driver_lookup(
 @router.post("/submit")
 def submit_survey(req: EodSubmitRequest, db: Session = Depends(get_db)):
     """Authenticate driver and save EOD survey response."""
-    entry = _authenticate_driver(req.transporter_id, req.driver_name_hint, req.pin, db)
+    entry = _authenticate_driver(req.transporter_id, req.driver_name_hint, req.pin, db, token=req.token)
 
     try:
         survey_date = date.fromisoformat(req.survey_date)
@@ -433,8 +509,8 @@ def post_daily_survey_message(force: bool = False) -> dict:
                 no_slack += 1
                 continue
 
-            tid = roster_entry.position_id
-            url = f"{APP_URL}/eod?tid={tid}"
+            eod_token = _issue_eod_token(roster_entry.id, roster_entry.position_id, roster_entry.payroll_name)
+            url = f"{APP_URL}/eod?token={eod_token}"
             first_name = assignment.driver_name.split()[0]
             msg = (
                 f"🏁 Hi {first_name}! Time to complete your *End of Day Survey* before you head out.\n"
@@ -503,8 +579,8 @@ def send_eod_reminders(force: bool = False) -> dict:
             if not roster_entry or not roster_entry.slack_member_id:
                 continue
 
-            tid = roster_entry.position_id
-            url = f"{APP_URL}/eod?tid={tid}"
+            eod_token = _issue_eod_token(roster_entry.id, roster_entry.position_id, roster_entry.payroll_name)
+            url = f"{APP_URL}/eod?token={eod_token}"
             first_name = assignment.driver_name.split()[0]
             msg = (
                 f"Hi {first_name} 👋 Just a reminder to complete your *End of Day Survey* before heading out!\n"

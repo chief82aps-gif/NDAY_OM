@@ -494,6 +494,18 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
     elif action_id == "dvic_ack":
         _handle_dvic_ack(payload, db)
 
+    elif action_id == "safety_event_confirm":
+        from api.src.routes.safety_events import _handle_safety_event_confirm
+        _handle_safety_event_confirm(payload, db)
+
+    elif action_id == "safety_event_false_flag":
+        from api.src.routes.safety_events import _handle_safety_event_false_flag
+        _handle_safety_event_false_flag(payload, db)
+
+    elif action_id == "safety_violation_ack":
+        from api.src.routes.safety_events import _handle_safety_violation_ack
+        _handle_safety_violation_ack(payload, db)
+
     elif action_id == "home_callout_button":
         from api.src.routes.slack_home import _handle_home_callout_button
         _handle_home_callout_button(payload, db)

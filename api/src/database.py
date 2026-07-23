@@ -2342,6 +2342,33 @@ def ensure_daily_route_assignment_pending_ack_column():
         pass  # Column already exists
 
 
+def ensure_safety_event_review_columns():
+    """Add review/ack/video columns to safety_events — added 2026-07-23
+    for the Safety Violation Review/Dispute workflow (BUILD_QUEUE.md #6),
+    behind SAFETY_VIOLATION_REVIEW_ACTIVE (default off)."""
+    for col, coltype in (
+        ("review_status", "VARCHAR(20) DEFAULT 'pending'"),
+        ("reviewed_by", "VARCHAR(150)"),
+        ("reviewed_at", "TIMESTAMP"),
+        ("review_slack_channel", "VARCHAR(50)"),
+        ("review_slack_ts", "VARCHAR(50)"),
+        ("ack_status", "VARCHAR(20)"),
+        ("acknowledged_at", "TIMESTAMP"),
+        ("dm_channel", "VARCHAR(50)"),
+        ("dm_ts", "VARCHAR(50)"),
+        ("video_watched_at", "TIMESTAMP"),
+    ):
+        try:
+            with engine.begin() as conn:
+                if DATABASE_URL.startswith("sqlite"):
+                    sqlite_type = "TEXT" if "VARCHAR" in coltype else "DATETIME"
+                    conn.execute(text(f"ALTER TABLE safety_events ADD COLUMN {col} {sqlite_type}"))
+                else:
+                    conn.execute(text(f"ALTER TABLE safety_events ADD COLUMN IF NOT EXISTS {col} {coltype}"))
+        except Exception:
+            pass  # Column already exists
+
+
 def ensure_okami_capacity_finalize_columns():
     """Add frt + finalize-snapshot columns to okami_capacity_logs — the
     table shipped first without them, then finalize/FRT support was added
@@ -2921,6 +2948,22 @@ class SafetyEvent(Base):
     review_details = Column(Text)
     source_file = Column(String(255))
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Review/dispute + driver acknowledgment — added 2026-07-23, behind
+    # SAFETY_VIOLATION_REVIEW_ACTIVE (default off, see safety_events.py).
+    # A single confirm/dismiss step per violation, not a progressive
+    # ladder like DVIC's DvicCounselingRecord, so these live directly on
+    # this row rather than a companion table.
+    review_status = Column(String(20), default="pending")   # pending | confirmed | false_flagged
+    reviewed_by = Column(String(150))
+    reviewed_at = Column(DateTime)
+    review_slack_channel = Column(String(50))   # for chat_update on the #nday-mgt review message
+    review_slack_ts = Column(String(50))
+    ack_status = Column(String(20))             # NULL until confirmed; then pending | acknowledged
+    acknowledged_at = Column(DateTime)
+    dm_channel = Column(String(50))             # for chat_update on the driver DM
+    dm_ts = Column(String(50))
+    video_watched_at = Column(DateTime, nullable=True)   # inert until a future SAFETY_VIOLATION_VIDEO_ACTIVE gate exists
 
 
 class OkamiCapacityLog(Base):

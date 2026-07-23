@@ -10,7 +10,7 @@ the channel itself, never sent to drivers):
   3. Cortex Routes file      — window 9:00-10:00 AM PT, every 5 min until posted (#nday-operations-management)
   4. Fleet / Vehicle Data    — window 9:00-10:00 AM PT, every 5 min until posted (#nday-operations-management)
   5. Okami capacity forecast — window 3:30-9:00 PM PT,  every 5 min until posted (#nday-operations-management)
-  6. Driver schedule (post-rostering) — window 5:00-8:00 PM PT, every 5 min until posted (#nday-operations-management)
+  6. Driver schedule (post-rostering) — window 5:30-8:00 PM PT, every 5 min until posted (#nday-operations-management)
   7. Tenured Workforce DAs Report — Fridays only, window 5:00 PM-11:59 PM PT ("by COB"), every 5 min until posted (#nday-operations-management) — includes where to find/export it in Amazon's portal
 
 Windows are all against our own server clock in Pacific local time (never
@@ -69,7 +69,7 @@ _REMINDERS = {
     "cortex":       {"detected_type": "cortex",       "label": "Cortex Routes file",          "window": (9, 0, 10, 0), "page": "/upload?view=daily"},
     "fleet":        {"detected_type": "fleet",        "label": "Fleet / Vehicle Data file",   "window": (9, 0, 10, 0), "page": "/upload?view=daily"},
     "okami":        {"detected_type": "okami_capacity","label": "Okami capacity forecast",    "window": (15, 30, 21, 0), "page": "/okami-capacity"},
-    "schedule":     {"detected_type": "driver_schedule","label": "Driver schedule",           "window": (17, 0, 20, 0), "page": "/driver-schedule"},
+    "schedule":     {"detected_type": "driver_schedule","label": "Driver schedule",           "window": (17, 30, 20, 0), "page": "/driver-schedule"},
     "tenured_workforce": {
         "detected_type": "tenured_workforce",
         "label": "Tenured Workforce DAs Report",

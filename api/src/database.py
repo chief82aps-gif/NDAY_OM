@@ -1365,6 +1365,14 @@ class DailyRouteAssignment(Base):
     dm_message_ts = Column(String(50))
     dm_channel = Column(String(30))
 
+    # Outstanding-items gate — added 2026-07-23. When a driver has
+    # something unacknowledged (DVIC safety notice, unsigned attendance
+    # write-up), send_day_of_dms() sends a holding message instead of the
+    # real route DM, and does NOT set dm_sent. This throttles that
+    # holding message (resend at most every 4h) instead of re-sending it
+    # every ~10min scheduler pass until cleared.
+    pending_ack_notified_at = Column(DateTime, nullable=True)
+
     acknowledged = Column(Boolean, default=False)
     acknowledged_at = Column(DateTime)
     ack_token = Column(String(40), unique=True, index=True)
@@ -2319,6 +2327,19 @@ def ensure_driver_identity_roster_id_columns():
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS roster_id INTEGER"))
         except Exception:
             pass  # Column already exists
+
+
+def ensure_daily_route_assignment_pending_ack_column():
+    """Add pending_ack_notified_at to daily_route_assignments — added
+    2026-07-23 for the outstanding-items gate on send_day_of_dms()."""
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE daily_route_assignments ADD COLUMN pending_ack_notified_at DATETIME"))
+            else:
+                conn.execute(text("ALTER TABLE daily_route_assignments ADD COLUMN IF NOT EXISTS pending_ack_notified_at TIMESTAMP"))
+    except Exception:
+        pass  # Column already exists
 
 
 def ensure_okami_capacity_finalize_columns():

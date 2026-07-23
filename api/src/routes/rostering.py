@@ -20,9 +20,12 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 from datetime import date, datetime, timedelta
 from typing import Optional
+
+import jwt
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, or_
@@ -47,6 +50,7 @@ from api.src.database import (
     set_reminder_state,
 )
 from api.src.driver_identity import resolve_roster_entry, resolve_roster_id
+from api.src.outstanding_items import get_outstanding_items
 from api.src.schedule_config import SHOWTIME_OFFSET_MINUTES
 
 logger = logging.getLogger(__name__)
@@ -411,6 +415,38 @@ def send_nightly_roster_reminder(shift_date: date, db: Session) -> dict:
         "driver_count": len(suggestions),
         "ts": ts_map,
     }
+
+
+# ─── Outstanding-items gate (added 2026-07-23) ───────────────────────────────
+# Before a driver gets today's real route DM, send_day_of_dms() checks
+# whether they have anything of their own still unacknowledged (DVIC
+# safety notice, unsigned attendance write-up — see
+# api/src/outstanding_items.py). If so, they get a holding message
+# linking here instead of the route details.
+
+OUTSTANDING_ITEMS_TOKEN_TTL_HOURS = 48
+
+
+def _issue_outstanding_items_token(roster_id: Optional[int], driver_name: str) -> str:
+    secret = os.getenv("JWT_SECRET", "dev-secret")
+    payload = {
+        "purpose": "outstanding_items",
+        "roster_id": roster_id,
+        "driver_name": driver_name,
+        "exp": int(time.time()) + OUTSTANDING_ITEMS_TOKEN_TTL_HOURS * 3600,
+    }
+    return jwt.encode(payload, secret, algorithm="HS256")
+
+
+def _verify_outstanding_items_token(token: str) -> Optional[dict]:
+    secret = os.getenv("JWT_SECRET", "dev-secret")
+    try:
+        payload = jwt.decode(token, secret, algorithms=["HS256"])
+    except Exception:
+        return None
+    if payload.get("purpose") != "outstanding_items":
+        return None
+    return payload
 
 
 # ─── Driver shift DMs ────────────────────────────────────────────────────────
@@ -2038,13 +2074,42 @@ def send_day_of_dms(shift_date: date, db: Session) -> dict:
     client = _slack_client()
     date_str = shift_date.strftime("%A, %B %-d")
 
-    sent = skipped = no_slack = 0
+    sent = skipped = no_slack = pending_ack = 0
 
     for a in assignments:
         slack_id = _get_driver_slack_id(a.driver_name, db, roster_id=a.roster_id)
         if not slack_id:
             no_slack += 1
             # Still mark dm_sent so daily_notify plain-text fallback can pick it up
+            continue
+
+        # Outstanding-items gate — added 2026-07-23, explicit request: a
+        # driver with something unacknowledged (DVIC safety notice,
+        # unsigned attendance write-up) gets a holding message instead of
+        # today's route details. dm_sent stays False, so the next
+        # ~10-min scheduler pass re-checks and sends the real DM once
+        # everything's cleared — no extra trigger needed.
+        outstanding = get_outstanding_items(a.driver_name, a.roster_id, db)
+        if outstanding:
+            pending_ack += 1
+            throttle_ok = (
+                a.pending_ack_notified_at is None
+                or (datetime.utcnow() - a.pending_ack_notified_at) > timedelta(hours=4)
+            )
+            if throttle_ok and client:
+                try:
+                    token = _issue_outstanding_items_token(a.roster_id, a.driver_name)
+                    url = f"{FRONTEND_URL}/outstanding-items?token={token}"
+                    first_name = a.driver_name.split(",")[1].strip().split()[0] if "," in (a.driver_name or "") else (a.driver_name or "Driver").split()[0]
+                    text = (
+                        f"Good morning {first_name}! You're scheduled to route today — but first we need you "
+                        f"to acknowledge {len(outstanding)} item{'s' if len(outstanding) != 1 else ''}.\n\n"
+                        f"👉 *<{url}|Review & Acknowledge>*"
+                    )
+                    client.chat_postMessage(channel=slack_id, text=text)
+                    a.pending_ack_notified_at = datetime.utcnow()
+                except Exception as exc:
+                    logger.warning("Outstanding-items holding message failed for %s: %s", a.driver_name, exc)
             continue
 
         fallback_text, blocks = _build_driver_dm(a, wave_lead_name, date_str, wave_lead_slack_id, db)
@@ -2099,6 +2164,7 @@ def send_day_of_dms(shift_date: date, db: Session) -> dict:
         "sent": sent,
         "skipped": skipped,
         "no_slack_id": no_slack,
+        "pending_ack": pending_ack,
         "total": len(assignments),
     }
 
@@ -2769,6 +2835,22 @@ def trigger_eod_dms(shift_date: str, db: Session = Depends(get_db)):
     except ValueError:
         raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
     return send_eod_checklist_dms(target, db)
+
+
+@router.get("/outstanding-items-by-token")
+def outstanding_items_by_token(token: str, db: Session = Depends(get_db)):
+    """Resolve a signed outstanding_items token (baked into the holding
+    DM's 'Review & Acknowledge' button) into the driver's current
+    outstanding-items list, for frontend/pages/outstanding-items.tsx —
+    no PIN, link possession is identity, same trust model as every other
+    tokenized driver-facing page in this codebase."""
+    claims = _verify_outstanding_items_token(token)
+    if not claims:
+        raise HTTPException(401, "This link has expired or is invalid.")
+    driver_name = claims["driver_name"]
+    roster_id = claims.get("roster_id")
+    items = get_outstanding_items(driver_name, roster_id, db)
+    return {"driver_name": driver_name, "items": items}
 
 
 @router.get("/shift-dms/{shift_date}")

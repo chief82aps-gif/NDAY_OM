@@ -242,6 +242,17 @@ modify without explicit authorization**:
 - The write-up/sign-off review dashboard (ops manager / HR / owner
   sign-off chain) — new work, not yet built as of 2026-07-21
 
+**2026-07-23 addition, explicitly authorized by the user**:
+`send_day_of_dms()` now checks `api/src/outstanding_items.py`'s
+`get_outstanding_items()` before calling `_build_driver_dm()` — a driver
+with anything unacknowledged of their own (DVIC safety notice, unsigned
+attendance write-up) gets a holding message + link to
+`frontend/pages/outstanding-items.tsx` instead of route details, and
+`dm_sent` stays `False` so the next ~10-min scheduler pass re-checks
+automatically once cleared. This is an early-exit branch only —
+`_build_driver_dm()`'s content and the Arrived/Call-Out button structure
+are unchanged for every driver with nothing outstanding.
+
 ## Production safety gates — do not flip without explicit sign-off
 
 Full detail: `Governance/ROSTERING_DM_RULES.md`.

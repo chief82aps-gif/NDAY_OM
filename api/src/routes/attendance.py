@@ -1572,6 +1572,30 @@ def manager_sign_event(
     return {"status": "signed", "manager_signature_name": event.manager_signature_name}
 
 
+class DriverSignRequest(BaseModel):
+    signature_name: str
+
+
+@router.post("/events/{event_id}/driver-sign")
+def driver_sign_event(event_id: int, req: DriverSignRequest, db: Session = Depends(get_db)):
+    """Driver signs their own attendance write-up after the fact — for
+    events dispatch logged on the driver's behalf (e.g. a no-show)
+    outside the self-service /callout page, which normally sets
+    signature_name at creation. Added 2026-07-23 for the outstanding-
+    items gate (api/src/outstanding_items.py) — this is the one genuine
+    driver-facing gap in the write-up flow (everything else pending is a
+    manager/HR countersignature, not a driver action)."""
+    event = db.query(AttendanceEvent).filter(AttendanceEvent.id == event_id).first()
+    if not event:
+        raise HTTPException(404, "Event not found.")
+    if not req.signature_name.strip():
+        raise HTTPException(400, "Signature name is required.")
+    event.signature_name = req.signature_name.strip()
+    event.signature_at = datetime.utcnow()
+    db.commit()
+    return {"status": "signed", "signature_name": event.signature_name}
+
+
 @router.get("/unsigned-writeups")
 def pending_review(db: Session = Depends(get_db)):
     """Admin — all callout writeups with driver signature but no manager countersignature."""

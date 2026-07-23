@@ -406,6 +406,9 @@ def _process_week(week: str, db: Session, only_tid: Optional[str] = None) -> dic
         if record.stage >= 4:
             _queue_discipline_writeup(record, week, db)
 
+    if sent_count > 0:
+        refresh_dvic_ack_summary(week, db)
+
     return {
         "week": week,
         "total_drivers": len(by_driver),
@@ -871,6 +874,19 @@ def send_all_dms(req: DmRequest, db: Session = Depends(get_db)):
     return _process_week(week, db)
 
 
+@router.post("/refresh-ack-summary")
+def refresh_ack_summary_endpoint(req: DmRequest, db: Session = Depends(get_db)):
+    """Manual/on-demand refresh of the consolidated DVIC acknowledgment
+    summary for a week (defaults to the latest ingested week)."""
+    week = req.week
+    if not week:
+        snap = db.query(DvicSnapshot).order_by(DvicSnapshot.imported_at.desc(), DvicSnapshot.id.desc()).first()
+        if not snap:
+            raise HTTPException(404, "No DVIC data ingested.")
+        week = snap.week
+    return refresh_dvic_ack_summary(week, db)
+
+
 @router.get("/acknowledgments")
 def list_acknowledgments(week: Optional[str] = None, db: Session = Depends(get_db)):
     q = db.query(DvicAcknowledgment)
@@ -957,12 +973,11 @@ def record_acknowledgment(transporter_id: str, week: str, signature_name: str, d
 
     db.commit()
 
-    _post(
-        OPS_CHANNEL,
-        f":pencil: *DVIC Acknowledgment* — {name} signed for {week} "
-        f"({len(violations)} violation{'s' if len(violations) != 1 else ''}). "
-        f"Signature: \"{signature_name}\"",
-    )
+    # Consolidated summary, updated in place — NOT a per-driver post.
+    # With 75+ drivers acknowledging over the same day or two, a message
+    # per ack would bury #nday-operations-management (flagged explicitly
+    # 2026-07-23). Same pattern as rostering.py's DM-response summaries.
+    refresh_dvic_ack_summary(week, db)
 
     return {
         "status": "acknowledged",
@@ -973,6 +988,55 @@ def record_acknowledgment(transporter_id: str, week: str, signature_name: str, d
         "signature_name": signature_name,
         "acknowledged_at": now.isoformat(),
     }
+
+
+def refresh_dvic_ack_summary(week: str, db: Session) -> dict:
+    """Consolidated #nday-operations-management summary of DVIC
+    acknowledgment status for `week`: ✅ acknowledged / ⏳ pending. One
+    message per week, updated in place (chat_update) rather than a new
+    post per driver — added 2026-07-23 so 75+ drivers acknowledging over
+    a day or two doesn't bury the channel."""
+    records = db.query(DvicCounselingRecord).filter(DvicCounselingRecord.last_week == week).all()
+    if not records:
+        return {"status": "no_records", "week": week}
+
+    client = _client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    acknowledged = [r for r in records if r.ack_status == "acknowledged"]
+    pending = [r for r in records if r.ack_status != "acknowledged"]
+
+    week_label = _week_label(week)
+    lines = [f"✅ {len(acknowledged)} acknowledged  ·  ⏳ {len(pending)} pending"]
+    if pending:
+        pending_sorted = sorted(pending, key=lambda r: (-(r.stage or 0), r.transporter_name or ""))
+        lines.append("\n*⏳ Pending:*\n" + "\n".join(
+            f"• {r.transporter_name} (Stage {r.stage})" for r in pending_sorted
+        ))
+
+    blocks = [
+        {"type": "header", "text": {"type": "plain_text", "text": f"📋 DVIC Acknowledgments — {week_label}", "emoji": True}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}},
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": f"_Updated {datetime.utcnow().strftime('%H:%M UTC')}_"}]},
+    ]
+
+    state_key = f"dvic_ack_summary_{week}"
+    state = get_reminder_state(db, state_key)
+    existing_ts = state.get("ts")
+
+    try:
+        if existing_ts:
+            client.chat_update(channel=OPS_CHANNEL, ts=existing_ts, text=f"DVIC Acknowledgments — {week_label}", blocks=blocks)
+            ts = existing_ts
+        else:
+            resp = client.chat_postMessage(channel=OPS_CHANNEL, text=f"DVIC Acknowledgments — {week_label}", blocks=blocks)
+            ts = resp.get("ts")
+        set_reminder_state(db, state_key, {"ts": ts})
+        return {"status": "ok", "acknowledged": len(acknowledged), "pending": len(pending)}
+    except Exception as exc:
+        logger.warning("DVIC ack summary post failed: %s", exc)
+        return {"status": "error", "detail": str(exc)}
 
 
 @router.post("/acknowledge")

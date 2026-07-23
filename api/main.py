@@ -20,7 +20,7 @@ from api.src.routes import rostering, cortex_tracking, adp, rts, mgt_reminders, 
 from api.src.routes.daily_notify import check_and_notify, check_ecp_and_prompt
 from api.src.routes.rostering import send_nightly_roster_reminder, send_wave_lead_pre_wave_dm, send_missing_drivers_summary
 from api.src.schedule_config import SCHEDULE_GAP_CHECK_HOUR
-from api.src.database import Base, engine, SessionLocal, ensure_dop_driver_name_column, ensure_ssn_last4_column, ensure_callout_signature_column, ensure_assignment_board_columns, _ensure_manager_signature_columns, _ensure_position_id_nullable, ensure_driver_shift_dm_checklist_columns, ensure_route_duration_columns, ensure_dvic_raw_fields_column, ensure_driver_roster_tracking_columns, ensure_daily_route_assignment_unique_index, ensure_okami_capacity_finalize_columns, ensure_crash_report_evidence_columns, ensure_daily_route_assignment_notified_snapshot_column, ensure_user_auth_columns, ensure_route_sheet_load_size_columns, ensure_driver_shift_dm_decline_column, ensure_driver_shift_dm_callout_column, ensure_dvic_manager_signature_columns, ensure_eod_crash_columns, ensure_driver_roster_preferred_name_column, ensure_driver_identity_roster_id_columns, ensure_dvic_video_watch_column, ensure_daily_route_assignment_pending_ack_column, ensure_safety_event_review_columns
+from api.src.database import Base, engine, SessionLocal, ensure_dop_driver_name_column, ensure_ssn_last4_column, ensure_callout_signature_column, ensure_assignment_board_columns, _ensure_manager_signature_columns, _ensure_position_id_nullable, ensure_driver_shift_dm_checklist_columns, ensure_route_duration_columns, ensure_dvic_raw_fields_column, ensure_driver_roster_tracking_columns, ensure_daily_route_assignment_unique_index, ensure_okami_capacity_finalize_columns, ensure_crash_report_evidence_columns, ensure_daily_route_assignment_notified_snapshot_column, ensure_user_auth_columns, ensure_route_sheet_load_size_columns, ensure_driver_shift_dm_decline_column, ensure_driver_shift_dm_callout_column, ensure_dvic_manager_signature_columns, ensure_eod_crash_columns, ensure_driver_roster_preferred_name_column, ensure_driver_identity_roster_id_columns, ensure_dvic_video_watch_column, ensure_daily_route_assignment_pending_ack_column, ensure_safety_event_review_columns, ensure_dvic_video_started_column
 from api.src.slack_notification_gate import apply_slack_send_gate
 
 logger = logging.getLogger(__name__)
@@ -437,7 +437,9 @@ async def startup():
     ensure_driver_roster_preferred_name_column()
     ensure_driver_identity_roster_id_columns()
     ensure_dvic_video_watch_column()
+    ensure_dvic_video_started_column()
     ensure_daily_route_assignment_pending_ack_column()
+    ensure_safety_event_review_columns()
     ensure_user_auth_columns()
     from api.src.routes.auth import seed_default_users
     _seed_db = SessionLocal()

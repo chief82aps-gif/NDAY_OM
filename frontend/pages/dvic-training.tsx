@@ -15,9 +15,11 @@ interface StatusInfo {
   week: string;
   stage: number;
   video_watched_at: string | null;
+  video_started_at: string | null;
+  min_watch_seconds: number;
 }
 
-type Step = 'loading' | 'video' | 'sign' | 'done' | 'error';
+type Step = 'loading' | 'video' | 'confirm' | 'sign' | 'done' | 'error';
 
 const s = {
   page: { minHeight: '100vh', background: '#0f172a', color: '#e2e8f0', fontFamily: 'system-ui, sans-serif', padding: '24px 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'center' } as React.CSSProperties,
@@ -41,10 +43,12 @@ export default function DvicTrainingPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [signatureName, setSignatureName] = useState('');
   const [signErr, setSignErr] = useState('');
+  const [confirmErr, setConfirmErr] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const maxTimeReached = useRef(0);
 
-  useEffect(() => {
+  const load = () => {
     if (!token) return;
     fetch(`${api}/dvic/training-status-by-token?token=${encodeURIComponent(token)}`)
       .then(r => {
@@ -63,20 +67,64 @@ export default function DvicTrainingPage() {
         );
         setStep('error');
       });
-  }, [token, api]);
+  };
 
-  async function handleVideoEnded() {
+  useEffect(load, [token, api]);
+
+  // Starts the minimum-elapsed-time clock server-side the moment the
+  // driver actually reaches the video step — idempotent, a reload can't
+  // restart the clock.
+  useEffect(() => {
+    if (step === 'video' && token) {
+      fetch(`${api}/dvic/training-video-started`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      }).catch(() => {});
+    }
+  }, [step, token, api]);
+
+  // Blocks forward-seeking (scrubbing ahead) — rewatching backward is
+  // still allowed. The real anti-cheat backstop is the server-side
+  // elapsed-time check in training-video-watched; this just removes the
+  // obvious "drag the scrubber to the end" shortcut.
+  function handleTimeUpdate() {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.currentTime > maxTimeReached.current) maxTimeReached.current = v.currentTime;
+  }
+  function handleSeeking() {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.currentTime > maxTimeReached.current + 0.5) {
+      v.currentTime = maxTimeReached.current;
+    }
+  }
+
+  function handleVideoEnded() {
+    setStep('confirm');
+  }
+
+  async function handleConfirmUnderstanding() {
     if (!token) return;
+    setConfirmErr('');
+    setSubmitting(true);
     try {
-      await fetch(`${api}/dvic/training-video-watched`, {
+      const res = await fetch(`${api}/dvic/training-video-watched`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token }),
       });
-    } catch {
-      // Non-fatal — the driver can still proceed; the ack endpoint re-checks server-side.
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.detail ?? 'Could not confirm.');
+      }
+      setStep('sign');
+    } catch (err: unknown) {
+      setConfirmErr(err instanceof Error ? err.message : 'Something went wrong — please try again.');
+    } finally {
+      setSubmitting(false);
     }
-    setStep('sign');
   }
 
   async function handleSign(e: React.FormEvent) {
@@ -148,18 +196,40 @@ export default function DvicTrainingPage() {
         {step === 'video' && (
           <>
             <p style={{ color: '#cbd5e1', fontSize: 14, marginBottom: 14 }}>
-              Please watch this short training video all the way through — it'll unlock the acknowledgment
-              once it finishes.
+              Please watch this training video all the way through — it'll unlock once it finishes.
+              Skipping ahead won't work; the timer only counts real watch time.
             </p>
             <video
               ref={videoRef}
               controls
               controlsList="nodownload noplaybackrate"
+              disablePictureInPicture
+              onTimeUpdate={handleTimeUpdate}
+              onSeeking={handleSeeking}
               onEnded={handleVideoEnded}
               style={{ width: '100%', borderRadius: 8, background: '#000' }}
               src={`${api}/dvic/training-video-url`}
             />
           </>
+        )}
+
+        {step === 'confirm' && (
+          <div>
+            <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, padding: 16, marginBottom: 16 }}>
+              <p style={{ color: '#f1f5f9', fontSize: 15, fontWeight: 700, margin: '0 0 8px' }}>
+                Before you go — do you understand?
+              </p>
+              <p style={{ color: '#cbd5e1', fontSize: 14, lineHeight: 1.5, margin: 0 }}>
+                Every time you complete a pre-trip inspection in under 90 seconds, you'll be required to
+                watch this full video again before you can acknowledge it. Taking the full time on every
+                DVIC is the only way to avoid this.
+              </p>
+            </div>
+            {confirmErr && <p style={{ color: '#f87171', fontSize: 13, marginBottom: 10 }}>{confirmErr}</p>}
+            <button onClick={handleConfirmUnderstanding} disabled={submitting} style={s.submit(submitting)}>
+              {submitting ? 'Confirming…' : 'Yes, I Understand →'}
+            </button>
+          </div>
         )}
 
         {step === 'sign' && (

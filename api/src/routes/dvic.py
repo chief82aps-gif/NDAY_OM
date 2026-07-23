@@ -70,6 +70,12 @@ DVIC_TRAINING_VIDEO_ACTIVE = os.getenv("DVIC_TRAINING_VIDEO_ACTIVE", "false").lo
 DVIC_VIDEO_GATE_MIN_STAGE = 2
 DVIC_VIDEO_TOKEN_TTL_HOURS = 72
 DVIC_TRAINING_VIDEO_STATE_KEY = "dvic_training_video"
+# Minimum real elapsed wall-clock time between opening the training page
+# and being allowed to mark it watched — enforced server-side against
+# video_started_at, not just trusting the <video> 'ended' event (which
+# fires immediately if someone scrubs straight to the end). Update this
+# to match the real video's length once uploaded.
+DVIC_VIDEO_MIN_WATCH_SECONDS = int(os.getenv("DVIC_VIDEO_MIN_WATCH_SECONDS", "360"))
 
 
 def _issue_dvic_video_token(transporter_id: str, week: str) -> str:
@@ -298,6 +304,7 @@ def _advance_counseling(tid: str, name: str, week: str, instance_count: int, db:
     record.ack_status = "pending"
     record.acknowledged_at = None
     record.video_watched_at = None
+    record.video_started_at = None
     db.flush()
     return record, True
 
@@ -1199,16 +1206,21 @@ def training_status_by_token(token: str, db: Session = Depends(get_db)):
         "week": claims.get("week"),
         "stage": record.stage,
         "video_watched_at": record.video_watched_at.isoformat() if record.video_watched_at else None,
+        "video_started_at": record.video_started_at.isoformat() if record.video_started_at else None,
+        "min_watch_seconds": DVIC_VIDEO_MIN_WATCH_SECONDS,
     }
 
 
-class TrainingVideoWatchedRequest(BaseModel):
+class TrainingVideoTokenRequest(BaseModel):
     token: str
 
 
-@router.post("/training-video-watched")
-def training_video_watched(req: TrainingVideoWatchedRequest, db: Session = Depends(get_db)):
-    """Frontend calls this on the <video> element's 'ended' event."""
+@router.post("/training-video-started")
+def training_video_started(req: TrainingVideoTokenRequest, db: Session = Depends(get_db)):
+    """Frontend calls this once, when the driver actually opens the
+    training page and the video is ready to play — starts the minimum-
+    elapsed-time clock. Idempotent: does not reset an already-running
+    timer (a reload/re-open shouldn't let someone restart the clock)."""
     claims = _verify_dvic_video_token(req.token)
     if not claims:
         raise HTTPException(401, "This link has expired or is invalid.")
@@ -1218,6 +1230,35 @@ def training_video_watched(req: TrainingVideoWatchedRequest, db: Session = Depen
     ).first()
     if not record:
         raise HTTPException(404, "No counseling record found.")
+    if not record.video_started_at:
+        record.video_started_at = datetime.utcnow()
+        db.commit()
+    return {"status": "started", "video_started_at": record.video_started_at.isoformat(), "min_watch_seconds": DVIC_VIDEO_MIN_WATCH_SECONDS}
+
+
+@router.post("/training-video-watched")
+def training_video_watched(req: TrainingVideoTokenRequest, db: Session = Depends(get_db)):
+    """Frontend calls this once the video has played through AND the
+    driver has confirmed they understand the consequence of a repeat.
+    Server-side enforces a real minimum elapsed time since
+    training-video-started was called — never trusts the client alone,
+    since scrubbing straight to the end would otherwise fire the
+    <video> 'ended' event immediately."""
+    claims = _verify_dvic_video_token(req.token)
+    if not claims:
+        raise HTTPException(401, "This link has expired or is invalid.")
+    transporter_id = claims["transporter_id"]
+    record = db.query(DvicCounselingRecord).filter(
+        DvicCounselingRecord.transporter_id == transporter_id
+    ).first()
+    if not record:
+        raise HTTPException(404, "No counseling record found.")
+    if not record.video_started_at:
+        raise HTTPException(400, "Video hasn't been started yet.")
+    elapsed = (datetime.utcnow() - record.video_started_at).total_seconds()
+    if elapsed < DVIC_VIDEO_MIN_WATCH_SECONDS:
+        remaining = int(DVIC_VIDEO_MIN_WATCH_SECONDS - elapsed)
+        raise HTTPException(400, f"Please watch the full video — {remaining} more second(s) required.")
     record.video_watched_at = datetime.utcnow()
     db.commit()
     return {"status": "watched", "video_watched_at": record.video_watched_at.isoformat()}

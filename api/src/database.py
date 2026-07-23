@@ -2124,6 +2124,20 @@ def ensure_dvic_video_watch_column():
         pass  # Column already exists
 
 
+def ensure_dvic_video_started_column():
+    """Add video_started_at to dvic_counseling_records — added 2026-07-23
+    to enforce a minimum elapsed wall-clock time between opening the
+    training page and marking it watched."""
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE dvic_counseling_records ADD COLUMN video_started_at DATETIME"))
+            else:
+                conn.execute(text("ALTER TABLE dvic_counseling_records ADD COLUMN IF NOT EXISTS video_started_at TIMESTAMP"))
+    except Exception:
+        pass  # Column already exists
+
+
 def ensure_eod_crash_columns():
     """Add crash_occurred/crash_report_id to eod_survey_responses — added
     2026-07-22, splitting the crash question out from the generic
@@ -2564,6 +2578,12 @@ class DvicCounselingRecord(Base):
     # whenever stage advances (_advance_counseling()), same as ack_status/
     # acknowledged_at, so a driver must re-watch for each new stage.
     video_watched_at = Column(DateTime, nullable=True)
+    # Set when the driver opens the training page (POST
+    # /dvic/training-video-started) — used to enforce a real minimum
+    # elapsed wall-clock time before video_watched_at can be set (harder
+    # to cheat than trusting the <video> 'ended' event alone, since that
+    # fires immediately if someone scrubs straight to the end).
+    video_started_at = Column(DateTime, nullable=True)
 
 
 class DocumentRoutingRule(Base):

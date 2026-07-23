@@ -3,7 +3,7 @@ import ProtectedRoute from '../components/ProtectedRoute';
 import { useAuth } from '../contexts/AuthContext';
 
 interface TrackerItem {
-  source: 'manager_accountability' | 'dvic' | 'attendance' | 'injury' | 'crash';
+  source: 'manager_accountability' | 'dvic' | 'dvic_violation' | 'attendance' | 'injury' | 'crash';
   id: number;
   shift_date: string | null;
   driver_name: string | null;
@@ -96,7 +96,11 @@ export default function DisciplineTrackerPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const displayed = filter === 'all' ? items : items.filter(i => i.source === filter);
+  const displayed = filter === 'all'
+    ? items
+    : filter === 'dvic'
+      ? items.filter(i => i.source === 'dvic' || i.source === 'dvic_violation')
+      : items.filter(i => i.source === filter);
 
   function canSign(item: TrackerItem): boolean {
     if (!item.needs_sign_role) return false;   // crash rows: read-only here
@@ -131,6 +135,11 @@ export default function DisciplineTrackerPage() {
         });
       } else if (item.source === 'dvic') {
         res = await fetch(`${api}/dvic/counseling/${item.id}/sign`, {
+          method: 'POST', headers,
+          body: JSON.stringify({ signed_by: signerName.trim() }),
+        });
+      } else if (item.source === 'dvic_violation') {
+        res = await fetch(`${api}/dvic/violations/${item.id}/sign`, {
           method: 'POST', headers,
           body: JSON.stringify({ signed_by: signerName.trim() }),
         });
@@ -184,7 +193,7 @@ export default function DisciplineTrackerPage() {
             {([
               ['all', `All (${items.length})`],
               ['attendance', `Callouts (${items.filter(i => i.source === 'attendance').length})`],
-              ['dvic', `DVIC (${items.filter(i => i.source === 'dvic').length})`],
+              ['dvic', `DVIC (${items.filter(i => i.source === 'dvic' || i.source === 'dvic_violation').length})`],
               ['injury', `Injury (${items.filter(i => i.source === 'injury').length})`],
               ['crash', `Crash (${items.filter(i => i.source === 'crash').length})`],
               ['manager_accountability', `Other (${items.filter(i => i.source === 'manager_accountability').length})`],

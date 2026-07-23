@@ -900,16 +900,28 @@ def _handle_talk_to_lead(payload: dict, db: Session) -> None:
 
 
 def _handle_dvic_ack(payload: dict, db: Session) -> None:
-    """Driver tapped 'Acknowledge' on a DVIC safety notice DM."""
+    """Driver tapped 'Acknowledge' on a DVIC safety notice DM.
+
+    Dual-path (added 2026-07-23): new DMs bake in {"violation_id": ...}
+    (per-violation model); the 73 Stage-1 DMs already sent today, the
+    first live day this system ran, still carry the old
+    {"transporter_id", "week", "stage"} shape and must keep working via
+    the untouched record_acknowledgment() path."""
     try:
         import json as _json
         action = (payload.get("actions") or [{}])[0]
         value = _json.loads(action.get("value", "{}"))
-        transporter_id = value.get("transporter_id", "")
-        week = value.get("week", "")
 
-        from api.src.routes.dvic import record_acknowledgment
-        result = record_acknowledgment(transporter_id, week, "Acknowledged via Slack", db)
+        if "violation_id" in value:
+            from api.src.routes.dvic import record_violation_acknowledgment
+            result = record_violation_acknowledgment(int(value["violation_id"]), "Acknowledged via Slack", db)
+            name_fallback = ""
+        else:
+            transporter_id = value.get("transporter_id", "")
+            week = value.get("week", "")
+            from api.src.routes.dvic import record_acknowledgment
+            result = record_acknowledgment(transporter_id, week, "Acknowledged via Slack", db)
+            name_fallback = transporter_id
 
         channel_id = payload.get("channel", {}).get("id", "")
         msg_ts = payload.get("message", {}).get("ts", "")
@@ -918,7 +930,7 @@ def _handle_dvic_ack(payload: dict, db: Session) -> None:
             if token:
                 from slack_sdk import WebClient as _WC
                 from datetime import datetime as _dt
-                name = result.get("transporter_name") or transporter_id
+                name = result.get("transporter_name") or name_fallback
                 _WC(token=token).chat_update(
                     channel=channel_id,
                     ts=msg_ts,

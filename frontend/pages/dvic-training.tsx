@@ -30,9 +30,8 @@ interface YTPlayer {
 }
 
 interface StatusInfo {
-  transporter_id: string;
+  violation_id: number;
   transporter_name: string;
-  week: string;
   stage: number;
   video_watched_at: string | null;
   video_started_at: string | null;
@@ -193,8 +192,7 @@ export default function DvicTrainingPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          transporter_id: info.transporter_id,
-          week: info.week,
+          violation_id: info.violation_id,
           signature_name: signatureName.trim(),
         }),
       });
@@ -240,7 +238,7 @@ export default function DvicTrainingPage() {
       <div style={s.card}>
         <h2 style={{ margin: '0 0 4px', color: '#f1f5f9' }}>DVIC Safety Training</h2>
         <p style={{ margin: '0 0 20px', color: '#64748b', fontSize: 13 }}>
-          {info?.transporter_name} · Week {info?.week}
+          {info?.transporter_name}
         </p>
 
         {step === 'video' && (

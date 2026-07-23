@@ -78,12 +78,15 @@ DVIC_TRAINING_VIDEO_STATE_KEY = "dvic_training_video"
 DVIC_VIDEO_MIN_WATCH_SECONDS = int(os.getenv("DVIC_VIDEO_MIN_WATCH_SECONDS", "360"))
 
 
-def _issue_dvic_video_token(transporter_id: str, week: str) -> str:
+def _issue_dvic_video_token(violation_id: int) -> str:
+    """Keyed on a single violation (2026-07-23 per-violation model) — no
+    backward-compat path needed here, since nobody has ever reached
+    Stage 2 (today was the first live day; every real driver is still
+    at Stage 1)."""
     secret = os.getenv("JWT_SECRET", "dev-secret")
     payload = {
         "purpose": "dvic_video",
-        "transporter_id": transporter_id,
-        "week": week,
+        "violation_id": violation_id,
         "exp": int(time.time()) + DVIC_VIDEO_TOKEN_TTL_HOURS * 3600,
     }
     return jwt.encode(payload, secret, algorithm="HS256")
@@ -169,84 +172,59 @@ def _find_roster_entry(transporter_name: str, db: Session) -> Optional[DriverRos
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# DM escalation messages — 4-stage progressive discipline.
-#
-# The stage is driven by DvicCounselingRecord.stage (how many times this
-# driver has been counseled across weeks), NOT by how many instances appear
-# on a single report — a driver who's already been counseled keeps
-# reappearing on the rolling 7-day report, and that must not by itself
-# trigger a repeat write-up. `count` (this week's instance count) is only
-# used to word the message.
+# DM messages — per-violation model (2026-07-23). Stage 1 = the very first
+# violation ever flagged for this driver. Stage 2 = every subsequent
+# violation, individually, forever — no further escalation. Each DM
+# describes ONE specific violation instance, not a weekly aggregate.
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _week_label(week: str) -> str:
     return week.replace("-W", " Week ").replace("2026 Week ", "Week ")
 
 
-def _counseling_message(stage: int, name: str, count: int, week: str) -> str:
+def _counseling_message(stage: int, name: str, violation: "DvicViolation") -> str:
     first = name.split()[0] if name else "Driver"
-    week_label = _week_label(week)
-    plural = "s" if count != 1 else ""
+    date_str = violation.start_date.strftime("%A, %B %-d") if violation.start_date else "recently"
+    duration = violation.duration_seconds
 
     if stage == 1:
         return (
             f":wave: Hey {first}, this is Dispatch/Safety checking in — not a write-up, just us looking out for you.\n\n"
-            f"This week you had *{count} pre-trip inspection{plural}* logged under 90 seconds. We get it — you're "
-            "trying to get moving fast. But that walk-around is one of the only things standing between you and a "
-            "flat tire, a bad mirror, or a brake issue nobody caught before you were 20 miles into your route.\n\n"
+            f"On {date_str} you had a pre-trip inspection logged at *{duration} seconds* — under the 90-second "
+            "minimum. We get it — you're trying to get moving fast. But that walk-around is one of the only things "
+            "standing between you and a flat tire, a bad mirror, or a brake issue nobody caught before you were 20 "
+            "miles into your route.\n\n"
             "*You're too important to us to risk getting hurt over a rushed checklist.* Take the full 90 seconds — "
             "every shift, no exceptions. It's not about the paperwork, it's about you going home the same way you "
             "came in.\n\n"
             "No action needed here beyond tapping *Acknowledge* — just wanted you to know we noticed, and we've got "
             "your back."
         )
-    elif stage == 2:
-        return (
-            f":memo: Hey {first}, we flagged you again this week — *{count} pre-trip inspection{plural}* under 90 "
-            f"seconds ({week_label}).\n\n"
-            "We meant what we said last time: this isn't about catching you, it's about making sure you're "
-            "actually checking the van before you drive it. A second flag means we're logging this one as a real "
-            "coaching note in your file — not to punish you, but because a pattern here is a real safety risk, and "
-            "we have to start treating it like one.\n\n"
-            "Take the extra 60-90 seconds. Walk all the way around. Check your tires, mirrors, lights. It matters "
-            "more than the couple minutes it costs you.\n\n"
-            "Please tap *Acknowledge* — this confirms you've seen it and it's noted in your file."
-        )
-    elif stage == 3:
-        return (
-            f":warning: {first}, this is a final warning on pre-trip inspection times — *{count} pre-trip "
-            f"inspection{plural}* under 90 seconds this week ({week_label}).\n\n"
-            "We've talked to you about this twice now. At this point we have to be direct: this is a real safety "
-            "violation, not a habit we can keep coaching around informally. Your manager has been looped in. One "
-            "more flag after this moves to formal disciplinary action.\n\n"
-            "We still want this to end with you safe and driving, not with a write-up. Slow down at the start of "
-            "your shift — it's the cheapest 90 seconds in your whole day.\n\n"
-            "Please tap *Acknowledge*."
-        )
     else:
         return (
-            f":rotating_light: {first}, this is a formal written disciplinary notice — *{count} pre-trip "
-            f"inspection{plural}* under 90 seconds this week ({week_label}), continuing after a final warning.\n\n"
-            "This is now routed to NDAY Management and placed in your file. Continued violations put your "
-            "position at risk. We genuinely don't want it to get there — please take this seriously starting with "
-            "your very next shift.\n\n"
-            "Please tap *Acknowledge* to confirm receipt."
+            f":memo: Hey {first}, another pre-trip inspection came in under 90 seconds — *{duration} seconds* on "
+            f"{date_str}.\n\n"
+            "Since this isn't your first, this one requires you to watch the full safety training video before you "
+            "can acknowledge it — that's the case every time going forward, for any inspection under 90 seconds. "
+            "Taking the full 90 seconds is the only way to skip this step.\n\n"
+            "This isn't about punishing you — it's about making sure you're actually checking the van before you "
+            "drive it. A rushed pre-trip is a real safety risk, to you and everyone else on the road."
         )
 
 
-def _dm_blocks(stage: int, name: str, count: int, week: str, transporter_id: str, video_watched: bool = False) -> list:
-    text = _counseling_message(stage, name, count, week)
-    value = json.dumps({"transporter_id": transporter_id, "week": week, "stage": stage})
+def _dm_blocks(violation: "DvicViolation", stage: int, name: str) -> list:
+    text = _counseling_message(stage, name, violation)
+    value = json.dumps({"violation_id": violation.id})
 
-    needs_video = DVIC_TRAINING_VIDEO_ACTIVE and stage >= DVIC_VIDEO_GATE_MIN_STAGE and not video_watched
+    needs_video = DVIC_TRAINING_VIDEO_ACTIVE and stage >= DVIC_VIDEO_GATE_MIN_STAGE and not violation.video_watched_at
     if needs_video:
         # Baked in at send-time (not issued fresh on click) so this is a
         # genuine one-click button straight to the video page — same
         # pattern as rostering.py's "Can't Make It"/"Call Out" buttons.
-        # No Acknowledge button here: record_acknowledgment() would reject
-        # it anyway, and showing a button that's guaranteed to fail is
-        # worse than not showing it.
-        video_url = f"{APP_URL}/dvic-training?token={_issue_dvic_video_token(transporter_id, week)}"
+        # No Acknowledge button here: record_violation_acknowledgment()
+        # would reject it anyway, and showing a button that's guaranteed
+        # to fail is worse than not showing it.
+        video_url = f"{APP_URL}/dvic-training?token={_issue_dvic_video_token(violation.id)}"
         actions = [{
             "type": "button",
             "text": {"type": "plain_text", "text": "▶️  Watch Training Video", "emoji": True},
@@ -274,89 +252,24 @@ def _dm_blocks(stage: int, name: str, count: int, week: str, transporter_id: str
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Counseling stage — persistent, per-driver progressive discipline ladder
+# Per-violation action processing — replaces the old per-driver-per-week
+# DvicCounselingRecord ladder (2026-07-23).
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _advance_counseling(tid: str, name: str, week: str, instance_count: int, db: Session):
-    """Advance (or create) this driver's counseling record for `week`.
+def _action_new_violations(week: str, db: Session, only_tid: Optional[str] = None) -> dict:
+    """For the latest snapshot of `week`, action every violation that
+    hasn't already been actioned under an equivalent (transporter_id,
+    start_time) identity — the rolling 7-day export re-uploads the SAME
+    real violation across multiple days' snapshots, and this must never
+    re-count or re-message an already-handled instance. Each genuinely
+    new violation gets its own DM: Stage 1 if this driver has never been
+    actioned before (checked against both this new model AND the legacy
+    DvicCounselingRecord, so a driver already mentored under the old
+    per-week model isn't treated as first-time again), Stage 2 otherwise.
 
-    Returns (record, is_new_action). is_new_action=False means this week was
-    already actioned for this driver — the same name reappearing on a later
-    rolling 7-day report must never trigger a second write-up for a week
-    already handled. Caller should skip sending a DM when False.
-    """
-    record = db.query(DvicCounselingRecord).filter(
-        DvicCounselingRecord.transporter_id == tid
-    ).first()
-
-    if record and record.last_week == week:
-        return record, False
-
-    if not record:
-        record = DvicCounselingRecord(transporter_id=tid, transporter_name=name, stage=0)
-        db.add(record)
-
-    record.transporter_name = name or record.transporter_name
-    record.stage = min((record.stage or 0) + 1, 4)
-    record.last_week = week
-    record.last_instance_count = instance_count
-    record.last_actioned_at = datetime.utcnow()
-    record.ack_status = "pending"
-    record.acknowledged_at = None
-    record.video_watched_at = None
-    record.video_started_at = None
-    db.flush()
-    return record, True
-
-
-def _queue_discipline_writeup(record: "DvicCounselingRecord", week: str, db: Session) -> None:
-    """Stage-4 formal write-ups route into the same pending-review queue as
-    other management write-ups (see manager_accountability.py's
-    ManagerAccountabilityEvent / discipline-tracker endpoint)."""
-    try:
-        from api.src.routes.manager_accountability import ManagerAccountabilityEvent, _on_duty_managers
-        managers = _on_duty_managers(date.today())
-        for manager in managers:
-            existing = db.query(ManagerAccountabilityEvent).filter(
-                ManagerAccountabilityEvent.shift_date == date.today(),
-                ManagerAccountabilityEvent.manager_name == manager["name"],
-                ManagerAccountabilityEvent.writeup_type == "dvic_repeat_violation",
-                ManagerAccountabilityEvent.source_event_id == record.id,
-            ).first()
-            if existing:
-                continue
-            db.add(ManagerAccountabilityEvent(
-                shift_date=date.today(),
-                manager_name=manager["name"],
-                manager_slack_id=manager["slack_id"],
-                writeup_type="dvic_repeat_violation",
-                source_event_id=record.id,
-                source_detail=(
-                    f"{record.transporter_name} — {record.last_instance_count} DVIC under-90s in "
-                    f"{week}, stage 4 formal write-up"
-                ),
-            ))
-        db.commit()
-    except Exception as exc:
-        logger.warning("Failed to queue DVIC discipline write-up: %s", exc)
-
-
-def _process_week(week: str, db: Session, only_tid: Optional[str] = None) -> dict:
-    """Advance counseling stage + send the Slack DM for each flagged driver,
-    using the most-recently-imported snapshot for `week`.
-
-    Gated by DRIVER_DM_ACTIVE — a no-op otherwise, so the counseling ladder
-    can never silently advance while driver DMs are switched off.
-
-    Violations are scoped to that ONE snapshot, not every row tagged with
-    this week string — DVIC is a rolling trailing-7-day report re-uploaded
-    daily under the same week label, so summing by week alone would count
-    the same real-world instance multiple times (once per overlapping
-    day's snapshot) and inflate both the DM's stated count and the stage
-    advancement. _advance_counseling()'s own "already actioned this week"
-    check (keyed by week, not snapshot) still ensures only one DM/stage
-    bump happens per driver per week even though this runs once per daily
-    upload.
+    only_tid restricts which violations are actually processed/sent (a
+    single-driver preview/resend) — it does not affect the prior-action
+    lookups, which always consider the driver's full history regardless.
     """
     if not _DM_ACTIVE:
         return {"status": "inactive", "note": "Set DRIVER_DM_ACTIVE=true on Render to enable driver DMs"}
@@ -375,53 +288,77 @@ def _process_week(week: str, db: Session, only_tid: Optional[str] = None) -> dic
     if not violations:
         return {"status": "no_violations", "week": week}
 
-    by_driver: dict = defaultdict(list)
-    for v in violations:
-        by_driver[v.transporter_id].append(v)
-
     results = []
     sent_count = 0
-    for tid, vrows in by_driver.items():
-        name = vrows[0].transporter_name or tid
-        roster = _find_roster_entry(name, db)
-
-        record, is_new = _advance_counseling(tid, name, week, len(vrows), db)
-        if not is_new:
-            db.commit()
-            results.append({"driver": name, "status": "already_actioned_this_week", "stage": record.stage})
+    for v in violations:
+        if not v.start_time:
+            logger.warning("DVIC violation id=%s (tid=%s) has no start_time — cannot dedupe safely, skipping.", v.id, v.transporter_id)
             continue
 
+        already_actioned = (
+            db.query(DvicViolation)
+            .filter(
+                DvicViolation.transporter_id == v.transporter_id,
+                DvicViolation.start_time == v.start_time,
+                DvicViolation.actioned_at.isnot(None),
+            )
+            .first()
+        )
+        if already_actioned:
+            continue  # same real violation, already handled in an earlier upload — do not re-count/re-message
+
+        name = v.transporter_name or v.transporter_id
+        has_prior_new_model = (
+            db.query(DvicViolation)
+            .filter(DvicViolation.transporter_id == v.transporter_id, DvicViolation.actioned_at.isnot(None))
+            .first()
+        )
+        has_prior_legacy = (
+            db.query(DvicCounselingRecord)
+            .filter(DvicCounselingRecord.transporter_id == v.transporter_id)
+            .first()
+        )
+        stage = 2 if (has_prior_new_model or has_prior_legacy) else 1
+
+        v.actioned_at = datetime.utcnow()
+        v.action_stage = stage
+        v.ack_status = "pending"
+
+        roster = _find_roster_entry(name, db)
         if not roster or not roster.slack_member_id:
             db.commit()
-            results.append({"driver": name, "status": "no_slack_id", "stage": record.stage})
+            results.append({"driver": name, "violation_id": v.id, "status": "no_slack_id", "stage": stage})
             continue
 
-        blocks = _dm_blocks(record.stage, name, len(vrows), week, tid, video_watched=bool(record.video_watched_at))
-        fallback = f"DVIC Safety Notice — {name} — stage {record.stage}"
+        blocks = _dm_blocks(v, stage, name)
+        fallback = f"DVIC Safety Notice — {name} — stage {stage}"
         ok, channel, ts = _dm_with_blocks(roster.slack_member_id, fallback, blocks)
         if ok:
-            record.dm_channel = channel
-            record.dm_ts = ts
+            v.dm_channel = channel
+            v.dm_ts = ts
             sent_count += 1
         db.commit()
 
         results.append({
-            "driver": name, "status": "sent" if ok else "failed",
-            "stage": record.stage, "violations": len(vrows),
+            "driver": name, "violation_id": v.id,
+            "status": "sent" if ok else "failed", "stage": stage,
         })
 
-        if record.stage >= 4:
-            _queue_discipline_writeup(record, week, db)
-
     if sent_count > 0:
-        refresh_dvic_ack_summary(week, db)
+        refresh_dvic_violation_ack_summary(db)
 
     return {
         "week": week,
-        "total_drivers": len(by_driver),
+        "total_violations": len(violations),
         "sent": sent_count,
         "results": results,
     }
+
+
+def _process_week(week: str, db: Session, only_tid: Optional[str] = None) -> dict:
+    """Kept as the entry point send_all_dms()/send_dm() already call —
+    delegates to the per-violation model."""
+    return _action_new_violations(week, db, only_tid=only_tid)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -763,7 +700,7 @@ def get_violations(week: Optional[str] = None, db: Session = Depends(get_db)):
     for v in violations:
         by_driver[v.transporter_id].append(v)
 
-    # Fetch acknowledgments for this week
+    # Legacy (pre-2026-07-23) week-level acknowledgments.
     ack_ids = {
         a.transporter_id
         for a in db.query(DvicAcknowledgment)
@@ -771,11 +708,33 @@ def get_violations(week: Optional[str] = None, db: Session = Depends(get_db)):
         .all()
     }
 
+    # New per-violation model: the row shown here (this snapshot's copy)
+    # may not itself carry ack_status — the rolling-window re-upload
+    # creates a fresh row each day, but the original instance that was
+    # actually actioned+acknowledged could be a duplicate row on an
+    # earlier snapshot with the same (transporter_id, start_time). Look
+    # up acknowledgment by natural key, across all snapshots, instead of
+    # by this row's id.
+    acked_by_tid: dict = defaultdict(set)
+    tids_in_view = list(by_driver.keys())
+    if tids_in_view:
+        for tid_, st in (
+            db.query(DvicViolation.transporter_id, DvicViolation.start_time)
+            .filter(
+                DvicViolation.ack_status == "acknowledged",
+                DvicViolation.transporter_id.in_(tids_in_view),
+            )
+            .all()
+        ):
+            acked_by_tid[tid_].add(st)
+
     drivers = []
     for tid, vrows in by_driver.items():
         name = vrows[0].transporter_name or tid
         roster = _find_roster_entry(name, db)
         durations = [v.duration_seconds for v in vrows if v.duration_seconds is not None]
+        driver_times = {v.start_time for v in vrows if v.start_time}
+        new_model_acked = bool(driver_times) and driver_times.issubset(acked_by_tid.get(tid, set()))
         drivers.append({
             "transporter_id": tid,
             "transporter_name": name,
@@ -785,7 +744,7 @@ def get_violations(week: Optional[str] = None, db: Session = Depends(get_db)):
             "fleet_types": list(set(v.fleet_type for v in vrows if v.fleet_type)),
             "dates": sorted(set(str(v.start_date) for v in vrows if v.start_date)),
             "dm_sent": vrows[0].snapshot_id is not None and roster is not None,  # placeholder
-            "acknowledged": tid in ack_ids,
+            "acknowledged": tid in ack_ids or new_model_acked,
             "slack_member_id": roster.slack_member_id if roster else None,
         })
 
@@ -914,12 +873,6 @@ def list_acknowledgments(week: Optional[str] = None, db: Session = Depends(get_d
     ]
 
 
-class AcknowledgeRequest(BaseModel):
-    transporter_id: str
-    week: str
-    signature_name: str
-
-
 def record_acknowledgment(transporter_id: str, week: str, signature_name: str, db: Session) -> dict:
     """Shared by the /acknowledge web endpoint and the Slack `dvic_ack` button
     handler (slack_interactions.py) — keeps DvicAcknowledgment (historical
@@ -1046,12 +999,121 @@ def refresh_dvic_ack_summary(week: str, db: Session) -> dict:
         return {"status": "error", "detail": str(exc)}
 
 
+def record_violation_acknowledgment(violation_id: int, signature_name: str, db: Session) -> dict:
+    """Per-violation acknowledgment (2026-07-23 model) — mirrors
+    record_acknowledgment()'s shape (idempotent, video-gate check, then
+    flip ack state + refresh the consolidated summary) but keyed on a
+    single DvicViolation row instead of (transporter_id, week)."""
+    violation = db.query(DvicViolation).filter(DvicViolation.id == violation_id).first()
+    if not violation:
+        return {"status": "not_found"}
+    if violation.ack_status == "acknowledged":
+        return {
+            "status": "already_acknowledged",
+            "transporter_name": violation.transporter_name,
+            "acknowledged_at": violation.acknowledged_at.isoformat() if violation.acknowledged_at else None,
+        }
+
+    if (
+        DVIC_TRAINING_VIDEO_ACTIVE
+        and (violation.action_stage or 0) >= DVIC_VIDEO_GATE_MIN_STAGE
+        and violation.video_watched_at is None
+    ):
+        # Belt-and-suspenders: _dm_blocks() shouldn't even show an
+        # Acknowledge button in this state, but this endpoint must not
+        # trust the client either.
+        return {"status": "video_not_watched", "transporter_name": violation.transporter_name}
+
+    now = datetime.utcnow()
+    violation.ack_status = "acknowledged"
+    violation.acknowledged_at = now
+    violation.ack_signature_name = signature_name.strip()
+    db.commit()
+
+    refresh_dvic_violation_ack_summary(db)
+
+    return {
+        "status": "acknowledged",
+        "violation_id": violation_id,
+        "transporter_name": violation.transporter_name,
+        "signature_name": signature_name,
+        "acknowledged_at": now.isoformat(),
+    }
+
+
+def refresh_dvic_violation_ack_summary(db: Session) -> dict:
+    """Consolidated #nday-operations-management summary for the
+    per-violation model — one message total (not week-scoped, since
+    violations are now tracked individually over time), updated in place.
+    Same clutter-avoidance lesson as refresh_dvic_ack_summary()."""
+    violations = db.query(DvicViolation).filter(DvicViolation.ack_status.isnot(None)).all()
+    if not violations:
+        return {"status": "no_records"}
+
+    client = _client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    acknowledged = [v for v in violations if v.ack_status == "acknowledged"]
+    pending = [v for v in violations if v.ack_status != "acknowledged"]
+
+    lines = [f"✅ {len(acknowledged)} acknowledged  ·  ⏳ {len(pending)} pending"]
+    if pending:
+        pending_sorted = sorted(pending, key=lambda v: (-(v.action_stage or 0), v.transporter_name or ""))
+        lines.append("\n*⏳ Pending:*\n" + "\n".join(
+            f"• {v.transporter_name} (Stage {v.action_stage}) — {v.start_date.isoformat() if v.start_date else '?'}"
+            for v in pending_sorted
+        ))
+
+    blocks = [
+        {"type": "header", "text": {"type": "plain_text", "text": "📋 DVIC Acknowledgments (per-violation)", "emoji": True}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}},
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": f"_Updated {datetime.utcnow().strftime('%H:%M UTC')}_"}]},
+    ]
+
+    state_key = "dvic_violation_ack_summary"
+    state = get_reminder_state(db, state_key)
+    existing_ts = state.get("ts")
+
+    try:
+        if existing_ts:
+            client.chat_update(channel=OPS_CHANNEL, ts=existing_ts, text="DVIC Acknowledgments", blocks=blocks)
+            ts = existing_ts
+        else:
+            resp = client.chat_postMessage(channel=OPS_CHANNEL, text="DVIC Acknowledgments", blocks=blocks)
+            ts = resp.get("ts")
+        set_reminder_state(db, state_key, {"ts": ts})
+        return {"status": "ok", "acknowledged": len(acknowledged), "pending": len(pending)}
+    except Exception as exc:
+        logger.warning("DVIC violation ack summary post failed: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+
+class ViolationAcknowledgeRequest(BaseModel):
+    violation_id: Optional[int] = None
+    signature_name: str
+    # Legacy shape, still posted by dvic-ack.tsx (the manual "Ack Link"
+    # fallback on the dvic.tsx dashboard) — kept accepted here so that
+    # page doesn't 422 until it's rebuilt for the per-violation model.
+    transporter_id: Optional[str] = None
+    week: Optional[str] = None
+
+
 @router.post("/acknowledge")
-def acknowledge(req: AcknowledgeRequest, db: Session = Depends(get_db)):
-    """Driver submits digital acknowledgment of their DVIC violations (web form path)."""
-    result = record_acknowledgment(req.transporter_id, req.week, req.signature_name, db)
+def acknowledge(req: ViolationAcknowledgeRequest, db: Session = Depends(get_db)):
+    """Driver submits digital acknowledgment — new per-violation shape
+    ({violation_id}) from dvic-training.tsx, or the legacy per-week shape
+    ({transporter_id, week}) still sent by dvic-ack.tsx."""
+    if req.violation_id is not None:
+        result = record_violation_acknowledgment(req.violation_id, req.signature_name, db)
+    elif req.transporter_id and req.week:
+        result = record_acknowledgment(req.transporter_id, req.week, req.signature_name, db)
+    else:
+        raise HTTPException(400, "Must provide either violation_id or transporter_id+week.")
     if result.get("status") == "video_not_watched":
         raise HTTPException(403, "Please watch the training video before acknowledging.")
+    if result.get("status") == "not_found":
+        raise HTTPException(404, "Violation not found.")
     return result
 
 
@@ -1078,6 +1140,27 @@ def sign_counseling_record(
         "id": record.id,
         "manager_signature_name": record.manager_signature_name,
         "manager_signature_at": record.manager_signature_at.isoformat(),
+    }
+
+
+@router.post("/violations/{violation_id}/sign")
+def sign_violation(
+    violation_id: int, req: CounselingSignRequest, db: Session = Depends(get_db),
+    caller_role: str = Depends(require_any_role("ops_manager")),
+):
+    """Ops-manager sign-off on a single violation's write-up — per-violation
+    model equivalent of sign_counseling_record() above."""
+    violation = db.query(DvicViolation).filter(DvicViolation.id == violation_id).first()
+    if not violation:
+        raise HTTPException(404, "Violation not found.")
+    violation.manager_signature_name = req.signed_by
+    violation.manager_signature_at = datetime.utcnow()
+    db.commit()
+    return {
+        "status": "signed",
+        "id": violation.id,
+        "manager_signature_name": violation.manager_signature_name,
+        "manager_signature_at": violation.manager_signature_at.isoformat(),
     }
 
 
@@ -1187,26 +1270,23 @@ def training_video_url(db: Session = Depends(get_db)):
 @router.get("/training-status-by-token")
 def training_status_by_token(token: str, db: Session = Depends(get_db)):
     """Resolve a signed dvic_video token (baked into the DM's 'Watch
-    Training Video' button) into the driver's current watch status, for
-    frontend/pages/dvic-training.tsx to render on load — no PIN, link
+    Training Video' button) into the violation's current watch status,
+    for frontend/pages/dvic-training.tsx to render on load — no PIN, link
     possession is identity, same trust model as eod_survey.py's
-    _authenticate_driver()."""
+    _authenticate_driver(). Re-keyed 2026-07-23 to a single violation_id
+    (per-violation model) instead of transporter_id+week."""
     claims = _verify_dvic_video_token(token)
     if not claims:
         raise HTTPException(401, "This link has expired or is invalid.")
-    transporter_id = claims["transporter_id"]
-    record = db.query(DvicCounselingRecord).filter(
-        DvicCounselingRecord.transporter_id == transporter_id
-    ).first()
-    if not record:
-        raise HTTPException(404, "No counseling record found.")
+    violation = db.query(DvicViolation).filter(DvicViolation.id == claims["violation_id"]).first()
+    if not violation:
+        raise HTTPException(404, "Violation not found.")
     return {
-        "transporter_id": transporter_id,
-        "transporter_name": record.transporter_name,
-        "week": claims.get("week"),
-        "stage": record.stage,
-        "video_watched_at": record.video_watched_at.isoformat() if record.video_watched_at else None,
-        "video_started_at": record.video_started_at.isoformat() if record.video_started_at else None,
+        "violation_id": violation.id,
+        "transporter_name": violation.transporter_name,
+        "stage": violation.action_stage,
+        "video_watched_at": violation.video_watched_at.isoformat() if violation.video_watched_at else None,
+        "video_started_at": violation.video_started_at.isoformat() if violation.video_started_at else None,
         "min_watch_seconds": DVIC_VIDEO_MIN_WATCH_SECONDS,
     }
 
@@ -1224,16 +1304,13 @@ def training_video_started(req: TrainingVideoTokenRequest, db: Session = Depends
     claims = _verify_dvic_video_token(req.token)
     if not claims:
         raise HTTPException(401, "This link has expired or is invalid.")
-    transporter_id = claims["transporter_id"]
-    record = db.query(DvicCounselingRecord).filter(
-        DvicCounselingRecord.transporter_id == transporter_id
-    ).first()
-    if not record:
-        raise HTTPException(404, "No counseling record found.")
-    if not record.video_started_at:
-        record.video_started_at = datetime.utcnow()
+    violation = db.query(DvicViolation).filter(DvicViolation.id == claims["violation_id"]).first()
+    if not violation:
+        raise HTTPException(404, "Violation not found.")
+    if not violation.video_started_at:
+        violation.video_started_at = datetime.utcnow()
         db.commit()
-    return {"status": "started", "video_started_at": record.video_started_at.isoformat(), "min_watch_seconds": DVIC_VIDEO_MIN_WATCH_SECONDS}
+    return {"status": "started", "video_started_at": violation.video_started_at.isoformat(), "min_watch_seconds": DVIC_VIDEO_MIN_WATCH_SECONDS}
 
 
 @router.post("/training-video-watched")
@@ -1247,18 +1324,15 @@ def training_video_watched(req: TrainingVideoTokenRequest, db: Session = Depends
     claims = _verify_dvic_video_token(req.token)
     if not claims:
         raise HTTPException(401, "This link has expired or is invalid.")
-    transporter_id = claims["transporter_id"]
-    record = db.query(DvicCounselingRecord).filter(
-        DvicCounselingRecord.transporter_id == transporter_id
-    ).first()
-    if not record:
-        raise HTTPException(404, "No counseling record found.")
-    if not record.video_started_at:
+    violation = db.query(DvicViolation).filter(DvicViolation.id == claims["violation_id"]).first()
+    if not violation:
+        raise HTTPException(404, "Violation not found.")
+    if not violation.video_started_at:
         raise HTTPException(400, "Video hasn't been started yet.")
-    elapsed = (datetime.utcnow() - record.video_started_at).total_seconds()
+    elapsed = (datetime.utcnow() - violation.video_started_at).total_seconds()
     if elapsed < DVIC_VIDEO_MIN_WATCH_SECONDS:
         remaining = int(DVIC_VIDEO_MIN_WATCH_SECONDS - elapsed)
         raise HTTPException(400, f"Please watch the full video — {remaining} more second(s) required.")
-    record.video_watched_at = datetime.utcnow()
+    violation.video_watched_at = datetime.utcnow()
     db.commit()
-    return {"status": "watched", "video_watched_at": record.video_watched_at.isoformat()}
+    return {"status": "watched", "video_watched_at": violation.video_watched_at.isoformat()}

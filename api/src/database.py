@@ -2138,6 +2138,40 @@ def ensure_dvic_video_started_column():
         pass  # Column already exists
 
 
+def ensure_dvic_violation_instance_columns():
+    """Add per-instance action/ack/video/sign columns to dvic_violations —
+    added 2026-07-23, replacing the per-driver-per-week DvicCounselingRecord
+    model with per-individual-violation tracking. See dvic.py's
+    _action_new_violations()."""
+    for col, coltype in (
+        ("actioned_at", "TIMESTAMP"),
+        ("action_stage", "INTEGER"),
+        ("dm_channel", "VARCHAR(50)"),
+        ("dm_ts", "VARCHAR(50)"),
+        ("ack_status", "VARCHAR(20)"),
+        ("acknowledged_at", "TIMESTAMP"),
+        ("ack_signature_name", "VARCHAR(150)"),
+        ("video_watched_at", "TIMESTAMP"),
+        ("video_started_at", "TIMESTAMP"),
+        ("manager_signature_name", "VARCHAR(150)"),
+        ("manager_signature_at", "TIMESTAMP"),
+    ):
+        try:
+            with engine.begin() as conn:
+                if DATABASE_URL.startswith("sqlite"):
+                    sqlite_type = "TEXT" if "VARCHAR" in coltype else "DATETIME" if coltype == "TIMESTAMP" else coltype
+                    conn.execute(text(f"ALTER TABLE dvic_violations ADD COLUMN {col} {sqlite_type}"))
+                else:
+                    conn.execute(text(f"ALTER TABLE dvic_violations ADD COLUMN IF NOT EXISTS {col} {coltype}"))
+        except Exception:
+            pass  # Column already exists
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_dvic_violation_tid_start_time ON dvic_violations (transporter_id, start_time)"))
+    except Exception:
+        pass  # Index already exists
+
+
 def ensure_eod_crash_columns():
     """Add crash_occurred/crash_report_id to eod_survey_responses — added
     2026-07-22, splitting the crash question out from the generic
@@ -2521,7 +2555,34 @@ class DvicViolation(Base):
     duration_seconds = Column(Integer)
     raw_fields = Column(JSON)   # any columns from the source file not mapped above, keyed by header
 
+    # Per-instance action tracking — added 2026-07-23, replacing the old
+    # per-driver-per-week model (DvicCounselingRecord). Amazon's export is
+    # a rolling 7-day window re-uploaded daily, so the SAME real violation
+    # produces multiple DvicViolation rows across snapshots (confirmed
+    # live: identical transporter_id+start_time appearing 3x under 3
+    # different ids). actioned_at is only ever set on ONE row per real
+    # violation (the first one processed) — later re-uploads of the same
+    # (transporter_id, start_time) find that row's actioned_at already
+    # set and skip re-messaging entirely. Stage 1 = first violation ever
+    # for this driver; Stage 2 = every subsequent one, individually, no
+    # further escalation.
+    actioned_at = Column(DateTime, nullable=True)
+    action_stage = Column(Integer, nullable=True)   # 1 or 2, set alongside actioned_at
+    dm_channel = Column(String(50))
+    dm_ts = Column(String(50))
+    ack_status = Column(String(20), nullable=True)   # pending | acknowledged
+    acknowledged_at = Column(DateTime, nullable=True)
+    ack_signature_name = Column(String(150), nullable=True)
+    video_watched_at = Column(DateTime, nullable=True)
+    video_started_at = Column(DateTime, nullable=True)
+    manager_signature_name = Column(String(150), nullable=True)
+    manager_signature_at = Column(DateTime, nullable=True)
+
     snapshot = relationship("DvicSnapshot", back_populates="violations")
+
+    __table_args__ = (
+        Index("idx_dvic_violation_tid_start_time", "transporter_id", "start_time"),
+    )
 
 
 class DvicAcknowledgment(Base):

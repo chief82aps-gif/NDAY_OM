@@ -286,13 +286,30 @@ Full detail: `Governance/ROSTERING_DM_RULES.md`.
   not re-enable without the user's explicit go-ahead.
 - **`DVIC_TRAINING_VIDEO_ACTIVE`** (env var, default `false`) — hard
   off-switch for the forced-training-video gate on Stage 2+ DVIC
-  violations (`dvic.py`), added 2026-07-23. Fully built (upload/serve
-  endpoints, `frontend/pages/dvic-training.tsx`, `_dm_blocks()`/
-  `record_acknowledgment()` gating) but deliberately inert until a real
-  training video has been uploaded via `POST /dvic/training-video` — the
-  user does not have the video file yet and also wants to wait for a
-  planned server migration. Do not flip on without both a real uploaded
-  video and the user's explicit go-ahead.
+  violations (`dvic.py`), added 2026-07-23. Fully built (YouTube IFrame
+  Player embed in `frontend/pages/dvic-training.tsx` — video ID
+  `FLtjCc1JZqw`, no self-hosting — plus `_dm_blocks()`/
+  `record_violation_acknowledgment()` gating and elapsed-watch-time
+  enforcement) but deliberately inert. Do not flip on without the user's
+  explicit go-ahead.
+- **DVIC per-violation model** (`dvic.py`, added 2026-07-23) — replaced
+  the old per-driver-per-week counseling ladder. State now lives on
+  `DvicViolation` itself (`actioned_at`, `action_stage` 1 or 2 only,
+  `ack_status`, `video_watched_at`, etc.), deduped on the natural key
+  `(transporter_id, start_time)` since Amazon's DVIC export is a rolling
+  7-day window that re-uploads the same real violation under multiple
+  daily snapshots. Stage 1 fires once ever per driver; every subsequent
+  distinct violation is Stage 2 (no further escalation, no punitive
+  ladder). `DvicCounselingRecord` (the old model) is frozen, not
+  migrated — the 73 real Stage-1 DMs sent on 2026-07-23 (the system's
+  first live day) keep working via the old Slack button shape
+  (`{transporter_id, week, stage}`), while all new activity uses
+  `{violation_id}`. `_handle_dvic_ack()` (slack_interactions.py) and the
+  `POST /dvic/acknowledge` endpoint both dual-path on payload shape to
+  support this. `discipline_tracker()` and `dvic.tsx`'s driver-summary
+  dashboard both read from **both** models additively (`"dvic"` +
+  `"dvic_violation"` sources) — do not remove the legacy branch until
+  all 73 legacy rows have been acknowledged and aged out.
 
 ## No Amazon portal automation — permanent, not a risk tradeoff
 

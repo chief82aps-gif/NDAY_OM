@@ -373,7 +373,7 @@ def discipline_tracker(db: Session = Depends(get_db)):
     ops-manager-signed and crash's per-stage role; None for crash rows
     since those aren't signable from here).
     """
-    from api.src.database import DvicCounselingRecord, AttendanceEvent, InjuryReport, CrashReport, CrashReportApproval
+    from api.src.database import DvicCounselingRecord, DvicViolation, AttendanceEvent, InjuryReport, CrashReport, CrashReportApproval
 
     # unsigned_callout/dvic_repeat_violation are now fully covered by the
     # direct attendance/dvic queries below (with real occurrence counts
@@ -394,6 +394,18 @@ def discipline_tracker(db: Session = Depends(get_db)):
         db.query(DvicCounselingRecord)
         .filter(DvicCounselingRecord.ack_status == "pending")
         .order_by(DvicCounselingRecord.stage.desc(), DvicCounselingRecord.last_actioned_at.desc())
+        .all()
+    )
+    # Per-violation model (2026-07-23) — additive alongside dvic_items
+    # above, not a replacement. dvic_items covers the 73 legacy
+    # DvicCounselingRecord rows from this system's first live day; new
+    # violations going forward only ever write to DvicViolation directly.
+    # Once the legacy rows all acknowledge, dvic_items naturally empties
+    # out and this becomes the sole DVIC source.
+    dvic_violation_items = (
+        db.query(DvicViolation)
+        .filter(DvicViolation.ack_status == "pending")
+        .order_by(DvicViolation.action_stage.desc(), DvicViolation.actioned_at.desc())
         .all()
     )
     attendance_items = (
@@ -457,6 +469,23 @@ def discipline_tracker(db: Session = Depends(get_db)):
             "occurrence_count": d.last_instance_count,
         }
         for d in dvic_items
+    ] + [
+        {
+            "source": "dvic_violation",
+            "id": v.id,
+            "shift_date": v.actioned_at.date().isoformat() if v.actioned_at else None,
+            "driver_name": v.transporter_name,
+            "manager_name": None,
+            "writeup_type": f"dvic_stage_{v.action_stage}",
+            "source_detail": (
+                f"{v.transporter_name} — {v.duration_seconds}s DVIC on "
+                f"{v.start_date.isoformat() if v.start_date else '?'}, stage {v.action_stage}"
+            ),
+            "dm_sent_at": v.actioned_at.isoformat() if v.actioned_at else None,
+            "needs_sign_role": "ops_manager",
+            "occurrence_count": 1,
+        }
+        for v in dvic_violation_items
     ] + [
         {
             "source": "attendance",

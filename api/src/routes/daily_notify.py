@@ -902,24 +902,68 @@ def send_sweeper_notifications(for_date: date, db: Session) -> Dict:
         .all()
     )
 
-    # Names already assigned a route today (normalise to lower)
+    # Names already assigned a route today. Exact lowercase match alone
+    # isn't enough — DailyRouteAssignment.driver_name comes from DOP/Cortex
+    # ("First Last") while DriverRosterEntry.payroll_name comes from ADP
+    # (often "First Middle Last"), so a middle-name mismatch made this
+    # silently treat real assigned drivers as unassigned and send them a
+    # sweeper DM on top of their real route DM (confirmed live 2026-07-23
+    # — same name-matching bug class as _get_driver_slack_id()). Token
+    # overlap (>=2 shared name tokens) catches those cases too.
     assigned_lower = {
         (a.driver_name or "").lower()
-        for a in db.query(DailyRouteAssignment)
+        for a in db.query(DailyRouteAssignment.driver_name)
         .filter(DailyRouteAssignment.assignment_date == for_date)
         .all()
     }
+    assigned_token_sets = [
+        frozenset(name.replace(",", "").split())
+        for name in assigned_lower if name
+    ]
+
+    def _has_route_today(payroll_name: str) -> bool:
+        name = (payroll_name or "").lower()
+        if name in assigned_lower:
+            return True
+        tokens = frozenset(name.replace(",", "").split())
+        if not tokens:
+            return False
+        return any(len(tokens & a_tokens) >= 2 for a_tokens in assigned_token_sets)
 
     date_str = _fmt_date(for_date)
-    sweeper_msg = (
-        f"Good morning! For *{date_str}* you are on the *Sweeper List*.\n\n"
-        "Please arrive at the station at your show time and stand by for sweep assignments from dispatch.\n\n"
-        "Connect with your wave lead on *Zello* when you arrive."
-    )
+
+    # Final wave's showtime — sweepers should arrive by the LAST wave's
+    # showtime at the latest (not "your show time", which doesn't exist
+    # for someone with no assigned route). Arriving for the earliest
+    # possible wave, rather than waiting until the last one, is what
+    # actually gives them a shot at an open route.
+    from api.src.routes.rostering import _calc_showtime, _showtime_to_minutes
+    waves = {
+        w for (w,) in db.query(DailyRouteAssignment.wave)
+        .filter(DailyRouteAssignment.assignment_date == for_date, DailyRouteAssignment.wave.isnot(None))
+        .distinct()
+        .all()
+    }
+    final_wave = max(waves, key=lambda w: _showtime_to_minutes(w) or -1, default=None)
+    final_showtime = _calc_showtime(final_wave) if final_wave else None
+
+    if final_showtime:
+        sweeper_msg = (
+            f"Good morning! For *{date_str}* you are a designated *Sweeper*.\n\n"
+            f"Please show *NLT {final_showtime}* (the final wave's showtime) and stand by for sweep "
+            "assignments from dispatch. Arriving early increases your chance of picking up a real route!\n\n"
+            "Connect with your wave lead on *Zello* when you arrive."
+        )
+    else:
+        sweeper_msg = (
+            f"Good morning! For *{date_str}* you are on the *Sweeper List*.\n\n"
+            "Please arrive at the station at your show time and stand by for sweep assignments from dispatch.\n\n"
+            "Connect with your wave lead on *Zello* when you arrive."
+        )
 
     sent = failed = 0
     for driver in roster:
-        if (driver.payroll_name or "").lower() in assigned_lower:
+        if _has_route_today(driver.payroll_name):
             continue  # has a route — skip
         try:
             client.chat_postMessage(channel=driver.slack_member_id, text=sweeper_msg)

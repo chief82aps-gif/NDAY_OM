@@ -2884,8 +2884,14 @@ def _shift_response_status(rec: Optional[DriverShiftDM]) -> str:
     return "yellow"
 
 
-def _arrival_response_status(rec: Optional[DriverShiftDM]) -> str:
-    if rec and rec.callout_tapped_at:
+def _arrival_response_status(rec: Optional[DriverShiftDM], called_out: bool = False) -> str:
+    # called_out comes from the real AttendanceEvent record (_called_out_today),
+    # not just the DM's "Call Out" button tap (rec.callout_tapped_at) — a driver
+    # who calls out through the web callout page, or has dispatch log it for
+    # them, never taps that button, so callout_tapped_at alone silently
+    # undercounts (confirmed live 2026-07-23: a real callout showed correctly
+    # in the Morning Callout Digest but as "0 called out" here).
+    if called_out or (rec and rec.callout_tapped_at):
         return "red"
     if rec and rec.arrival_confirmed:
         return "green"
@@ -2977,6 +2983,7 @@ def refresh_arrival_response_summary(shift_date: date, db: Session) -> dict:
         r.driver_name: r
         for r in db.query(DriverShiftDM).filter(DriverShiftDM.shift_date == shift_date).all()
     }
+    called_out_names = _called_out_today(shift_date, db)
 
     green, yellow, red = [], [], []
     seen = set()
@@ -2984,7 +2991,7 @@ def refresh_arrival_response_summary(shift_date: date, db: Session) -> dict:
         if a.driver_name in seen:
             continue
         seen.add(a.driver_name)
-        status = _arrival_response_status(dm_records.get(a.driver_name))
+        status = _arrival_response_status(dm_records.get(a.driver_name), a.driver_name in called_out_names)
         (green if status == "green" else yellow if status == "yellow" else red).append(a.driver_name)
 
     client = _slack_client()

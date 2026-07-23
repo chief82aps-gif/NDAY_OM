@@ -89,9 +89,26 @@ def _slack():
     return WebClient(token=os.environ["SLACK_BOT_TOKEN"])
 
 
-def _dm(user_id: str, text: str) -> None:
+def _dm(user_id: str, text: str, button_url: Optional[str] = None, button_text: str = "Open") -> None:
     try:
-        _slack().chat_postMessage(channel=user_id, text=text)
+        kwargs: dict = {"channel": user_id, "text": text}
+        if button_url:
+            # url-style button — opens the link directly, no interactivity
+            # endpoint needed (unlike the callout/DVIC action_id buttons).
+            kwargs["blocks"] = [
+                {"type": "section", "text": {"type": "mrkdwn", "text": text}},
+                {
+                    "type": "actions",
+                    "elements": [{
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": button_text, "emoji": True},
+                        "style": "primary",
+                        "url": button_url,
+                        "action_id": "eod_survey_open",
+                    }],
+                },
+            ]
+        _slack().chat_postMessage(**kwargs)
     except Exception as exc:
         logger.warning("EOD DM failed to %s: %s", user_id, exc)
 
@@ -577,10 +594,9 @@ def post_daily_survey_message(force: bool = False) -> dict:
             first_name = assignment.driver_name.split()[0]
             msg = (
                 f"🏁 Hi {first_name}! Time to complete your *End of Day Survey* before you head out.\n"
-                f"It only takes 2 minutes.\n"
-                f"👉 *<{url}|Complete Your Survey>*"
+                f"It only takes 2 minutes."
             )
-            _dm(roster_entry.slack_member_id, msg)
+            _dm(roster_entry.slack_member_id, msg, button_url=url, button_text="📋 Complete Survey")
             sent += 1
 
         set_reminder_state(db, _DAILY_POST_KEY, {"last_posted_date": today.isoformat()})
@@ -647,10 +663,9 @@ def send_eod_reminders(force: bool = False) -> dict:
             first_name = assignment.driver_name.split()[0]
             msg = (
                 f"Hi {first_name} 👋 Just a reminder to complete your *End of Day Survey* before heading out!\n"
-                f"It only takes a couple of minutes.\n"
-                f"👉 {url}"
+                f"It only takes a couple of minutes."
             )
-            _dm(roster_entry.slack_member_id, msg)
+            _dm(roster_entry.slack_member_id, msg, button_url=url, button_text="📋 Complete Survey")
 
             # Mark reminder sent on any existing partial response
             eod = db.query(EodSurveyResponse).filter_by(

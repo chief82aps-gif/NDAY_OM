@@ -178,6 +178,12 @@ Added the same gate `rostering.py`/`dvic.py` use: while off, the tab
 shows a "Coming Soon" placeholder and the DM/notification-sending
 handlers no-op.
 
+**Update 2026-07-23:** the "🔄 Return to Station" self-tap button was
+**removed** from this Home tab (and from the separate channel-posted
+driver-dashboard hub in `slack_interactions.py`) — RTS is now
+dispatch-generated instead. See `project_rts_button.md` in memory and
+`CLAUDE.md` → "RTS is now dispatch-generated" for the new flow.
+
 **Update:** `slack_dispatch_home.py` (the dispatch-facing counterpart) is
 now extensively built and reviewed — quick-link buttons (OKAMI, Rescue,
 Crash Report), "Remove Terminated Employees" (now actually functional,
@@ -237,23 +243,52 @@ placeholder — no real criteria defined.
 
 ## 3. Asana Sync Button (hiring Chrome extension) — launch
 
-**Status:** Built and actively iterated (`chrome-extension/`, Manifest
-v3, v0.1.0, ~13 commits dated 2026-07-13/14). Exists only as unpacked
-source — not installed in any browser, not configured anywhere.
+**Status: LIVE.** Extension installed and in active use by Connie/HR.
+Backend secrets set, install doc written (`chrome-extension/README.md`
+plus a published install-guide artifact), Options page has a Show/Hide
+toggle for the Extension Key (added 2026-07-17).
 
-- [ ] Set backend secrets: `CANDIDATE_SYNC_KEY` (shared secret) and
-      `ASANA_API_TOKEN` — endpoint hard-fails 500 without these
-- [ ] Set `ASANA_HIRING_PROJECT_GID` so the correct board/section
-      resolves (otherwise falls back to slower name lookup)
-- [ ] Load the extension into the real hiring person's Chrome
-      (`chrome://extensions` → Developer mode → Load unpacked), or
-      package/publish it properly
-- [ ] Configure the extension's Options page (API base + extension key)
-- [ ] Run one real end-to-end sync against a live Indeed candidate
-- [ ] Write a one-page install/usage doc (none exists today)
-- [ ] Google Contacts OAuth — optional, degrades gracefully if skipped
+**Google Contacts OAuth (2026-07-21 session) — root-caused and fixed
+short-term, permanent fix submitted to Google for review:**
+- Connie reported the Google Contacts sync had silently stopped after
+  previously working. Root cause: the OAuth consent screen is in
+  **Testing** publishing status, which hard-expires refresh tokens after
+  7 days regardless of use — confirmed via `refresh_token_expires_in:
+  604799` in a real token response, and via the old OAuth client's own
+  "Last used date: July 15" (6 days before the report, consistent with
+  the original token dying silently — `candidates.py`'s Google Contacts
+  step fails silently by design so it never blocks the Asana sync).
+- **Short-term fix (done):** created a new **Web-type** OAuth client
+  ("NDL Hiring - Token Generator" — the original "NDL Hiring Automation"
+  client was Desktop-type, which can't be pointed at OAuth Playground's
+  redirect URI, and has since been deleted as unused). Generated a fresh
+  refresh token, updated `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/
+  `GOOGLE_REFRESH_TOKEN` on Render. Working again as of today, but will
+  silently expire again in ~7 days unless the permanent fix below lands.
+- **Permanent fix (submitted, pending Google review):** to publish the
+  OAuth consent screen out of Testing status (removes the 7-day cap for
+  good), Google required: (1) app name matching the linked homepage —
+  fixed, renamed to "NDAY Route Manager"; (2) a homepage/privacy
+  policy/terms of service URL — built as new public pages
+  (`frontend/pages/about.tsx`/`privacy.tsx`/`terms.tsx`, live at
+  `newdaylogisticsllc.com/about|privacy|terms`); (3) domain ownership
+  verification — done via Google Search Console (HTML file method,
+  `frontend/public/google3d58dc9e4d6a6500.html`), then added as an
+  Authorized domain; (4) a full Data Access verification submission
+  (scope justification text + a demo video showing the consent screen
+  and the resulting Google Contact) for the sensitive `contacts` scope —
+  **submitted 2026-07-21, awaiting Google's review** (could take a day
+  to a couple weeks).
+- **Once approved:** go to Audience page → "Publish app" → then
+  regenerate the refresh token one final time (same OAuth Playground
+  flow) so the new token is issued under Production status rather than
+  Testing — that's the one that actually stops expiring. Update Render
+  again at that point.
+- The three new public pages are also earmarked for reuse (not a new
+  set) when RingCentral SMS is built — see section 12.
 
-**Decision:** ⚪
+**Decision:** 🟢 (extension + short-term OAuth fix — live) / ⚪ (Google
+verification — pending, not in our control)
 **Notes:**
 
 ---
@@ -279,57 +314,65 @@ Finalize, FRT/DA/van coverage checks, Slack notifications to `#nday-mgt`
 
 ---
 
-## 5. DVIC Discipline DMs (escalating discipline ladder)
+## 5. DVIC Discipline DMs — DONE, redesigned to per-violation (2026-07-23)
 
-**Status:** Logic fully built and looks solid — 4-stage ladder,
-per-stage messaging, stage-4 formal write-up, acknowledgment sync,
-DB-backed throttle state (already fixed from the earlier in-memory-dict
-incident). **No background loop drives it** — only manual trigger
-endpoints exist (`POST /dvic/send-dm/{tid}`, `send-all-dms`). Never
-tested with a real send.
+**Status:** Live in production since 2026-07-23 (first real send: 73
+drivers). Originally built as a 4-stage per-driver-per-week ladder, then
+**redesigned same day** to a 2-stage per-violation model once real data
+showed Amazon's DVIC export is a rolling 7-day window that re-uploads
+the same violation across multiple days' snapshots — the old model
+couldn't tell a repeat upload from a genuinely new violation. Stage 1
+fires once ever per driver; every subsequent distinct violation
+(deduped on `(transporter_id, start_time)`) is Stage 2, no further
+escalation. Forced-training-video gate on Stage 2+ is fully built
+(YouTube embed, elapsed-watch-time enforcement) but held off by
+`DVIC_TRAINING_VIDEO_ACTIVE=false` pending explicit go-ahead. Old
+per-driver model (`DvicCounselingRecord`) is frozen, not migrated, so
+the 73 original DMs keep working. See `CLAUDE.md` → "DVIC per-violation
+model" for the full architecture, and `project_dvic_counseling.md` in
+memory.
 
-- [ ] Decide: automatic background loop, or stay manually triggered?
-- [ ] If automatic, wire a loop in `main.py` matching the existing
-      pattern
-- [ ] End-to-end test with `DRIVER_DM_ACTIVE=true` against a few of the
-      61 already-linked drivers
-- [ ] Explicit sign-off before any real discipline DM goes out
+- [x] Automatic vs manual trigger → stays manually triggered
+      (`POST /dvic/send-dm/{tid}`, `send-all-dms`), same as before
+- [x] End-to-end test with `DRIVER_DM_ACTIVE=true` — done, real send
+- [x] Explicit sign-off before real discipline DMs — given, went live
+- [ ] Two commits (per-violation redesign) are local-only as of
+      2026-07-23 end of day — committed but not pushed/deployed. Push +
+      Render redeploy needed before `dvic_violation` shows up on
+      `/discipline-tracker` or new violations use the new model.
+- [ ] `frontend/pages/dvic.tsx` (the per-week driver-summary dashboard)
+      still reflects the old model's shape — checked for compatibility,
+      backend gaps patched, but the page itself not rebuilt for
+      per-violation display
+- [ ] Decide whether to flip `DVIC_TRAINING_VIDEO_ACTIVE` on
 
-**Decision:** ⚪
+**Decision:** 🟢 (live)
 **Notes:**
 
 ---
 
-## 6. Safety Violation Review/Dispute Workflow (`C0ADM0M5UNQ`)
+## 6. Safety Violation Review/Dispute Workflow (`C0ADM0M5UNQ`) — DONE
 
-**Status:** Net-new — no Governance doc or code references this channel
-today. An earlier planning note (`project_safety_violations.md`)
-sketched a similar idea around watching raw text in a different leaders
-channel, but we've since built a better data source instead:
-`safety_events.py`'s structured Netradyne CSV ingest (`SafetyEvent`
-model — driver_name, video_link, metric_type, event_at, etc.). None of
-the interactive review workflow exists yet, but the button/DM/ack
-pattern is well-established elsewhere (`slack_interactions.py`'s
-`action_id` routing, used by the rescue tracker and DVIC's Acknowledge
-buttons; `dvic-ack.tsx` is a strong template for a driver-facing
-acknowledgment page).
+**Status:** Built and live as of 2026-07-23. Trigger source question
+was resolved: keys off `SafetyEvent` rows from the CSV ingest, not raw
+channel watching. Full Confirm/False-Flag workflow built in
+`safety_events.py`: new `SafetyEvent` rows post to `#nday-mgt` with
+Confirm/False-Flag buttons; Confirm sends the driver a DM write-up with
+an Acknowledge button (same `dvic_ack`-style pattern); acknowledgment
+recorded on the record. Consolidated ack-status summary posts to
+`#nday-operations-management`, updated in place.
 
-- [ ] **Decide the trigger source**: watch channel `C0ADM0M5UNQ`
-      directly, or key off new `SafetyEvent` rows from the CSV ingest?
-      These are genuinely different designs.
-- [ ] Add review/dispute status fields to `SafetyEvent` (or a companion
-      table) — currently has none (no `status`/`reviewed_by`/`disputed`)
-- [ ] Post to `#nday-mgt` with Confirm / False-Flag buttons per new
-      violation
-- [ ] Build the dispatch review handlers (confirm → proceed; false-flag
-      → dismiss, no DM)
-- [ ] Build the driver DM + Acknowledge button (reuse the existing
-      `dvic_ack`-style pattern)
-- [ ] Record the validation outcome + acknowledgment on the record
-- [ ] Write a Governance doc for this once built (none exists)
-- [ ] Note for later, not now: forced training video/quiz hook
+- [x] Trigger source decided — `SafetyEvent` CSV rows
+- [x] Confirm/False-Flag review handlers built
+- [x] Driver DM + Acknowledge button built
+- [x] Validation outcome + acknowledgment recorded
+- [ ] **Not on `/discipline-tracker`** — `discipline_tracker()` never
+      queries `SafetyEvent`; these acknowledgments are only visible via
+      the Slack summary today. Flagged as a gap, not yet built.
+- [ ] Write a Governance doc for this (none exists)
+- [ ] Forced training video/quiz hook — later, not now
 
-**Decision:** ⚪
+**Decision:** 🟢 (live)
 **Notes:**
 
 ---
@@ -479,4 +522,34 @@ first, everything else after.
       anywhere. Revisit deliberately later; this touches real pay.
 
 **Decision:** 🟢 (route bands — built) / ⚪ (everything else in this section)
+**Notes:**
+
+---
+
+## 12. RingCentral SMS Integration (hiring 3-contact-attempt cadence)
+
+**Status: not started — logged only, per 2026-07-21 request.** Surfaced
+while fixing the Google Contacts OAuth 7-day-expiry issue (see Google
+Auth Platform / Audience page work that same session); no RingCentral
+API integration exists anywhere in this codebase yet — the "RingCentral
+call review queue" text on the Attendance Reports dashboard card is
+descriptive copy only, not a built connection.
+
+- [ ] RingCentral developer account + app registration (RingCentral
+      Developer Console), scoped for SMS send
+- [ ] OAuth credentials stored on Render (same pattern as
+      `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`GOOGLE_REFRESH_TOKEN`)
+- [ ] RingCentral's own app-verification step, if required for their
+      review — reuse the existing public pages (`newdaylogisticsllc.com/about`,
+      `/privacy`, `/terms`, added 2026-07-21 for Google's verification)
+      rather than building a second set
+- [ ] **Update `frontend/pages/privacy.tsx`** at that time to specifically
+      disclose RingCentral/SMS as a data processor — it currently only
+      names Google Workspace/People API, Asana, and Slack
+- [ ] Actual SMS-send code in the backend for the Phase 2 hiring cadence
+      (see `Governance/03_NDL_Hiring_Onboarding_Automation.md` Phase 2 —
+      SMS provider was originally an open "e.g. Twilio" placeholder;
+      RingCentral is now the intended choice)
+
+**Decision:** ⚪
 **Notes:**

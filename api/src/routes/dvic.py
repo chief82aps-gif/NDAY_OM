@@ -26,10 +26,12 @@ import json
 import logging
 import os
 import re
+import time
 from collections import defaultdict
 from datetime import datetime, date, timezone
 from typing import Optional
 
+import jwt
 import requests
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
@@ -39,6 +41,7 @@ from api.src.database import (
     get_db, SessionLocal,
     DvicSnapshot, DvicViolation, DvicAcknowledgment, DvicCounselingRecord,
     DriverRosterEntry,
+    get_reminder_state, set_reminder_state,
 )
 from api.src.ingest.dvic import parse_dvic_xlsx, extract_week
 from api.src.driver_identity import resolve_roster_entry
@@ -56,6 +59,39 @@ APP_URL          = os.getenv("APP_URL", "https://nday-om.vercel.app")
 # a driver's counseling stage is coupled to actually sending the DM (see
 # _process_week below), so the ladder can't silently advance while this is off.
 _DM_ACTIVE = os.getenv("DRIVER_DM_ACTIVE", "false").lower() == "true"
+
+# Forced-training-video gate for repeat (Stage 2+) DVIC violations — added
+# 2026-07-23. Hard off-switch, same pattern as DRIVER_DM_ACTIVE/
+# TEAM_ROOM_MESSAGES_ACTIVE: fully built and testable, but has zero effect
+# on the real DM/acknowledgment flow until explicitly turned on. Do not
+# flip on until a real training video has been uploaded via
+# POST /dvic/training-video — see CLAUDE.md.
+DVIC_TRAINING_VIDEO_ACTIVE = os.getenv("DVIC_TRAINING_VIDEO_ACTIVE", "false").lower() == "true"
+DVIC_VIDEO_GATE_MIN_STAGE = 2
+DVIC_VIDEO_TOKEN_TTL_HOURS = 72
+DVIC_TRAINING_VIDEO_STATE_KEY = "dvic_training_video"
+
+
+def _issue_dvic_video_token(transporter_id: str, week: str) -> str:
+    secret = os.getenv("JWT_SECRET", "dev-secret")
+    payload = {
+        "purpose": "dvic_video",
+        "transporter_id": transporter_id,
+        "week": week,
+        "exp": int(time.time()) + DVIC_VIDEO_TOKEN_TTL_HOURS * 3600,
+    }
+    return jwt.encode(payload, secret, algorithm="HS256")
+
+
+def _verify_dvic_video_token(token: str) -> Optional[dict]:
+    secret = os.getenv("JWT_SECRET", "dev-secret")
+    try:
+        payload = jwt.decode(token, secret, algorithms=["HS256"])
+    except Exception:
+        return None
+    if payload.get("purpose") != "dvic_video":
+        return None
+    return payload
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -148,59 +184,85 @@ def _counseling_message(stage: int, name: str, count: int, week: str) -> str:
 
     if stage == 1:
         return (
-            f":wave: Hi {first}, this is a friendly safety check-in from NDAY Management.\n\n"
-            f"In the past week you completed *{count} pre-trip vehicle inspection{plural}* in under 90 seconds "
-            f"({week_label}).\n\n"
-            "Amazon requires a *minimum of 90 seconds* to properly inspect your vehicle before every shift — "
-            "it's there to protect *you*. A rushed inspection can miss a real safety issue before you're out on the road. "
-            "We know you can do this, and we just want to make sure you're taking the full time every shift.\n\n"
-            "Please tap *Acknowledge* below to confirm you've seen this."
+            f":wave: Hey {first}, this is Dispatch/Safety checking in — not a write-up, just us looking out for you.\n\n"
+            f"This week you had *{count} pre-trip inspection{plural}* logged under 90 seconds. We get it — you're "
+            "trying to get moving fast. But that walk-around is one of the only things standing between you and a "
+            "flat tire, a bad mirror, or a brake issue nobody caught before you were 20 miles into your route.\n\n"
+            "*You're too important to us to risk getting hurt over a rushed checklist.* Take the full 90 seconds — "
+            "every shift, no exceptions. It's not about the paperwork, it's about you going home the same way you "
+            "came in.\n\n"
+            "No action needed here beyond tapping *Acknowledge* — just wanted you to know we noticed, and we've got "
+            "your back."
         )
     elif stage == 2:
         return (
-            f":memo: *Written Safety Notice — {first}*\n\n"
-            f"This is your second safety notice. In the past week you completed *{count} pre-trip inspection{plural}* "
-            f"in under 90 seconds ({week_label}).\n\n"
-            "This is now being documented as a formal coaching notice. A rushed pre-trip inspection is a genuine "
-            "safety risk — to you, your vehicle, and everyone around you on the road. We need to see this change.\n\n"
-            "Please tap *Acknowledge* below — your acknowledgment is recorded in your driver file."
+            f":memo: Hey {first}, we flagged you again this week — *{count} pre-trip inspection{plural}* under 90 "
+            f"seconds ({week_label}).\n\n"
+            "We meant what we said last time: this isn't about catching you, it's about making sure you're "
+            "actually checking the van before you drive it. A second flag means we're logging this one as a real "
+            "coaching note in your file — not to punish you, but because a pattern here is a real safety risk, and "
+            "we have to start treating it like one.\n\n"
+            "Take the extra 60-90 seconds. Walk all the way around. Check your tires, mirrors, lights. It matters "
+            "more than the couple minutes it costs you.\n\n"
+            "Please tap *Acknowledge* — this confirms you've seen it and it's noted in your file."
         )
     elif stage == 3:
         return (
-            f":warning: *Final Warning — {first}*\n\n"
-            f"This is your *final warning* regarding pre-trip inspection times. In the past week you completed "
-            f"*{count} pre-trip inspection{plural}* in under 90 seconds ({week_label}).\n\n"
-            "This pattern has continued despite prior notices and is a serious safety concern. Your manager has "
-            "been copied on this notice. Continued violations will result in formal disciplinary action.\n\n"
-            "Please tap *Acknowledge* below — your acknowledgment is recorded in your driver file."
+            f":warning: {first}, this is a final warning on pre-trip inspection times — *{count} pre-trip "
+            f"inspection{plural}* under 90 seconds this week ({week_label}).\n\n"
+            "We've talked to you about this twice now. At this point we have to be direct: this is a real safety "
+            "violation, not a habit we can keep coaching around informally. Your manager has been looped in. One "
+            "more flag after this moves to formal disciplinary action.\n\n"
+            "We still want this to end with you safe and driving, not with a write-up. Slow down at the start of "
+            "your shift — it's the cheapest 90 seconds in your whole day.\n\n"
+            "Please tap *Acknowledge*."
         )
     else:
         return (
-            f":rotating_light: *Formal Write-Up — {first}*\n\n"
-            f"In the past week you completed *{count} pre-trip inspection{plural}* in under 90 seconds ({week_label}), "
-            "continuing a pattern despite prior safety notices and a final warning.\n\n"
-            "This is a *formal written disciplinary action*, routed to NDAY Management for review. "
-            "Continued violations may result in further disciplinary action up to and including termination.\n\n"
-            "Please tap *Acknowledge* below to confirm you've received this notice."
+            f":rotating_light: {first}, this is a formal written disciplinary notice — *{count} pre-trip "
+            f"inspection{plural}* under 90 seconds this week ({week_label}), continuing after a final warning.\n\n"
+            "This is now routed to NDAY Management and placed in your file. Continued violations put your "
+            "position at risk. We genuinely don't want it to get there — please take this seriously starting with "
+            "your very next shift.\n\n"
+            "Please tap *Acknowledge* to confirm receipt."
         )
 
 
-def _dm_blocks(stage: int, name: str, count: int, week: str, transporter_id: str) -> list:
+def _dm_blocks(stage: int, name: str, count: int, week: str, transporter_id: str, video_watched: bool = False) -> list:
     text = _counseling_message(stage, name, count, week)
     value = json.dumps({"transporter_id": transporter_id, "week": week, "stage": stage})
+
+    needs_video = DVIC_TRAINING_VIDEO_ACTIVE and stage >= DVIC_VIDEO_GATE_MIN_STAGE and not video_watched
+    if needs_video:
+        # Baked in at send-time (not issued fresh on click) so this is a
+        # genuine one-click button straight to the video page — same
+        # pattern as rostering.py's "Can't Make It"/"Call Out" buttons.
+        # No Acknowledge button here: record_acknowledgment() would reject
+        # it anyway, and showing a button that's guaranteed to fail is
+        # worse than not showing it.
+        video_url = f"{APP_URL}/dvic-training?token={_issue_dvic_video_token(transporter_id, week)}"
+        actions = [{
+            "type": "button",
+            "text": {"type": "plain_text", "text": "▶️  Watch Training Video", "emoji": True},
+            "style": "primary",
+            "action_id": "dvic_watch_video",
+            "value": value,
+            "url": video_url,
+        }]
+    else:
+        actions = [{
+            "type": "button",
+            "text": {"type": "plain_text", "text": "Acknowledge", "emoji": True},
+            "style": "primary",
+            "action_id": "dvic_ack",
+            "value": value,
+        }]
+
     return [
         {"type": "section", "text": {"type": "mrkdwn", "text": text}},
         {
             "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Acknowledge", "emoji": True},
-                    "style": "primary",
-                    "action_id": "dvic_ack",
-                    "value": value,
-                }
-            ],
+            "elements": actions,
         },
     ]
 
@@ -235,6 +297,7 @@ def _advance_counseling(tid: str, name: str, week: str, instance_count: int, db:
     record.last_actioned_at = datetime.utcnow()
     record.ack_status = "pending"
     record.acknowledged_at = None
+    record.video_watched_at = None
     db.flush()
     return record, True
 
@@ -326,7 +389,7 @@ def _process_week(week: str, db: Session, only_tid: Optional[str] = None) -> dic
             results.append({"driver": name, "status": "no_slack_id", "stage": record.stage})
             continue
 
-        blocks = _dm_blocks(record.stage, name, len(vrows), week, tid)
+        blocks = _dm_blocks(record.stage, name, len(vrows), week, tid, video_watched=bool(record.video_watched_at))
         fallback = f"DVIC Safety Notice — {name} — stage {record.stage}"
         ok, channel, ts = _dm_with_blocks(roster.slack_member_id, fallback, blocks)
         if ok:
@@ -853,6 +916,20 @@ def record_acknowledgment(transporter_id: str, week: str, signature_name: str, d
             "acknowledged_at": existing.acknowledged_at.isoformat(),
         }
 
+    record_check = db.query(DvicCounselingRecord).filter(
+        DvicCounselingRecord.transporter_id == transporter_id
+    ).first()
+    if (
+        DVIC_TRAINING_VIDEO_ACTIVE
+        and record_check
+        and record_check.stage >= DVIC_VIDEO_GATE_MIN_STAGE
+        and record_check.video_watched_at is None
+    ):
+        # Belt-and-suspenders: _dm_blocks() shouldn't even show an
+        # Acknowledge button in this state, but this endpoint must not
+        # trust the client either.
+        return {"status": "video_not_watched", "transporter_name": record_check.transporter_name}
+
     violations = (
         db.query(DvicViolation)
         .filter(DvicViolation.transporter_id == transporter_id, DvicViolation.week == week)
@@ -901,7 +978,10 @@ def record_acknowledgment(transporter_id: str, week: str, signature_name: str, d
 @router.post("/acknowledge")
 def acknowledge(req: AcknowledgeRequest, db: Session = Depends(get_db)):
     """Driver submits digital acknowledgment of their DVIC violations (web form path)."""
-    return record_acknowledgment(req.transporter_id, req.week, req.signature_name, db)
+    result = record_acknowledgment(req.transporter_id, req.week, req.signature_name, db)
+    if result.get("status") == "video_not_watched":
+        raise HTTPException(403, "Please watch the training video before acknowledging.")
+    return result
 
 
 class CounselingSignRequest(BaseModel):
@@ -986,3 +1066,94 @@ def upload_status(db: Session = Depends(get_db)):
         "latest_week": latest.week if latest else None,
         "latest_imported_at": latest.imported_at.isoformat() if latest else None,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Forced training video (Stage 2+) — added 2026-07-23, behind
+# DVIC_TRAINING_VIDEO_ACTIVE (off until a real video exists, see CLAUDE.md).
+# One video at a time, stored in S3 (api/src/storage.py) with its key kept
+# in ReminderThrottleState under DVIC_TRAINING_VIDEO_STATE_KEY rather than
+# a dedicated table — there's only ever one active video.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/training-video")
+def upload_training_video(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    caller_role: str = Depends(require_any_role("ops_manager", "manager")),
+):
+    """Upload (or replace) the single active DVIC training video. Requires
+    AWS_S3_BUCKET to be configured (api/src/storage.py) — this endpoint
+    exists ahead of DVIC_TRAINING_VIDEO_ACTIVE being turned on, so the
+    video can be staged and reviewed before the gate goes live."""
+    from api.src import storage
+    if not storage.is_configured():
+        raise HTTPException(503, "Video storage is not configured (AWS_S3_BUCKET missing).")
+
+    data = file.file.read()
+    ext = os.path.splitext(file.filename or "")[1] or ".mp4"
+    key = storage.build_key("dvic_training", f"training{ext}")
+    storage.upload_bytes(data, key, content_type=file.content_type or "video/mp4")
+    set_reminder_state(db, DVIC_TRAINING_VIDEO_STATE_KEY, {"key": key, "uploaded_at": datetime.utcnow().isoformat()})
+    return {"status": "uploaded", "key": key}
+
+
+@router.get("/training-video-url")
+def training_video_url(db: Session = Depends(get_db)):
+    """Redirect to a short-lived presigned S3 URL for the active training
+    video — same pattern as crash_report.py's get_photo_url(). S3 honors
+    Range/Content-Range natively on presigned GETs, so this gives a
+    <video> tag correct seek support with no streaming code here."""
+    from api.src import storage
+    from fastapi.responses import RedirectResponse
+    state = get_reminder_state(db, DVIC_TRAINING_VIDEO_STATE_KEY)
+    key = state.get("key")
+    if not key:
+        raise HTTPException(404, "No training video uploaded yet.")
+    return RedirectResponse(storage.presigned_url(key))
+
+
+@router.get("/training-status-by-token")
+def training_status_by_token(token: str, db: Session = Depends(get_db)):
+    """Resolve a signed dvic_video token (baked into the DM's 'Watch
+    Training Video' button) into the driver's current watch status, for
+    frontend/pages/dvic-training.tsx to render on load — no PIN, link
+    possession is identity, same trust model as eod_survey.py's
+    _authenticate_driver()."""
+    claims = _verify_dvic_video_token(token)
+    if not claims:
+        raise HTTPException(401, "This link has expired or is invalid.")
+    transporter_id = claims["transporter_id"]
+    record = db.query(DvicCounselingRecord).filter(
+        DvicCounselingRecord.transporter_id == transporter_id
+    ).first()
+    if not record:
+        raise HTTPException(404, "No counseling record found.")
+    return {
+        "transporter_id": transporter_id,
+        "transporter_name": record.transporter_name,
+        "week": claims.get("week"),
+        "stage": record.stage,
+        "video_watched_at": record.video_watched_at.isoformat() if record.video_watched_at else None,
+    }
+
+
+class TrainingVideoWatchedRequest(BaseModel):
+    token: str
+
+
+@router.post("/training-video-watched")
+def training_video_watched(req: TrainingVideoWatchedRequest, db: Session = Depends(get_db)):
+    """Frontend calls this on the <video> element's 'ended' event."""
+    claims = _verify_dvic_video_token(req.token)
+    if not claims:
+        raise HTTPException(401, "This link has expired or is invalid.")
+    transporter_id = claims["transporter_id"]
+    record = db.query(DvicCounselingRecord).filter(
+        DvicCounselingRecord.transporter_id == transporter_id
+    ).first()
+    if not record:
+        raise HTTPException(404, "No counseling record found.")
+    record.video_watched_at = datetime.utcnow()
+    db.commit()
+    return {"status": "watched", "video_watched_at": record.video_watched_at.isoformat()}

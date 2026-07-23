@@ -273,6 +273,15 @@ Full detail: `Governance/ROSTERING_DM_RULES.md`.
   sender to that channel — verified via full-repo grep). Does not affect
   `#nday-mgt` or any manually-triggered send (e.g. Send Route Matrix). Do
   not re-enable without the user's explicit go-ahead.
+- **`DVIC_TRAINING_VIDEO_ACTIVE`** (env var, default `false`) — hard
+  off-switch for the forced-training-video gate on Stage 2+ DVIC
+  violations (`dvic.py`), added 2026-07-23. Fully built (upload/serve
+  endpoints, `frontend/pages/dvic-training.tsx`, `_dm_blocks()`/
+  `record_acknowledgment()` gating) but deliberately inert until a real
+  training video has been uploaded via `POST /dvic/training-video` — the
+  user does not have the video file yet and also wants to wait for a
+  planned server migration. Do not flip on without both a real uploaded
+  video and the user's explicit go-ahead.
 
 ## No Amazon portal automation — permanent, not a risk tradeoff
 

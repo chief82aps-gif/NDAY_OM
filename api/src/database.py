@@ -2101,6 +2101,21 @@ def ensure_dvic_manager_signature_columns():
             pass  # Column already exists
 
 
+def ensure_dvic_video_watch_column():
+    """Add video_watched_at to dvic_counseling_records — added 2026-07-23
+    for the forced-training-video gate (Stage 2+, behind
+    DVIC_TRAINING_VIDEO_ACTIVE in dvic.py, off by default until a real
+    video exists)."""
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE dvic_counseling_records ADD COLUMN video_watched_at DATETIME"))
+            else:
+                conn.execute(text("ALTER TABLE dvic_counseling_records ADD COLUMN IF NOT EXISTS video_watched_at TIMESTAMP"))
+    except Exception:
+        pass  # Column already exists
+
+
 def ensure_eod_crash_columns():
     """Add crash_occurred/crash_report_id to eod_survey_responses — added
     2026-07-22, splitting the crash question out from the generic
@@ -2495,6 +2510,12 @@ class DvicCounselingRecord(Base):
     # manager_accountability.py's discipline_tracker()).
     manager_signature_name = Column(String(150))
     manager_signature_at = Column(DateTime)
+
+    # Forced training-video gate (Stage 2+) — added 2026-07-23, behind
+    # DVIC_TRAINING_VIDEO_ACTIVE (default off, see dvic.py). Reset to NULL
+    # whenever stage advances (_advance_counseling()), same as ack_status/
+    # acknowledged_at, so a driver must re-watch for each new stage.
+    video_watched_at = Column(DateTime, nullable=True)
 
 
 class DocumentRoutingRule(Base):

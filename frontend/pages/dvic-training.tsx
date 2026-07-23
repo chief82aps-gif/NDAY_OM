@@ -9,6 +9,26 @@ function resolveApi(): string {
   return 'http://127.0.0.1:8001';
 }
 
+// Embedded directly from YouTube per explicit request — swap this if the
+// video ever changes. https://www.youtube.com/watch?v=FLtjCc1JZqw
+const YOUTUBE_VIDEO_ID = process.env.NEXT_PUBLIC_DVIC_YOUTUBE_ID || 'FLtjCc1JZqw';
+
+declare global {
+  interface Window {
+    YT?: {
+      Player: new (elementId: string, options: Record<string, unknown>) => YTPlayer;
+      PlayerState: { ENDED: number };
+    };
+    onYouTubeIframeAPIReady?: () => void;
+  }
+}
+
+interface YTPlayer {
+  getCurrentTime(): number;
+  seekTo(seconds: number, allowSeekAhead: boolean): void;
+  destroy(): void;
+}
+
 interface StatusInfo {
   transporter_id: string;
   transporter_name: string;
@@ -45,8 +65,9 @@ export default function DvicTrainingPage() {
   const [signErr, setSignErr] = useState('');
   const [confirmErr, setConfirmErr] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const playerRef = useRef<YTPlayer | null>(null);
   const maxTimeReached = useRef(0);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = () => {
     if (!token) return;
@@ -84,26 +105,55 @@ export default function DvicTrainingPage() {
     }
   }, [step, token, api]);
 
-  // Blocks forward-seeking (scrubbing ahead) — rewatching backward is
-  // still allowed. The real anti-cheat backstop is the server-side
-  // elapsed-time check in training-video-watched; this just removes the
-  // obvious "drag the scrubber to the end" shortcut.
-  function handleTimeUpdate() {
-    const v = videoRef.current;
-    if (!v) return;
-    if (v.currentTime > maxTimeReached.current) maxTimeReached.current = v.currentTime;
-  }
-  function handleSeeking() {
-    const v = videoRef.current;
-    if (!v) return;
-    if (v.currentTime > maxTimeReached.current + 0.5) {
-      v.currentTime = maxTimeReached.current;
-    }
-  }
+  // Loads the YouTube IFrame Player API once, then builds the player
+  // when we actually reach the video step. Polling currentTime (instead
+  // of a native 'seeking' event, which the IFrame API doesn't expose)
+  // blocks forward-scrubbing — rewatching backward is still allowed.
+  // The real anti-cheat backstop is the server-side elapsed-time check
+  // in training-video-watched; this just removes the obvious
+  // "drag the scrubber to the end" shortcut.
+  useEffect(() => {
+    if (step !== 'video') return;
 
-  function handleVideoEnded() {
-    setStep('confirm');
-  }
+    function createPlayer() {
+      playerRef.current = new window.YT!.Player('yt-player', {
+        videoId: YOUTUBE_VIDEO_ID,
+        playerVars: { modestbranding: 1, rel: 0, controls: 1 },
+        events: {
+          onStateChange: (e: { data: number }) => {
+            if (window.YT && e.data === window.YT.PlayerState.ENDED) {
+              setStep('confirm');
+            }
+          },
+        },
+      });
+      pollRef.current = setInterval(() => {
+        const p = playerRef.current;
+        if (!p) return;
+        const t = p.getCurrentTime();
+        if (t > maxTimeReached.current + 1.5) {
+          p.seekTo(maxTimeReached.current, true);
+        } else if (t > maxTimeReached.current) {
+          maxTimeReached.current = t;
+        }
+      }, 500);
+    }
+
+    if (window.YT && window.YT.Player) {
+      createPlayer();
+    } else {
+      const tag = document.createElement('script');
+      tag.src = 'https://www.youtube.com/iframe_api';
+      document.body.appendChild(tag);
+      window.onYouTubeIframeAPIReady = createPlayer;
+    }
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      playerRef.current?.destroy();
+      playerRef.current = null;
+    };
+  }, [step]);
 
   async function handleConfirmUnderstanding() {
     if (!token) return;
@@ -199,17 +249,9 @@ export default function DvicTrainingPage() {
               Please watch this training video all the way through — it'll unlock once it finishes.
               Skipping ahead won't work; the timer only counts real watch time.
             </p>
-            <video
-              ref={videoRef}
-              controls
-              controlsList="nodownload noplaybackrate"
-              disablePictureInPicture
-              onTimeUpdate={handleTimeUpdate}
-              onSeeking={handleSeeking}
-              onEnded={handleVideoEnded}
-              style={{ width: '100%', borderRadius: 8, background: '#000' }}
-              src={`${api}/dvic/training-video-url`}
-            />
+            <div style={{ position: 'relative', width: '100%', paddingBottom: '56.25%', background: '#000', borderRadius: 8, overflow: 'hidden' }}>
+              <div id="yt-player" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }} />
+            </div>
           </>
         )}
 

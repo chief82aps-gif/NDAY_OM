@@ -18,7 +18,7 @@ import logging
 import os
 import re
 import tempfile
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 import requests
@@ -709,6 +709,7 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
                     # future HR module owns creation/termination — this ingest
                     # only ever creates/updates, never deactivates or deletes.
                     from api.src.database import DriverRosterEntry as DRE, flag_stale_driver_profiles
+                    from api.src.driver_identity import resolve_roster_entry
                     all_names = {n for dl in by_date.values() for n in dl}
                     last_seen_by_name: dict = {}
                     for sched_date, drivers in by_date.items():
@@ -721,22 +722,54 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
                         for r in db.query(DRE).filter(DRE.payroll_name.in_(list(all_names))).all()
                     }
                     newly_created_names = []
+                    new_rows_by_name: dict = {}
+                    name_to_roster_id: dict = {}
                     for name in all_names:
                         seen_date = last_seen_by_name.get(name)
                         row = existing_rows.get(name)
+                        if not row:
+                            # No exact spelling match — before creating a new
+                            # roster row, check whether this is just a spelling
+                            # variant of a driver we already know (e.g. a middle
+                            # name present/absent). Without this, every variant
+                            # silently created a duplicate DriverRosterEntry
+                            # instead of linking to the existing one (found
+                            # 2026-07-23 as part of the driver-identity refactor).
+                            row = resolve_roster_entry(name, db)
                         if row:
                             if seen_date and (row.last_seen_on_schedule is None or seen_date > row.last_seen_on_schedule):
                                 row.last_seen_on_schedule = seen_date
                             if row.flagged_inactive:
                                 row.flagged_inactive = False
                                 row.flagged_inactive_at = None
+                            name_to_roster_id[name] = row.id
                         else:
-                            db.add(DRE(
+                            new_row = DRE(
                                 payroll_name=name, is_active=True, ssn_last4="1234",
                                 source="schedule_upload", last_seen_on_schedule=seen_date,
-                            ))
+                            )
+                            db.add(new_row)
+                            new_rows_by_name[name] = new_row
                             newly_created_names.append(name)
+                    if new_rows_by_name:
+                        db.flush()   # need new_row.id before name_to_roster_id can use it — session is autoflush=False
+                        for name, new_row in new_rows_by_name.items():
+                            name_to_roster_id[name] = new_row.id
                     db.commit()
+
+                    # Link every DriverScheduleEntry row this ingest just
+                    # created/touched back to its resolved roster row.
+                    for sched_date in by_date.keys():
+                        for entry in (
+                            db.query(DriverScheduleEntry)
+                            .filter(DriverScheduleEntry.schedule_date == sched_date)
+                            .all()
+                        ):
+                            rid = name_to_roster_id.get(entry.driver_name)
+                            if rid:
+                                entry.roster_id = rid
+                    db.commit()
+
                     if newly_created_names:
                         try:
                             from api.src.routes.drivers import notify_new_unlinked_drivers
@@ -1054,6 +1087,20 @@ def skip_job(job_id: int, db: Session = Depends(get_db)):
     job.status = "skipped"
     db.commit()
     return _job_to_dict(job)
+
+
+@router.post("/backfill-roster-ids")
+def backfill_roster_ids_endpoint(
+    start_date: Optional[str] = None, end_date: Optional[str] = None, db: Session = Depends(get_db),
+):
+    """Manual/one-time: populate roster_id on existing DailyRouteAssignment/
+    DriverScheduleEntry/DriverShiftDM rows that don't have one yet (added
+    2026-07-23, driver-identity refactor). Idempotent — only touches rows
+    where roster_id IS NULL. Defaults to the trailing 7 days."""
+    from api.src.driver_identity import backfill_roster_ids as _backfill
+    end = date.fromisoformat(end_date) if end_date else date.today()
+    start = date.fromisoformat(start_date) if start_date else end - timedelta(days=7)
+    return _backfill(db, start, end)
 
 
 @router.patch("/jobs/{job_id}/type")

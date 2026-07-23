@@ -437,6 +437,7 @@ class DriverRosterEntry(Base):
 
     id = Column(Integer, primary_key=True)
     payroll_name = Column(String(100), nullable=False, index=True)  # Last, First
+    preferred_name = Column(String(100), nullable=True)  # display only (e.g. a nickname) — never used for matching, which always stays against payroll_name since that's what ADP/DOP/Cortex actually send
     position_id = Column(String(20), unique=True, nullable=True)    # UDXxxxxxx — nullable for schedule-seeded entries
     hire_date = Column(Date)
     home_department = Column(String(100))
@@ -1341,6 +1342,7 @@ class DailyRouteAssignment(Base):
     assignment_date = Column(Date, nullable=False, index=True)
     route_code = Column(String(50), index=True)
     driver_name = Column(String(255), index=True)
+    roster_id = Column(Integer, ForeignKey("driver_roster.id"), nullable=True, index=True)
     van_number = Column(String(50))
     stage_location = Column(String(100))
     wave = Column(String(50))
@@ -1392,6 +1394,7 @@ class DriverScheduleEntry(Base):
     id = Column(Integer, primary_key=True)
     schedule_date = Column(Date, nullable=False, index=True)
     driver_name = Column(String(255), nullable=False, index=True)
+    roster_id = Column(Integer, ForeignKey("driver_roster.id"), nullable=True, index=True)
     wave_time = Column(String(20))
     show_time = Column(String(20))
     service_type = Column(String(255))
@@ -2271,6 +2274,38 @@ def ensure_driver_roster_tracking_columns():
             pass  # Column already exists
 
 
+def ensure_driver_roster_preferred_name_column():
+    """Add preferred_name to driver_roster — added 2026-07-23 as part of
+    the driver-identity refactor. Display-only nickname override; never
+    used for matching."""
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE driver_roster ADD COLUMN preferred_name VARCHAR(100)"))
+            else:
+                conn.execute(text("ALTER TABLE driver_roster ADD COLUMN IF NOT EXISTS preferred_name VARCHAR(100)"))
+    except Exception:
+        pass  # Column already exists
+
+
+def ensure_driver_identity_roster_id_columns():
+    """Add roster_id (FK to driver_roster) to daily_route_assignments,
+    driver_schedule_entries, and driver_shift_dms — added 2026-07-23 as
+    part of the driver-identity refactor, so DM-sending/summary code can
+    resolve identity once at ingest time instead of re-matching driver
+    names by fuzzy string comparison on every read (the root cause of a
+    run of production bugs today)."""
+    for table in ("daily_route_assignments", "driver_schedule_entries", "driver_shift_dms"):
+        try:
+            with engine.begin() as conn:
+                if DATABASE_URL.startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN roster_id INTEGER"))
+                else:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS roster_id INTEGER"))
+        except Exception:
+            pass  # Column already exists
+
+
 def ensure_okami_capacity_finalize_columns():
     """Add frt + finalize-snapshot columns to okami_capacity_logs — the
     table shipped first without them, then finalize/FRT support was added
@@ -3140,6 +3175,7 @@ class DriverShiftDM(Base):
     id = Column(Integer, primary_key=True)
     shift_date = Column(Date, nullable=False, index=True)
     driver_name = Column(String(255), nullable=False, index=True)
+    roster_id = Column(Integer, ForeignKey("driver_roster.id"), nullable=True, index=True)
     slack_user_id = Column(String(50))
     wave_time = Column(String(20))
     showtime = Column(String(20))         # wave_time - 25 min

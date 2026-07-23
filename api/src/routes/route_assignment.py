@@ -103,12 +103,18 @@ def _name_overlap(a: str, b: str) -> int:
     return len(_tokens(a) & _tokens(b))
 
 def _match_roster(name: str, roster: list[DriverRosterEntry]) -> Optional[DriverRosterEntry]:
+    """Best-match among an already-loaded roster list. Tightened
+    2026-07-23 from a >=1-shared-token threshold to the same >=2 used by
+    the shared driver-identity resolver elsewhere — a single shared token
+    (e.g. only a common first name) was noticeably weaker than every
+    other matcher in the codebase and could mismatch two different
+    drivers who happen to share a first name."""
     best, best_score = None, 0
     for r in roster:
         score = _name_overlap(name, r.payroll_name)
         if score > best_score:
             best_score, best = score, r
-    return best if best_score >= 1 else None
+    return best if best_score >= 2 else None
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Data loaders
@@ -585,7 +591,7 @@ def _build_board(target: date, db: Session) -> dict:
         matching_tid = next(
             (cr.transporter_id for cr in cortex_rows
              if getattr(cr, "transporter_id", None) and
-             _name_overlap(cr.driver_name or "", r.payroll_name) >= 1),
+             _name_overlap(cr.driver_name or "", r.payroll_name) >= 2),
             None
         )
         if matching_tid and matching_tid not in quality_tids:

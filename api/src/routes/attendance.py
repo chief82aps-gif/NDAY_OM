@@ -35,6 +35,7 @@ from api.src.database import (
     CalloutQueue,
     DriverScheduleEntry,
 )
+from api.src.driver_identity import resolve_roster_entry
 from api.src.authorization import require_any_role
 
 logger = logging.getLogger(__name__)
@@ -410,11 +411,13 @@ def log_attendance(req: AttendanceLogRequest, db: Session = Depends(get_db)):
         count += 1
     resign_flag = count >= 2
 
-    # Match to roster
-    roster_entry = db.query(DriverRosterEntry).filter(
-        func.lower(DriverRosterEntry.payroll_name) == req.driver_name.lower(),
-        DriverRosterEntry.is_active == True,
-    ).first()
+    # Match to roster. resolve_roster_entry() (exact match, then token-
+    # overlap fallback) — a plain exact/lowercase-only match here left
+    # roster_id null/wrong for the same middle-name mismatches fixed
+    # elsewhere in the driver-identity refactor, which in turn kept
+    # rostering.py's _called_out_today() from finding this event via its
+    # roster_id check.
+    roster_entry = resolve_roster_entry(req.driver_name, db)
 
     event = AttendanceEvent(
         driver_name=req.driver_name,
@@ -877,10 +880,27 @@ def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
             pass
     try:
         from api.src.database import DriverScheduleEntry
-        scheduled = db.query(DriverScheduleEntry).filter(
-            DriverScheduleEntry.schedule_date == shift_date,
-            func.lower(DriverScheduleEntry.driver_name) == roster_entry.payroll_name.lower(),
-        ).first()
+        # Prefer roster_id (set at ingest time — driver_identity.py); fall
+        # back to name matching only for rows that predate the
+        # driver-identity refactor / haven't been backfilled yet.
+        scheduled = (
+            db.query(DriverScheduleEntry)
+            .filter(DriverScheduleEntry.schedule_date == shift_date, DriverScheduleEntry.roster_id == roster_entry.id)
+            .first()
+        )
+        if not scheduled:
+            scheduled = db.query(DriverScheduleEntry).filter(
+                DriverScheduleEntry.schedule_date == shift_date,
+                func.lower(DriverScheduleEntry.driver_name) == roster_entry.payroll_name.lower(),
+            ).first()
+        if not scheduled:
+            name_tokens = frozenset(roster_entry.payroll_name.lower().replace(",", "").split())
+            if name_tokens:
+                for candidate in db.query(DriverScheduleEntry).filter(DriverScheduleEntry.schedule_date == shift_date).all():
+                    c_tokens = frozenset((candidate.driver_name or "").lower().replace(",", "").split())
+                    if len(name_tokens & c_tokens) >= 2:
+                        scheduled = candidate
+                        break
         not_scheduled = scheduled is None
     except Exception:
         pass

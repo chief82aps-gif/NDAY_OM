@@ -46,6 +46,7 @@ from api.src.database import (
     get_reminder_state,
     set_reminder_state,
 )
+from api.src.driver_identity import resolve_roster_entry, resolve_roster_id
 from api.src.schedule_config import SHOWTIME_OFFSET_MINUTES
 
 logger = logging.getLogger(__name__)
@@ -197,17 +198,23 @@ def _standing_emoji(st: str) -> str:
     return {"Platinum": "💎", "Gold": "🥇", "Silver": "🥈", "Bronze": "🥉"}.get(st, "❔")
 
 
-def _called_out_today(shift_date: date, db: Session) -> set[str]:
-    """Return names of drivers who called out for shift_date."""
+def _called_out_today(shift_date: date, db: Session) -> tuple[set[str], set[int]]:
+    """Return (driver_names, roster_ids) of drivers who called out for
+    shift_date. roster_ids comes from AttendanceEvent.roster_id, set at
+    write time for every real callout submission — prefer checking
+    membership there (2026-07-23, driver-identity refactor); the name set
+    remains as a fallback for legacy rows without a roster_id."""
     rows = (
-        db.query(AttendanceEvent.driver_name)
+        db.query(AttendanceEvent.driver_name, AttendanceEvent.roster_id)
         .filter(
             AttendanceEvent.event_date == shift_date,
             AttendanceEvent.is_missed == True,
         )
         .all()
     )
-    return {r.driver_name for r in rows}
+    names = {r.driver_name for r in rows}
+    roster_ids = {r.roster_id for r in rows if r.roster_id}
+    return names, roster_ids
 
 
 # ─── ETA helper ──────────────────────────────────────────────────────────────
@@ -302,7 +309,7 @@ def _build_roster_suggestion(shift_date: date, db: Session) -> list[dict]:
         return []
 
     quality_map = _latest_quality_map(db)
-    called_out = _called_out_today(shift_date, db)
+    called_out_names, called_out_ids = _called_out_today(shift_date, db)
 
     suggestions = []
     for entry in scheduled:
@@ -319,7 +326,7 @@ def _build_roster_suggestion(shift_date: date, db: Session) -> list[dict]:
             "service_type": entry.service_type,
             "is_sweeper": entry.is_sweeper,
             "van_constraint": constraint,
-            "called_out": name in called_out,
+            "called_out": (entry.roster_id in called_out_ids) if entry.roster_id else (name in called_out_names),
         })
 
     suggestions.sort(key=lambda x: (-x["rank"], -x["score"], x["driver_name"]))
@@ -408,43 +415,30 @@ def send_nightly_roster_reminder(shift_date: date, db: Session) -> dict:
 
 # ─── Driver shift DMs ────────────────────────────────────────────────────────
 
-def _get_driver_slack_id(driver_name: str, db: Session) -> Optional[str]:
+def _get_driver_slack_id(driver_name: str, db: Session, roster_id: Optional[int] = None) -> Optional[str]:
     """Look up Slack user ID from driver_roster (populated by SSN import script).
 
-    2026-07-22 fix #1: this read entry.slack_user_id via getattr(..., None),
-    but DriverRosterEntry's real column is slack_member_id (slack_user_id
-    is a field on other models — User, DriverShiftDM — not this one). The
-    getattr default silently masked the AttributeError, so this returned
-    None for every real driver, every time.
+    2026-07-23: prefer a stored roster_id (set at ingest time — see
+    driver_identity.py) when the caller has one; only fall back to
+    resolve_roster_entry()'s name-matching for rows that predate the
+    driver-identity refactor and haven't been backfilled yet.
 
-    2026-07-22 fix #2: exact-match alone still missed most real drivers
-    even after fix #1 — DailyRouteAssignment/DriverScheduleEntry driver
-    names come from DOP/Cortex/the schedule file as "First Last", while
-    DriverRosterEntry.payroll_name (ADP import) commonly includes a
-    middle name ("First Middle Last"), e.g. "Austin Gilmore" (assignment)
-    vs. "Austin Lee Gilmore" (roster) — confirmed live: 44 of 50 real
-    routes failed with no_slack_id despite all 44 drivers being properly
-    Slack-linked. Falls back to the same token-overlap match (>=2 shared
-    name tokens) eod_survey.py and driver_matching.py already use for
-    this exact mismatch, only after an exact match fails.
+    History: this used to read entry.slack_user_id via getattr(..., None)
+    against the wrong column name (real column is slack_member_id),
+    silently returning None for every driver. Then, even after that fix,
+    exact-name-match alone still missed most real drivers because
+    DailyRouteAssignment/DriverScheduleEntry names come from DOP/Cortex/
+    the schedule file as "First Last" while DriverRosterEntry.payroll_name
+    (ADP import) commonly includes a middle name. Both are now handled by
+    the shared resolver.
     """
-    entry = (
-        db.query(DriverRosterEntry)
-        .filter(DriverRosterEntry.payroll_name == driver_name, DriverRosterEntry.is_active == True)
-        .first()
-    )
-    if entry:
-        return entry.slack_member_id
+    if roster_id is not None:
+        entry = db.query(DriverRosterEntry).filter(DriverRosterEntry.id == roster_id).first()
+        if entry:
+            return entry.slack_member_id
 
-    name_tokens = frozenset((driver_name or "").lower().replace(",", "").split())
-    if not name_tokens:
-        return None
-    candidates = db.query(DriverRosterEntry).filter(DriverRosterEntry.is_active == True).all()
-    for c in candidates:
-        c_tokens = frozenset((c.payroll_name or "").lower().replace(",", "").split())
-        if len(name_tokens & c_tokens) >= 2:
-            return c.slack_member_id
-    return None
+    entry = resolve_roster_entry(driver_name, db)
+    return entry.slack_member_id if entry else None
 
 
 def _build_shift_dm(entry: DriverScheduleEntry, wave_lead_name: str, date_str: str, shift_date: date) -> tuple[str, list, Optional[str]]:
@@ -553,7 +547,7 @@ def send_driver_shift_dms(shift_date: date, db: Session) -> dict:
         .all()
     }
 
-    called_out = _called_out_today(shift_date, db)
+    called_out_names, called_out_ids = _called_out_today(shift_date, db)
     wave_lead_name, _ = _wave_lead_name(shift_date)
     client = _slack_client()
     date_str = shift_date.strftime("%A, %B %-d")
@@ -562,11 +556,12 @@ def send_driver_shift_dms(shift_date: date, db: Session) -> dict:
 
     for entry in scheduled:
         name = entry.driver_name
-        if name in already_sent or name in called_out:
+        called_out = (entry.roster_id in called_out_ids) if entry.roster_id else (name in called_out_names)
+        if name in already_sent or called_out:
             skipped += 1
             continue
 
-        slack_id = _get_driver_slack_id(name, db)
+        slack_id = _get_driver_slack_id(name, db, roster_id=entry.roster_id)
         text_fallback, blocks, showtime = _build_shift_dm(entry, wave_lead_name, date_str, shift_date)
 
         dm_ts = None
@@ -590,6 +585,7 @@ def send_driver_shift_dms(shift_date: date, db: Session) -> dict:
             db.add(dm_record)
 
         dm_record.slack_user_id = slack_id
+        dm_record.roster_id = entry.roster_id
         dm_record.wave_time = entry.wave_time
         dm_record.showtime = showtime
         dm_record.wave_lead = wave_lead_name
@@ -1045,14 +1041,14 @@ def send_schedule_gap_alert(shift_date: date, db: Session) -> dict:
     if get_reminder_state(db, state_key).get("sent"):
         return {"status": "already_sent"}
 
-    called_out = _called_out_today(shift_date, db)
+    called_out_names, called_out_ids = _called_out_today(shift_date, db)
     dm_by_driver = {
         d.driver_name: d
         for d in db.query(DriverShiftDM).filter(DriverShiftDM.shift_date == shift_date).all()
     }
     unconfirmed = [
         e.driver_name for e in scheduled
-        if e.driver_name not in called_out
+        if not ((e.roster_id in called_out_ids) if e.roster_id else (e.driver_name in called_out_names))
         and getattr(dm_by_driver.get(e.driver_name), "schedule_acked_at", None) is None
     ]
     if not unconfirmed:
@@ -1831,28 +1827,55 @@ def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str
 
     night_prior_showtime = None
     if db is not None:
-        schedule_entry = (
-            db.query(DriverScheduleEntry)
-            .filter(
-                DriverScheduleEntry.schedule_date == a.assignment_date,
-                DriverScheduleEntry.driver_name == a.driver_name,
+        schedule_entry = None
+        if a.roster_id:
+            schedule_entry = (
+                db.query(DriverScheduleEntry)
+                .filter(
+                    DriverScheduleEntry.schedule_date == a.assignment_date,
+                    DriverScheduleEntry.roster_id == a.roster_id,
+                )
+                .first()
             )
-            .first()
-        )
         if not schedule_entry:
-            # Same middle-name mismatch confirmed for _get_driver_slack_id()
-            # (e.g. "Ross Michael Reinberg" in the schedule file vs. "Ross
-            # Reinberg" in the DOP-derived assignment) — exact match alone
-            # misses most drivers here too. Token-overlap fallback, same
-            # as everywhere else this mismatch shows up.
+            schedule_entry = (
+                db.query(DriverScheduleEntry)
+                .filter(
+                    DriverScheduleEntry.schedule_date == a.assignment_date,
+                    DriverScheduleEntry.driver_name == a.driver_name,
+                )
+                .first()
+            )
+        if not schedule_entry:
+            # Middle-name mismatch (e.g. "Ross Michael Reinberg" in the
+            # schedule file vs. "Ross Reinberg" in the DOP-derived
+            # assignment) and neither row has roster_id populated yet
+            # (predates the driver-identity refactor / not yet
+            # backfilled) — resolve via the shared resolver and re-query
+            # by the id it finds.
+            rid = resolve_roster_id(a.driver_name, db)
+            if rid:
+                schedule_entry = (
+                    db.query(DriverScheduleEntry)
+                    .filter(
+                        DriverScheduleEntry.schedule_date == a.assignment_date,
+                        DriverScheduleEntry.roster_id == rid,
+                    )
+                    .first()
+                )
+        if not schedule_entry:
+            # Last-resort fallback for the transition window before the
+            # backfill has populated roster_id on this specific date's
+            # DriverScheduleEntry rows — same token-overlap match this
+            # replaced, kept only as a safety net so behavior can't
+            # regress mid-migration.
             a_tokens = frozenset((a.driver_name or "").lower().replace(",", "").split())
             if a_tokens:
-                candidates = (
+                for c in (
                     db.query(DriverScheduleEntry)
                     .filter(DriverScheduleEntry.schedule_date == a.assignment_date)
                     .all()
-                )
-                for c in candidates:
+                ):
                     c_tokens = frozenset((c.driver_name or "").lower().replace(",", "").split())
                     if len(a_tokens & c_tokens) >= 2:
                         schedule_entry = c
@@ -2018,7 +2041,7 @@ def send_day_of_dms(shift_date: date, db: Session) -> dict:
     sent = skipped = no_slack = 0
 
     for a in assignments:
-        slack_id = _get_driver_slack_id(a.driver_name, db)
+        slack_id = _get_driver_slack_id(a.driver_name, db, roster_id=a.roster_id)
         if not slack_id:
             no_slack += 1
             # Still mark dm_sent so daily_notify plain-text fallback can pick it up
@@ -2093,7 +2116,7 @@ def send_single_day_of_dm(assignment_id: int, db: Session) -> dict:
     if not a:
         return {"status": "not_found", "assignment_id": assignment_id}
 
-    slack_id = _get_driver_slack_id(a.driver_name, db)
+    slack_id = _get_driver_slack_id(a.driver_name, db, roster_id=a.roster_id)
     if not slack_id:
         return {"status": "no_slack_id", "driver": a.driver_name}
 
@@ -2685,7 +2708,7 @@ def send_eod_checklist_dms(shift_date: date, db: Session) -> dict:
             skipped += 1
             continue
 
-        slack_id = _get_driver_slack_id(a.driver_name, db)
+        slack_id = _get_driver_slack_id(a.driver_name, db, roster_id=a.roster_id)
         if not slack_id or not client:
             continue
 
@@ -2983,7 +3006,7 @@ def refresh_arrival_response_summary(shift_date: date, db: Session) -> dict:
         r.driver_name: r
         for r in db.query(DriverShiftDM).filter(DriverShiftDM.shift_date == shift_date).all()
     }
-    called_out_names = _called_out_today(shift_date, db)
+    called_out_names, called_out_ids = _called_out_today(shift_date, db)
 
     green, yellow, red = [], [], []
     seen = set()
@@ -2991,7 +3014,8 @@ def refresh_arrival_response_summary(shift_date: date, db: Session) -> dict:
         if a.driver_name in seen:
             continue
         seen.add(a.driver_name)
-        status = _arrival_response_status(dm_records.get(a.driver_name), a.driver_name in called_out_names)
+        called_out = (a.roster_id in called_out_ids) if a.roster_id else (a.driver_name in called_out_names)
+        status = _arrival_response_status(dm_records.get(a.driver_name), called_out)
         (green if status == "green" else yellow if status == "yellow" else red).append(a.driver_name)
 
     client = _slack_client()

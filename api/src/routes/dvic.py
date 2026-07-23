@@ -41,6 +41,7 @@ from api.src.database import (
     DriverRosterEntry,
 )
 from api.src.ingest.dvic import parse_dvic_xlsx, extract_week
+from api.src.driver_identity import resolve_roster_entry
 from api.src.authorization import require_any_role
 
 logger = logging.getLogger(__name__)
@@ -116,17 +117,13 @@ def _name_tokens(name: str) -> frozenset[str]:
 
 
 def _find_roster_entry(transporter_name: str, db: Session) -> Optional[DriverRosterEntry]:
-    if not transporter_name:
-        return None
-    target = _name_tokens(transporter_name)
-    best: Optional[DriverRosterEntry] = None
-    best_score = 0
-    for entry in db.query(DriverRosterEntry).filter(DriverRosterEntry.is_active == True).all():
-        score = len(target & _name_tokens(entry.payroll_name))
-        if score > best_score:
-            best_score = score
-            best = entry
-    return best if best_score >= 1 else None
+    """Delegates to the shared driver-identity resolver (2026-07-23) —
+    this used to accept a match on just a single shared name token
+    (score >= 1), noticeably weaker than the >=2 threshold used
+    everywhere else this same DOP/Cortex-vs-ADP mismatch is handled.
+    Tightened deliberately; a driver who previously matched only on a
+    common first name will now correctly fail to match."""
+    return resolve_roster_entry(transporter_name, db)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

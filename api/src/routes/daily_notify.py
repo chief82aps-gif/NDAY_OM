@@ -46,6 +46,7 @@ from api.src.database import (
     RouteSheetEntry,
     get_latest_route_sheet_rows,
 )
+from api.src.driver_identity import resolve_roster_id, resolve_roster_entry
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -602,10 +603,12 @@ def build_daily_assignments(
         van_number = pdf.get("van_number") or auto_van_by_route.get(dop.route_code) or ""
         stage_location = dop.station or pdf.get("stage") or ""
         wave = dop.wave or pdf.get("wave_time") or ""
+        roster_id = resolve_roster_id(driver_name, db) if driver_name else None
 
         existing = existing_by_route.get(rc)
         if existing:
             existing.driver_name = driver_name or existing.driver_name
+            existing.roster_id = roster_id or existing.roster_id
             existing.van_number = van_number or existing.van_number
             existing.stage_location = stage_location or existing.stage_location
             existing.wave = wave or existing.wave
@@ -617,6 +620,7 @@ def build_daily_assignments(
                 assignment_date=for_date,
                 route_code=dop.route_code,
                 driver_name=driver_name,
+                roster_id=roster_id,
                 van_number=van_number,
                 stage_location=stage_location,
                 wave=wave,
@@ -662,12 +666,14 @@ def _lookup_slack_id(driver_name: str, db: Session) -> Optional[str]:
     Return the verified Slack user ID for a driver from driver_roster.
     Future: once DriverRosterEntry has an email column and the bot has
     users:read.email scope, add a lookupByEmail fallback here.
+
+    2026-07-23: was exact-match-only with no fallback at all — the same
+    ADP-vs-DOP/Cortex middle-name mismatch class fixed elsewhere in this
+    refactor silently returned None here too. Now uses the shared resolver.
     """
     if not driver_name:
         return None
-    entry = db.query(DriverRosterEntry).filter(
-        func.lower(DriverRosterEntry.payroll_name) == driver_name.lower()
-    ).first()
+    entry = resolve_roster_entry(driver_name, db)
     return (entry.slack_member_id or None) if entry and entry.slack_verified else None
 
 
@@ -921,8 +927,18 @@ def send_sweeper_notifications(for_date: date, db: Session) -> Dict:
         frozenset(name.replace(",", "").split())
         for name in assigned_lower if name
     ]
+    # roster_id (set at ingest time — see driver_identity.py) is the
+    # reliable check now; the name/token sets above only cover rows from
+    # before the driver-identity refactor that haven't been backfilled yet.
+    assigned_roster_ids = {
+        rid for (rid,) in db.query(DailyRouteAssignment.roster_id)
+        .filter(DailyRouteAssignment.assignment_date == for_date, DailyRouteAssignment.roster_id.isnot(None))
+        .all()
+    }
 
-    def _has_route_today(payroll_name: str) -> bool:
+    def _has_route_today(payroll_name: str, roster_id: Optional[int] = None) -> bool:
+        if roster_id is not None and roster_id in assigned_roster_ids:
+            return True
         name = (payroll_name or "").lower()
         if name in assigned_lower:
             return True
@@ -947,8 +963,15 @@ def send_sweeper_notifications(for_date: date, db: Session) -> Dict:
         frozenset(name.replace(",", "").split())
         for name in scheduled_lower if name
     ]
+    scheduled_roster_ids = {
+        rid for (rid,) in db.query(DriverScheduleEntry.roster_id)
+        .filter(DriverScheduleEntry.schedule_date == for_date, DriverScheduleEntry.roster_id.isnot(None))
+        .all()
+    }
 
-    def _is_scheduled_today(payroll_name: str) -> bool:
+    def _is_scheduled_today(payroll_name: str, roster_id: Optional[int] = None) -> bool:
+        if roster_id is not None and roster_id in scheduled_roster_ids:
+            return True
         name = (payroll_name or "").lower()
         if name in scheduled_lower:
             return True
@@ -990,9 +1013,9 @@ def send_sweeper_notifications(for_date: date, db: Session) -> Dict:
 
     sent = failed = 0
     for driver in roster:
-        if not _is_scheduled_today(driver.payroll_name):
+        if not _is_scheduled_today(driver.payroll_name, roster_id=driver.id):
             continue  # not on today's schedule at all — never a sweeper candidate
-        if _has_route_today(driver.payroll_name):
+        if _has_route_today(driver.payroll_name, roster_id=driver.id):
             continue  # has a route — skip
         try:
             client.chat_postMessage(channel=driver.slack_member_id, text=sweeper_msg)

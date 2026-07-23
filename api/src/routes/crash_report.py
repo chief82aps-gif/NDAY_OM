@@ -204,6 +204,29 @@ class StartRequest(BaseModel):
     submitted_by: Optional[str] = None  # manager who generated the report
 
 
+@router.get("/today-for-driver")
+def crash_report_today_for_driver(driver_name: str, db: Session = Depends(get_db)):
+    """Check whether a crash report already exists for this driver today —
+    used by the EOD survey so answering "yes, I crashed" doesn't create a
+    second/duplicate draft when dispatch already started one earlier the
+    same day (e.g. right after the crash happened)."""
+    today = date.today()
+    report = (
+        db.query(CrashReport)
+        .filter(CrashReport.driver_name == driver_name, CrashReport.accident_date == today)
+        .order_by(CrashReport.created_at.desc())
+        .first()
+    )
+    if not report:
+        return {"exists": False}
+    return {
+        "exists": True,
+        "report_id": report.id,
+        "report_number": report.report_number,
+        "status": report.status,
+    }
+
+
 @router.post("/start")
 def start_crash_report(req: StartRequest, db: Session = Depends(get_db)):
     """Create a draft crash report prepopulated from today's route assignment."""

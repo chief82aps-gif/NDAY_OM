@@ -2098,6 +2098,26 @@ def ensure_dvic_manager_signature_columns():
             pass  # Column already exists
 
 
+def ensure_eod_crash_columns():
+    """Add crash_occurred/crash_report_id to eod_survey_responses — added
+    2026-07-22, splitting the crash question out from the generic
+    incident question so it's unambiguous and routes to the real
+    CrashReport engine."""
+    for col, coltype in (
+        ("crash_occurred", "BOOLEAN"),
+        ("crash_report_id", "INTEGER"),
+        ("incident_description", "TEXT"),
+    ):
+        try:
+            with engine.begin() as conn:
+                if DATABASE_URL.startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE eod_survey_responses ADD COLUMN {col} {coltype}"))
+                else:
+                    conn.execute(text(f"ALTER TABLE eod_survey_responses ADD COLUMN IF NOT EXISTS {col} {coltype}"))
+        except Exception:
+            pass  # Column already exists
+
+
 def ensure_user_auth_columns():
     """Add slack_user_id/reset_token/reset_token_expires_at to users —
     added 2026-07-17 for the invite/reset-password Dispatch Home flow."""
@@ -2719,9 +2739,17 @@ class EodSurveyResponse(Base):
     van_issues = Column(Boolean, default=False)
     van_issue_description = Column(Text)
 
-    # Incident / damage
+    # Crash — added 2026-07-22, split out from the generic incident
+    # question per explicit request ("Did you crash?" must be its own,
+    # unambiguous question, routed to the real CrashReport engine)
+    crash_occurred = Column(Boolean, default=False)
+    crash_report_id = Column(Integer, nullable=True)   # set if a CrashReport was found/created
+
+    # Incident / damage — the generic catch-all (near-miss, non-crash
+    # property damage, safety concern), distinct from crash/injury above
     incident_occurred = Column(Boolean, default=False)
     incident_report_filed = Column(Boolean)
+    incident_description = Column(Text)
 
     # Injury
     injury_occurred = Column(Boolean, default=False)

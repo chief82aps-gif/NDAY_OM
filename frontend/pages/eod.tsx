@@ -71,11 +71,29 @@ export default function EodPage() {
   const [clockInReason, setClockInReason] = useState('');
   const [vanIssues, setVanIssues] = useState<boolean | null>(null);
   const [vanDesc, setVanDesc] = useState('');
-  const [incident, setIncident] = useState<boolean | null>(null);
-  const [incidentReport, setIncidentReport] = useState<boolean | null>(null);
+  // Crash — its own explicit question, auto-checked/created against the
+  // real CrashReport engine (drivers have no web login, so this is
+  // create-and-alert, never a page redirect).
+  const [crash, setCrash] = useState<boolean | null>(null);
+  const [crashCheckStatus, setCrashCheckStatus] = useState<'idle' | 'checking' | 'checked' | 'error'>('idle');
+  const [crashExisting, setCrashExisting] = useState<{ report_id: number; report_number: string; status: string } | null>(null);
+  const [crashSameReport, setCrashSameReport] = useState<boolean | null>(null);
+  const [crashReportId, setCrashReportId] = useState<number | null>(null);
+  const [crashResolving, setCrashResolving] = useState(false);
+  const [crashResolveError, setCrashResolveError] = useState('');
+
   const [injury, setInjury] = useState<boolean | null>(null);
+  const [injuryCheckStatus, setInjuryCheckStatus] = useState<'idle' | 'checking' | 'checked' | 'error'>('idle');
+  const [injuryExisting, setInjuryExisting] = useState<{ report_id: number } | null>(null);
+  const [injurySameReport, setInjurySameReport] = useState<boolean | null>(null);
   const [injuryReport, setInjuryReport] = useState<boolean | null>(null);
   const [medReview, setMedReview] = useState<boolean | null>(null);
+
+  // Incident — generic catch-all (not a crash, not an injury). No dedicated
+  // report engine exists for this today, so it stays a plain description.
+  const [incident, setIncident] = useState<boolean | null>(null);
+  const [incidentReport, setIncidentReport] = useState<boolean | null>(null);
+  const [incidentDesc, setIncidentDesc] = useState('');
   const [postDvic, setPostDvic] = useState<boolean | null>(null);
   const [gasLevel, setGasLevel] = useState('');
   const [packagesRts, setPackagesRts] = useState('0');
@@ -129,11 +147,101 @@ export default function EodPage() {
     }
   };
 
+  const startNewCrashReport = async () => {
+    if (!driverInfo) return;
+    setCrashResolving(true);
+    setCrashResolveError('');
+    try {
+      const res = await fetch(`${api}/crash-report/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ driver_name: driverInfo.driver_name, shift_date: today }),
+      });
+      if (!res.ok) throw new Error('start failed');
+      const data = await res.json();
+      setCrashReportId(data.report.id);
+    } catch {
+      setCrashResolveError('Could not auto-create a crash report — management has been alerted and will follow up directly.');
+    } finally {
+      setCrashResolving(false);
+    }
+  };
+
+  const onCrashAnswer = async (v: boolean) => {
+    setCrash(v);
+    setCrashExisting(null);
+    setCrashSameReport(null);
+    setCrashReportId(null);
+    setCrashResolveError('');
+    setCrashCheckStatus('idle');
+    if (!v || !driverInfo) return;
+    setCrashCheckStatus('checking');
+    try {
+      const res = await fetch(`${api}/crash-report/today-for-driver?driver_name=${encodeURIComponent(driverInfo.driver_name)}`);
+      const data = await res.json();
+      setCrashCheckStatus('checked');
+      if (data.exists) {
+        setCrashExisting({ report_id: data.report_id, report_number: data.report_number, status: data.status });
+      } else {
+        await startNewCrashReport();
+      }
+    } catch {
+      setCrashCheckStatus('error');
+    }
+  };
+
+  const onCrashSameReport = async (same: boolean) => {
+    setCrashSameReport(same);
+    if (same && crashExisting) {
+      setCrashReportId(crashExisting.report_id);
+    } else {
+      await startNewCrashReport();
+    }
+  };
+
+  const onInjuryAnswer = async (v: boolean) => {
+    setInjury(v);
+    setInjuryExisting(null);
+    setInjurySameReport(null);
+    setInjuryReport(null);
+    setInjuryCheckStatus('idle');
+    if (!v || !driverInfo) return;
+    setInjuryCheckStatus('checking');
+    try {
+      const res = await fetch(`${api}/injury-reports/today-for-driver?employee_name=${encodeURIComponent(driverInfo.driver_name)}`);
+      const data = await res.json();
+      setInjuryCheckStatus('checked');
+      if (data.exists) {
+        setInjuryExisting({ report_id: data.report_id });
+      } else {
+        setInjuryReport(false);   // nothing on file yet — dispatch needs to follow up
+      }
+    } catch {
+      setInjuryCheckStatus('error');
+    }
+  };
+
+  const onInjurySameReport = (same: boolean) => {
+    setInjurySameReport(same);
+    setInjuryReport(same);   // same as existing → already submitted; new/different → not yet, dispatch follows up
+  };
+
+  const crashPending = crash === true && (
+    crashCheckStatus === 'checking' ||
+    crashResolving ||
+    (crashExisting !== null && crashSameReport === null)
+  );
+  const injuryPending = injury === true && (
+    injuryCheckStatus === 'checking' ||
+    (injuryExisting !== null && injurySameReport === null)
+  );
+
   const canSubmit = () => (
     clockedInOnTime !== null &&
     vanIssues !== null &&
+    crash !== null && !crashPending &&
     incident !== null &&
-    injury !== null &&
+    injury !== null && !injuryPending &&
     postDvic !== null &&
     gasLevel !== '' &&
     routeIssues !== null &&
@@ -162,8 +270,11 @@ export default function EodPage() {
         clock_in_reason: clockedInOnTime ? null : clockInReason,
         van_issues: vanIssues,
         van_issue_description: vanIssues ? vanDesc : null,
+        crash_occurred: crash,
+        crash_report_id: crash ? crashReportId : null,
         incident_occurred: incident,
         incident_report_filed: incident ? incidentReport : null,
+        incident_description: incident ? incidentDesc : null,
         injury_occurred: injury,
         injury_report_submitted: injury ? injuryReport : null,
         medical_review_completed: injury ? medReview : null,
@@ -304,17 +415,99 @@ export default function EodPage() {
           {role && <span style={{ color: '#64748b' }}> · {role}</span>}
         </div>
 
+        {/* Crash / Injury / Incident — asked first, each routes to the real
+            reporting engine (or alerts dispatch) the moment the driver
+            answers yes. */}
+        <div>
+          <label style={s.label}>Did you crash today?</label>
+          <YN value={crash} onChange={onCrashAnswer} yesColor='#dc2626' noColor='#16a34a' />
+          {crash && crashCheckStatus === 'checking' && (
+            <p style={{ color: '#94a3b8', fontSize: 13 }}>Checking for an existing report…</p>
+          )}
+          {crash && crashExisting && crashSameReport === null && (
+            <>
+              <p style={{ color: '#f59e0b', fontSize: 13 }}>
+                A crash report was already started today (Report #{crashExisting.report_number}, status: {crashExisting.status}).
+                Is this the same crash, or a different one?
+              </p>
+              <div style={s.row}>
+                <button style={s.btn(false, '#1e40af')} onClick={() => onCrashSameReport(true)}>Same crash</button>
+                <button style={s.btn(false, '#dc2626')} onClick={() => onCrashSameReport(false)}>Different crash</button>
+              </div>
+            </>
+          )}
+          {crash && crashResolving && (
+            <p style={{ color: '#94a3b8', fontSize: 13 }}>Creating a crash report draft for management…</p>
+          )}
+          {crash && crashReportId && (
+            <p style={{ color: '#4ade80', fontSize: 13 }}>
+              Crash report #{crashReportId} on file — management has been alerted.
+            </p>
+          )}
+          {crash && crashResolveError && (
+            <p style={{ color: '#f87171', fontSize: 13 }}>{crashResolveError}</p>
+          )}
+        </div>
+
+        <div style={s.section}>
+          <label style={s.label}>Did you get hurt today?</label>
+          <YN value={injury} onChange={onInjuryAnswer} yesColor='#dc2626' noColor='#16a34a' />
+          {injury && injuryCheckStatus === 'checking' && (
+            <p style={{ color: '#94a3b8', fontSize: 13 }}>Checking for an existing report…</p>
+          )}
+          {injury && injuryExisting && injurySameReport === null && (
+            <>
+              <p style={{ color: '#f59e0b', fontSize: 13 }}>
+                An injury report was already filed today for you. Is this the same injury, or a new one?
+              </p>
+              <div style={s.row}>
+                <button style={s.btn(false, '#1e40af')} onClick={() => onInjurySameReport(true)}>Same injury</button>
+                <button style={s.btn(false, '#dc2626')} onClick={() => onInjurySameReport(false)}>New injury</button>
+              </div>
+            </>
+          )}
+          {injury && injuryCheckStatus === 'checked' && injurySameReport !== false && injuryReport === true && (
+            <p style={{ color: '#4ade80', fontSize: 13 }}>Injury report on file — management has been alerted.</p>
+          )}
+          {injury && injuryReport === false && (
+            <p style={{ color: '#f87171', fontSize: 13 }}>
+              No injury report on file yet — management has been alerted and will follow up with you directly.
+            </p>
+          )}
+          {injury === true && (
+            <>
+              <label style={s.label}>Was a medical review completed?</label>
+              <YN value={medReview} onChange={setMedReview} />
+            </>
+          )}
+        </div>
+
+        <div style={s.section}>
+          <label style={s.label}>Was there any other incident (property damage, near-miss, safety concern)?</label>
+          <YN value={incident} onChange={setIncident} yesColor='#f59e0b' noColor='#16a34a' />
+          {incident && (
+            <>
+              <label style={s.label}>Briefly describe what happened</label>
+              <input style={s.input} placeholder="What happened?" value={incidentDesc} onChange={e => setIncidentDesc(e.target.value)} />
+              <label style={s.label}>Was a report filed for this?</label>
+              <YN value={incidentReport} onChange={setIncidentReport} />
+            </>
+          )}
+        </div>
+
         {/* 1. Clock-in */}
-        <label style={s.label}>Did you clock in on time (10:00 AM)?</label>
-        <YN value={clockedInOnTime} onChange={setClockedInOnTime} />
-        {clockedInOnTime === false && (
-          <>
-            <label style={s.label}>Actual clock-in time</label>
-            <input style={s.input} type="time" value={actualClockIn} onChange={e => setActualClockIn(e.target.value)} />
-            <label style={s.label}>Reason for late / early clock-in</label>
-            <input style={s.input} placeholder="Brief explanation" value={clockInReason} onChange={e => setClockInReason(e.target.value)} />
-          </>
-        )}
+        <div style={s.section}>
+          <label style={s.label}>Did you clock in on time (10:00 AM)?</label>
+          <YN value={clockedInOnTime} onChange={setClockedInOnTime} />
+          {clockedInOnTime === false && (
+            <>
+              <label style={s.label}>Actual clock-in time</label>
+              <input style={s.input} type="time" value={actualClockIn} onChange={e => setActualClockIn(e.target.value)} />
+              <label style={s.label}>Reason for late / early clock-in</label>
+              <input style={s.input} placeholder="Brief explanation" value={clockInReason} onChange={e => setClockInReason(e.target.value)} />
+            </>
+          )}
+        </div>
 
         {/* 2. Van issues */}
         <div style={s.section}>
@@ -324,32 +517,6 @@ export default function EodPage() {
             <>
               <label style={s.label}>Describe the issue</label>
               <input style={s.input} placeholder="What's wrong with the van?" value={vanDesc} onChange={e => setVanDesc(e.target.value)} />
-            </>
-          )}
-        </div>
-
-        {/* 3. Incident */}
-        <div style={s.section}>
-          <label style={s.label}>Were you involved in any incident or property damage?</label>
-          <YN value={incident} onChange={setIncident} yesColor='#dc2626' noColor='#16a34a' />
-          {incident && (
-            <>
-              <label style={s.label}>Was an incident / crash report filed?</label>
-              <YN value={incidentReport} onChange={setIncidentReport} />
-            </>
-          )}
-        </div>
-
-        {/* 4. Injury */}
-        <div style={s.section}>
-          <label style={s.label}>Did you incur any injury while on route?</label>
-          <YN value={injury} onChange={setInjury} yesColor='#dc2626' noColor='#16a34a' />
-          {injury && (
-            <>
-              <label style={s.label}>Did you submit an injury report?</label>
-              <YN value={injuryReport} onChange={setInjuryReport} />
-              <label style={s.label}>Was a medical review completed?</label>
-              <YN value={medReview} onChange={setMedReview} />
             </>
           )}
         </div>

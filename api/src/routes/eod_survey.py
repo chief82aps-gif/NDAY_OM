@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/eod-survey", tags=["eod-survey"])
 
 DRIVER_DASHBOARD_CHANNEL = os.getenv("DRIVER_DASHBOARD_CHANNEL_ID", "C0BEDCXNQNT")
+MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
 APP_URL = os.getenv("APP_URL", "https://nday-om.vercel.app")
 
 # 2026-07-22: replaced the bare ?tid=<transporter_id> link with a signed,
@@ -214,8 +215,18 @@ class EodSubmitRequest(BaseModel):
     van_issues: bool = False
     van_issue_description: Optional[str] = None
 
+    # Crash — its own explicit question, routed to the real CrashReport
+    # engine. crash_report_id is resolved by the frontend (existing
+    # report found today, or a new draft created via
+    # POST /crash-report/start) before submission.
+    crash_occurred: bool = False
+    crash_report_id: Optional[int] = None
+
+    # Generic catch-all — near-miss, non-crash property damage, safety
+    # concern. Distinct from crash/injury above.
     incident_occurred: bool = False
     incident_report_filed: Optional[bool] = None
+    incident_description: Optional[str] = None
 
     injury_occurred: bool = False
     injury_report_submitted: Optional[bool] = None
@@ -324,8 +335,11 @@ def submit_survey(req: EodSubmitRequest, db: Session = Depends(get_db)):
         clock_in_reason=req.clock_in_reason,
         van_issues=req.van_issues,
         van_issue_description=req.van_issue_description,
+        crash_occurred=req.crash_occurred,
+        crash_report_id=req.crash_report_id,
         incident_occurred=req.incident_occurred,
         incident_report_filed=req.incident_report_filed,
+        incident_description=req.incident_description,
         injury_occurred=req.injury_occurred,
         injury_report_submitted=req.injury_report_submitted,
         medical_review_completed=req.medical_review_completed,
@@ -351,6 +365,8 @@ def submit_survey(req: EodSubmitRequest, db: Session = Depends(get_db)):
 
     # Flag items needing attention
     flags: list[str] = []
+    if req.crash_occurred:
+        flags.append("🚨 Crash reported")
     if req.incident_occurred:
         flags.append("⚠️ Incident reported")
     if req.injury_occurred:
@@ -360,7 +376,49 @@ def submit_survey(req: EodSubmitRequest, db: Session = Depends(get_db)):
     if req.needs_management_contact:
         flags.append("👔 Requests management contact")
 
+    # Real-time #nday-mgt alert for crash/injury/incident — added
+    # 2026-07-22. Previously these only showed up as a flag on
+    # /eod-admin, reviewed whenever someone happened to check the
+    # dashboard — a real safety gap for something as urgent as a crash
+    # or injury. This fires unconditionally on submission (not from the
+    # frontend's own report-creation calls), so it can't be missed by a
+    # dropped network call mid-flow.
+    _alert_mgt_on_serious_flags(req, display_name, survey_date)
+
     return {"status": "submitted", "driver": display_name, "flags": flags}
+
+
+def _alert_mgt_on_serious_flags(req: "EodSubmitRequest", driver_name: str, survey_date: date) -> None:
+    if not (req.crash_occurred or req.injury_occurred or req.incident_occurred):
+        return
+    lines = []
+    date_str = survey_date.isoformat()
+    if req.crash_occurred:
+        if req.crash_report_id:
+            lines.append(
+                f"🚨 *Crash* reported via EOD Survey — *{driver_name}* ({date_str}). "
+                f"<{APP_URL}/crash-report/{req.crash_report_id}|Open Crash Report> — follow up immediately."
+            )
+        else:
+            lines.append(
+                f"🚨 *Crash* reported via EOD Survey — *{driver_name}* ({date_str}). "
+                f"No crash report on file yet — <{APP_URL}/crash-report|start one> and follow up immediately."
+            )
+    if req.injury_occurred:
+        lines.append(
+            f"🚨 *Injury* reported via EOD Survey — *{driver_name}* ({date_str}). "
+            f"Injury report submitted: {'Yes' if req.injury_report_submitted else 'NOT YET — ' + APP_URL + '/injury-report'}."
+        )
+    if req.incident_occurred:
+        lines.append(
+            f"⚠️ *Incident* reported via EOD Survey — *{driver_name}* ({date_str}). "
+            f"Report filed: {'Yes' if req.incident_report_filed else 'Not yet — dispatch should follow up.'} "
+            f"Details: {req.incident_description or '(none given)'}"
+        )
+    try:
+        _slack().chat_postMessage(channel=MGT_CHANNEL, text="\n".join(lines))
+    except Exception as exc:
+        logger.warning("EOD serious-flag mgt alert failed: %s", exc)
 
 
 @router.get("/responses")
@@ -415,6 +473,8 @@ def missing_drivers(survey_date: Optional[str] = None, db: Session = Depends(get
 
 def _row_to_dict(r: EodSurveyResponse) -> dict:
     flags: list[str] = []
+    if r.crash_occurred:
+        flags.append("crash")
     if r.incident_occurred:
         flags.append("incident")
     if r.injury_occurred:
@@ -440,8 +500,11 @@ def _row_to_dict(r: EodSurveyResponse) -> dict:
         "clock_in_reason": r.clock_in_reason,
         "van_issues": r.van_issues,
         "van_issue_description": r.van_issue_description,
+        "crash_occurred": r.crash_occurred,
+        "crash_report_id": r.crash_report_id,
         "incident_occurred": r.incident_occurred,
         "incident_report_filed": r.incident_report_filed,
+        "incident_description": r.incident_description,
         "injury_occurred": r.injury_occurred,
         "injury_report_submitted": r.injury_report_submitted,
         "medical_review_completed": r.medical_review_completed,

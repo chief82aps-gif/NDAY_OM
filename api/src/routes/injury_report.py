@@ -178,6 +178,24 @@ def create_injury_report(req: InjuryReportCreate, db: Session = Depends(get_db))
     return _serialize(report)
 
 
+@router.get("/today-for-driver")
+def injury_report_today_for_driver(employee_name: str, db: Session = Depends(get_db)):
+    """Check whether an injury report already exists for this driver
+    today — used by the EOD survey so answering "yes, I got hurt"
+    doesn't prompt a second/duplicate report when one was already filed
+    earlier the same day."""
+    today = date.today()
+    report = (
+        db.query(InjuryReport)
+        .filter(InjuryReport.employee_name == employee_name, InjuryReport.incident_date == today)
+        .order_by(InjuryReport.created_at.desc())
+        .first()
+    )
+    if not report:
+        return {"exists": False}
+    return {"exists": True, "report_id": report.id}
+
+
 @router.get("/{report_id}")
 def get_injury_report(report_id: int, db: Session = Depends(get_db)):
     report = db.query(InjuryReport).filter(InjuryReport.id == report_id).first()

@@ -214,13 +214,6 @@ def build_home_view_blocks(driver: Optional[DriverRosterEntry], db: Session) -> 
         "elements": [
             {
                 "type": "button",
-                "action_id": "btn_rts",
-                "text": {"type": "plain_text", "text": "🔄 Return to Station", "emoji": True},
-                "style": "primary",
-                "url": f"{FRONTEND_URL}/rts",
-            },
-            {
-                "type": "button",
                 "action_id": "home_callout_button",
                 "text": {"type": "plain_text", "text": "📋 Call Out", "emoji": True},
                 "style": "danger",

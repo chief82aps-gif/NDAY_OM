@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import ProtectedRoute from '../components/ProtectedRoute';
+import { useAuth } from '../contexts/AuthContext';
 
 function resolveApi() {
   if (typeof window !== 'undefined') {
@@ -144,12 +145,14 @@ const RTS_STATUS = {
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function WaveStatusPage() {
+  const { user } = useAuth();
   const [data, setData] = useState<WaveStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedDate, setSelectedDate] = useState(todayISO());
   const [countdown, setCountdown] = useState(30);
   const [activeWave, setActiveWave] = useState<string | null>(null);
+  const [sendingRts, setSendingRts] = useState<Record<string, 'sending' | 'sent' | 'failed'>>({});
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async (date: string) => {
@@ -183,6 +186,22 @@ export default function WaveStatusPage() {
     }, 1000);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [selectedDate, load]);
+
+  const sendRts = async (driverName: string) => {
+    setSendingRts(prev => ({ ...prev, [driverName]: 'sending' }));
+    try {
+      const res = await fetch(`${resolveApi()}/rts/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ driver_name: driverName, generated_by: user?.username ?? 'dispatch' }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setSendingRts(prev => ({ ...prev, [driverName]: 'sent' }));
+      load(selectedDate);
+    } catch {
+      setSendingRts(prev => ({ ...prev, [driverName]: 'failed' }));
+    }
+  };
 
   const s = data?.summary;
   const arrivedPct = s && s.total > 0 ? Math.round((s.arrived / s.total) * 100) : 0;
@@ -387,6 +406,14 @@ export default function WaveStatusPage() {
       padding: 3px 9px; border-radius: 20px;
     }
     .rts-chip .rts-dot { width: 6px; height: 6px; border-radius: 50%; }
+    .rts-send-btn {
+      font-size: 11px; font-family: var(--mono); font-weight: 600;
+      padding: 4px 10px; border-radius: 20px; cursor: pointer;
+      background: rgba(245,161,35,0.12); color: var(--accent);
+      border: 1px solid rgba(245,161,35,0.35);
+    }
+    .rts-send-btn:hover:not(:disabled) { background: rgba(245,161,35,0.22); }
+    .rts-send-btn:disabled { cursor: default; opacity: 0.6; }
 
     .checklist-row {
       display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px;
@@ -613,6 +640,19 @@ export default function WaveStatusPage() {
                                 {driver.rts.routed_to_rescue ? 'Routed to Rescue' : RTS_STATUS[driver.rts.status].label}
                                 {driver.rts.expected_return_time && ` · ETA ${driver.rts.expected_return_time}`}
                               </span>
+                            </div>
+                          )}
+                          {driver.rts && driver.rts.status === 'not_started' && (
+                            <div className="rts-row">
+                              <button
+                                className="rts-send-btn"
+                                disabled={sendingRts[driver.driver_name] === 'sending'}
+                                onClick={() => sendRts(driver.driver_name)}
+                              >
+                                {sendingRts[driver.driver_name] === 'sending' ? 'Sending…'
+                                  : sendingRts[driver.driver_name] === 'failed' ? 'Failed — retry'
+                                  : '🔄 Send RTS Check'}
+                              </button>
                             </div>
                           )}
                           {driver.checklist && (

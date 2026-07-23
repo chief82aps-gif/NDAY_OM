@@ -148,7 +148,9 @@ def _drug_screen_alert(driver_name: str, db: Session) -> None:
 
 
 def start_rts(driver_name: str, slack_user_id: Optional[str], db: Session) -> dict:
-    """Driver tapped the RTS button. Returns either a rescue handoff or a debrief link."""
+    """Driver is heading back — either self-tapped (legacy) or pushed by
+    dispatch via generate_rts() below. Returns either a rescue handoff or
+    a debrief link."""
     _drug_screen_alert(driver_name, db)
     today = date.today()
 
@@ -158,6 +160,22 @@ def start_rts(driver_name: str, slack_user_id: Optional[str], db: Session) -> di
             f"{FRONTEND_URL}/rescue/contribute"
             f"?eventId={rescue.event_id}&routeId={rescue.rescued_route_id}"
         )
+        # Record this on the wave-status board same as a debrief would be —
+        # otherwise a rescue-routed driver shows as "not_started" forever
+        # (the columns for this exist on RtsDebrief but were never
+        # populated). Nothing to debrief here, so it's resolved immediately.
+        now = datetime.utcnow()
+        db.add(RtsDebrief(
+            token=secrets.token_urlsafe(24),
+            shift_date=today,
+            driver_name=driver_name,
+            slack_user_id=slack_user_id,
+            started_at=now,
+            completed_at=now,
+            routed_to_rescue=True,
+            rescue_event_id=rescue.event_id,
+        ))
+        db.commit()
         return {
             "routed_to_rescue": True,
             "event_id": rescue.event_id,
@@ -205,6 +223,77 @@ def identify(req: IdentifyRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Name or PIN is incorrect.")
 
     return start_rts(roster_entry.payroll_name, None, db)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dispatch-triggered generation — replaces the driver-facing self-tap button
+# (removed 2026-07-23 from slack_home.py and slack_interactions.py's
+# driver-dashboard hub). Dispatch decides a driver is wrapping up their route
+# and pushes the next step directly, same shape as opening a rescue
+# (rescue.py's POST /rescue/events): dispatch picks the driver, the system
+# resolves rescue-vs-debrief via the existing start_rts() branching, and DMs
+# the driver the right link. Everything downstream (Stage 2 contribute, or
+# the debrief form) is unchanged.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _slack_client():
+    token = os.getenv("SLACK_BOT_TOKEN")
+    if not token:
+        return None
+    try:
+        from slack_sdk import WebClient
+        return WebClient(token=token)
+    except Exception:
+        return None
+
+
+def _dm_driver(slack_member_id: str, message: str) -> bool:
+    client = _slack_client()
+    if not client:
+        logger.info("SLACK_BOT_TOKEN not set — skipping RTS driver DM")
+        return False
+    try:
+        client.chat_postMessage(channel=slack_member_id, text=message)
+        return True
+    except Exception as exc:
+        logger.warning("RTS driver DM failed (uid=%s): %s", slack_member_id, exc)
+        return False
+
+
+class GenerateRequest(BaseModel):
+    driver_name: str
+    generated_by: str
+
+
+@router.post("/generate")
+def generate_rts(payload: GenerateRequest, db: Session = Depends(get_db)):
+    """Dispatch pushes the RTS/rescue decision to a driver — see module docstring."""
+    roster_entry = db.query(DriverRosterEntry).filter(
+        func.lower(DriverRosterEntry.payroll_name) == payload.driver_name.lower(),
+        DriverRosterEntry.is_active == True,
+    ).first()
+    if not roster_entry:
+        raise HTTPException(status_code=404, detail="Driver not found on active roster.")
+
+    result = start_rts(roster_entry.payroll_name, roster_entry.slack_member_id, db)
+
+    dm_sent = False
+    if roster_entry.slack_member_id and roster_entry.slack_verified:
+        first = _first_name(roster_entry.payroll_name)
+        if result["routed_to_rescue"]:
+            message = (
+                f"🚨 *Rescue Assignment* — Hi {first}, dispatch needs you for a rescue "
+                f"({result.get('rescued_driver_name') or 'another driver'}'s route) before you head back.\n\n"
+                f"👉 {result['contribute_url']}"
+            )
+        else:
+            message = (
+                f"🔄 *Return to Station* — Hi {first}, dispatch has you wrapping up for the day.\n\n"
+                f"👉 {result['debrief_url']}"
+            )
+        dm_sent = _dm_driver(roster_entry.slack_member_id, message)
+
+    return {**result, "driver_name": roster_entry.payroll_name, "dm_sent": dm_sent}
 
 
 @router.get("/debrief")

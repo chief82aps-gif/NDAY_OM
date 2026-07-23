@@ -310,6 +310,24 @@ Full detail: `Governance/ROSTERING_DM_RULES.md`.
   dashboard both read from **both** models additively (`"dvic"` +
   `"dvic_violation"` sources) — do not remove the legacy branch until
   all 73 legacy rows have been acknowledged and aged out.
+- **RTS is now dispatch-generated, not driver-self-tapped** (`rts.py`,
+  added 2026-07-23) — the "🔄 Return to Station" button was removed from
+  both driver-facing surfaces (`slack_home.py`'s App Home tab and
+  `slack_interactions.py`'s `_driver_dashboard_hub_blocks()` channel
+  post). Dispatch now triggers it per-driver from the Wave Status board
+  (`frontend/pages/wave-status.tsx`, "🔄 Send RTS Check" button, shown
+  while `rts.status === 'not_started'`) via `POST /rts/generate`, which
+  calls the same `start_rts()` used by the old self-tap flow — it
+  already auto-resolves rescue-vs-debrief via `_find_open_rescue()`, so
+  dispatch doesn't choose between the two, only decides *when* to push
+  it. Fixed a pre-existing gap while doing this: the rescue-routed branch
+  of `start_rts()` never created an `RtsDebrief` row (the
+  `routed_to_rescue`/`rescue_event_id` columns existed but were always
+  null), so a rescue-routed driver showed as "Not Started" forever on
+  Wave Status — it now writes a resolved (`completed_at` set immediately)
+  `RtsDebrief` row in that branch too. `/rts/identify` (name+PIN,
+  self-service) and the plain `/rts` link are left in place as a manual
+  fallback, just no longer surfaced by a button.
 
 ## No Amazon portal automation — permanent, not a risk tradeoff
 

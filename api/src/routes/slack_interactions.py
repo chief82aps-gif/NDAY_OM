@@ -298,13 +298,6 @@ def _driver_dashboard_hub_blocks() -> list:
                     "text": {"type": "plain_text", "text": "End of Day Survey", "emoji": True},
                     "url": f"{FRONTEND_URL}/eod",
                 },
-                {
-                    "type": "button",
-                    "action_id": "btn_rts",
-                    "text": {"type": "plain_text", "text": "🔄 Return to Station", "emoji": True},
-                    "style": "primary",
-                    "url": f"{FRONTEND_URL}/rts",
-                },
             ],
         },
         {

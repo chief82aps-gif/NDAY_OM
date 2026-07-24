@@ -63,6 +63,61 @@ export default function Privacy() {
           </div>
 
           <div>
+            <h2 className="font-semibold text-gray-900 mb-1">How we protect it</h2>
+            <p>
+              We treat candidate contact information and any other personal data as
+              sensitive and protect it with the following measures:
+            </p>
+            <ul className="mt-2 list-disc list-inside space-y-1">
+              <li>
+                <strong>Encryption in transit:</strong> all data exchanged between the
+                platform, its users, and integrated services (Google People API, Asana)
+                is transmitted over HTTPS/TLS.
+              </li>
+              <li>
+                <strong>Encryption at rest:</strong> candidate contact information
+                synced through the platform is stored in our company-managed Google
+                (Contacts) and Asana accounts, which encrypt data at rest and apply
+                their own security controls. The platform's own operational database is
+                kept in a secured, access-restricted hosting environment.
+              </li>
+              <li>
+                <strong>Access controls:</strong> access requires an individually
+                issued, authenticated login, and is restricted to authorized New Day
+                staff on a least-privilege basis. OAuth tokens for connected Google
+                accounts are stored as protected server-side secrets and are never
+                exposed to the browser or to end users.
+              </li>
+              <li>
+                <strong>Limited scope:</strong> we request only the Google API scopes
+                required to create and update recruiting contacts, and use them only
+                for that purpose.
+              </li>
+            </ul>
+          </div>
+
+          <div>
+            <h2 className="font-semibold text-gray-900 mb-1">Google user data — Limited Use</h2>
+            <p>
+              The platform's use and transfer of information received from Google APIs
+              adheres to the{' '}
+              <a
+                href="https://developers.google.com/terms/api-services-user-data-policy"
+                className="text-ndl-blue underline"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Google API Services User Data Policy
+              </a>
+              , including the Limited Use requirements. We do not use Google user data
+              for advertising, do not sell it, and do not transfer or share it with
+              third parties except as necessary to provide the recruiting feature
+              described above, to comply with applicable law, or as part of a merger or
+              acquisition.
+            </p>
+          </div>
+
+          <div>
             <h2 className="font-semibold text-gray-900 mb-1">Data retention</h2>
             <p>
               Data is retained for as long as reasonably necessary for the business

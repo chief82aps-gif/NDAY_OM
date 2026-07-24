@@ -2115,7 +2115,7 @@ def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str
     return fallback_text, blocks
 
 
-def send_day_of_dms(shift_date: date, db: Session) -> dict:
+def send_day_of_dms(shift_date: date, db: Session, bypass_outstanding_items: bool = False) -> dict:
     """
     Send morning-of route assignment DMs to all drivers with a confirmed assignment.
 
@@ -2128,6 +2128,14 @@ def send_day_of_dms(shift_date: date, db: Session) -> dict:
     Marks dm_sent=True on each record so daily_notify.send_all_dms() won't double-send.
     Gated by DRIVER_DM_ACTIVE=true (independent of ROSTERING_ACTIVE, which
     gates the assignment matrix and stays live on its own schedule).
+
+    bypass_outstanding_items: one-off emergency escape hatch (added
+    2026-07-24) for the outstanding-items gate below — the DVIC per-
+    violation rollout left 44 drivers with a pending acknowledgment at the
+    same time this gate went live, so a real morning's scheduled drivers
+    got stuck on a holding message instead of their actual route DM.
+    Explicit per-call opt-in only (never the default, never automatic) —
+    the gate itself stays on for every future day.
     """
     if not _DM_ACTIVE:
         return {"status": "inactive", "note": "Set DRIVER_DM_ACTIVE=true on Render to enable driver DMs"}
@@ -2169,7 +2177,7 @@ def send_day_of_dms(shift_date: date, db: Session) -> dict:
         # today's route details. dm_sent stays False, so the next
         # ~10-min scheduler pass re-checks and sends the real DM once
         # everything's cleared — no extra trigger needed.
-        outstanding = get_outstanding_items(a.driver_name, a.roster_id, db)
+        outstanding = get_outstanding_items(a.driver_name, a.roster_id, db) if not bypass_outstanding_items else []
         if outstanding:
             pending_ack += 1
             throttle_ok = (
@@ -2667,13 +2675,15 @@ def get_suggested_roster(shift_date: str, db: Session = Depends(get_db)):
 
 
 @router.post("/day-of-dms/{shift_date}")
-def trigger_day_of_dms(shift_date: str, db: Session = Depends(get_db)):
-    """Send morning-of route/van/staging DMs for all drivers with assignments on shift_date."""
+def trigger_day_of_dms(shift_date: str, bypass_outstanding_items: bool = False, db: Session = Depends(get_db)):
+    """Send morning-of route/van/staging DMs for all drivers with assignments
+    on shift_date. bypass_outstanding_items=true is the 2026-07-24 emergency
+    escape hatch — see send_day_of_dms()'s docstring."""
     try:
         target = date.fromisoformat(shift_date)
     except ValueError:
         raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
-    return send_day_of_dms(target, db)
+    return send_day_of_dms(target, db, bypass_outstanding_items=bypass_outstanding_items)
 
 
 @router.post("/day-of-dms/{shift_date}/test")

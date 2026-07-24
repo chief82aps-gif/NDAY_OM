@@ -1320,7 +1320,14 @@ def check_and_notify(
         .filter(DailyRouteAssignment.assignment_date == for_date)
         .count()
     )
-    if has_assignments:
+    # DOP + Route Sheet alone are enough to create DailyRouteAssignment rows
+    # (build_daily_assignments() only needs has_dop), but real van/route
+    # detail depends on Cortex having landed too — confirmed live 2026-07-24:
+    # when DOP arrived before Cortex on a given morning, this fired anyway
+    # and drivers got a route DM built from incomplete data. Sweeper DMs one
+    # step below already correctly wait for has_cortex; this now does too.
+    has_cortex = db.query(Cortex).filter(Cortex.assignment_date == for_date).count() > 0
+    if has_assignments and has_cortex:
         # Button-equipped send (rostering.py) is the real driver-facing DM —
         # see CLAUDE.md's "Driver-Slack linking" / scheduler-reconciliation
         # notes. send_all_dms()'s plain-text/link DM is retired from this
@@ -1329,7 +1336,6 @@ def check_and_notify(
         result["dms"] = send_day_of_dms(for_date, db)
 
     # ── 6. Send sweeper DMs (only after Cortex is present so the list is accurate)
-    has_cortex = db.query(Cortex).filter(Cortex.assignment_date == for_date).count() > 0
     if has_cortex and has_assignments:
         result["sweepers"] = send_sweeper_notifications(for_date, db)
 

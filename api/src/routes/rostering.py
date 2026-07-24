@@ -1300,6 +1300,20 @@ def post_assignment_matrix(shift_date: date, db: Session, force: bool = False) -
             text=f"Assignment Matrix — {date_str}",
             blocks=blocks,
         )
+        # Same hard off-switch as post_showtime_summary()'s team-room copy —
+        # added 2026-07-24 per explicit request. Best-effort: a team-room
+        # failure here must not affect the #nday-mgt post already sent above.
+        team_posted = False
+        if TEAM_ROOM_MESSAGES_ACTIVE:
+            try:
+                client.chat_postMessage(
+                    channel=TEAM_CHANNEL,
+                    text=f"Assignment Matrix — {date_str}",
+                    blocks=blocks,
+                )
+                team_posted = True
+            except Exception as exc:
+                logger.warning("Assignment matrix post to #nday-team-room failed: %s", exc)
         db.add(SlackIngestLog(
             ingest_date=shift_date,
             file_type="assignment_matrix",
@@ -1308,7 +1322,7 @@ def post_assignment_matrix(shift_date: date, db: Session, force: bool = False) -
             processed_at=datetime.utcnow(),
         ))
         db.commit()
-        return {"status": "posted", "date": shift_date.isoformat(), "drivers": len(assignments)}
+        return {"status": "posted", "date": shift_date.isoformat(), "drivers": len(assignments), "team_room_posted": team_posted}
     except Exception as exc:
         logger.error("Assignment matrix post failed: %s", exc)
         return {"status": "error", "detail": str(exc)}

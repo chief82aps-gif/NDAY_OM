@@ -468,6 +468,14 @@ def trigger_reminders(force: bool = False):
     return send_eod_reminders(force=force)
 
 
+@router.post("/trigger-check")
+def trigger_check(db: Session = Depends(get_db)):
+    """Manual, safe-to-call-anytime trigger for the real (2026-07-24+)
+    per-driver ETA-driven check — same function the 60s loop calls. Useful
+    for testing/recovery without waiting for the next tick."""
+    return run_eod_survey_check(db)
+
+
 @router.get("/missing")
 def missing_drivers(survey_date: Optional[str] = None, db: Session = Depends(get_db)):
     """Admin: drivers scheduled today who haven't submitted."""
@@ -683,3 +691,162 @@ def send_eod_reminders(force: bool = False) -> dict:
         return {"status": "sent", "date": today.isoformat(), "sent": sent, "total": len(scheduled)}
     finally:
         db.close()
+
+
+# ─── Per-driver ETA-driven timing (replaces the flat 3PM/7:30PM schedule) ────
+#
+# Added 2026-07-24 per explicit direction: the old fixed schedule sent every
+# driver the same DM at 3 PM regardless of their actual wave/route — a driver
+# with a 6:30-7:30 PM ETA got asked about "clock-out"/"van condition at end
+# of day" hours before they were actually done, which is a very plausible
+# contributor to the near-zero completion rate found the same day. This
+# anchors each driver's timing to their own live Cortex-pace ETA instead
+# (rostering.get_driver_expected_return_dt() — the same number the Wave
+# Status board shows as "Return"):
+#   - normal drivers: send 1 hour BEFORE their ETA
+#   - drivers pulled onto a rescue today: a rescue means they're back LATER
+#     than planned, not earlier, so send 1 hour AFTER their ORIGINAL
+#     (pre-rescue, static wave+route_duration) expected return instead —
+#     rostering.get_driver_original_return_dt(), which does not shift once
+#     they're pulled off-route.
+# Once the anchor time (the actual ETA/original-return, not the -1h/+1h send
+# time) has passed and they still haven't submitted, repeat "ping" reminders
+# fire every 30 min — until either they submit, dispatch posts an "All In"
+# message in #nday-mgt for the day, or it's past 22:00 Pacific, whichever
+# comes first. No feature flag: this fully replaces the old unconditional
+# loop, same as it was (never gated), just smarter about timing.
+_PING_INTERVAL_MINUTES = 30
+_ALL_IN_KEY_PREFIX = "eod_all_in_"
+_DRIVER_DM_KEY_PREFIX = "eod_dm_"
+
+
+def _all_in_posted_today(db: Session) -> bool:
+    """True once dispatch has posted a message containing 'all in' to
+    #nday-mgt today. Cached in ReminderThrottleState for the rest of the
+    day once found, so this only re-scans Slack history on ticks before
+    it's been seen."""
+    import zoneinfo
+    tz = zoneinfo.ZoneInfo("America/Los_Angeles")
+    today = datetime.now(tz).date()
+    key = f"{_ALL_IN_KEY_PREFIX}{today.isoformat()}"
+
+    state = get_reminder_state(db, key)
+    if state.get("posted"):
+        return True
+
+    token = os.getenv("SLACK_BOT_TOKEN")
+    if not token:
+        return False
+    try:
+        midnight_pt = datetime.combine(today, datetime.min.time(), tzinfo=tz)
+        since_ts = str(midnight_pt.timestamp())
+        client = _slack()
+        resp = client.conversations_history(channel=MGT_CHANNEL, oldest=since_ts, limit=100)
+        for msg in resp.get("messages", []):
+            if "all in" in (msg.get("text") or "").lower():
+                set_reminder_state(db, key, {"posted": True, "ts": msg.get("ts")})
+                return True
+    except Exception as exc:
+        logger.warning("All-in check failed: %s", exc)
+    return False
+
+
+def run_eod_survey_check(db: Session) -> dict:
+    """Called every 60s from main.py's _eod_survey_loop — see module note
+    above. Per scheduled driver: send the initial survey DM once their
+    anchor time arrives, then escalate with a repeat ping every
+    _PING_INTERVAL_MINUTES once the real ETA/original-return has passed,
+    until they submit, an 'All In' post is seen, or it's past 22:00 PT."""
+    from api.src.database import RescueEvent
+    from api.src.routes.rostering import get_driver_expected_return_dt, get_driver_original_return_dt
+    from api.src.driver_identity import resolve_roster_entry
+
+    import zoneinfo
+    tz = zoneinfo.ZoneInfo("America/Los_Angeles")
+    now_pt = datetime.now(tz)
+    today = now_pt.date()
+    now_utc_naive = datetime.utcnow()
+
+    all_in = _all_in_posted_today(db)
+    cutoff = now_pt.hour >= 22
+
+    scheduled = db.query(DailyRouteAssignment).filter_by(assignment_date=today).all()
+    if not scheduled:
+        return {"status": "no_schedule", "date": today.isoformat()}
+
+    sent = pinged = already_submitted = no_slack = no_eta = 0
+
+    for a in scheduled:
+        roster_entry: Optional[DriverRosterEntry] = None
+        if a.roster_id is not None:
+            roster_entry = db.query(DriverRosterEntry).filter(DriverRosterEntry.id == a.roster_id).first()
+        if roster_entry is None:
+            roster_entry = resolve_roster_entry(a.driver_name, db)
+
+        if roster_entry and db.query(EodSurveyResponse).filter_by(
+            roster_id=roster_entry.id, survey_date=today
+        ).first():
+            already_submitted += 1
+            continue
+
+        if all_in or cutoff:
+            continue
+
+        if not roster_entry or not roster_entry.slack_member_id:
+            no_slack += 1
+            continue
+
+        rescued_today = db.query(RescueEvent).filter(
+            RescueEvent.event_date == today,
+            RescueEvent.rescuing_driver_name == a.driver_name,
+        ).first() is not None
+
+        if rescued_today:
+            anchor = get_driver_original_return_dt(a.driver_name, today, db)
+            send_at = anchor + timedelta(hours=1) if anchor else None
+        else:
+            anchor = get_driver_expected_return_dt(a.driver_name, today, db)
+            send_at = anchor - timedelta(hours=1) if anchor else None
+
+        if anchor is None or send_at is None:
+            no_eta += 1
+            continue
+
+        state_key = f"{_DRIVER_DM_KEY_PREFIX}{today.isoformat()}_{roster_entry.id}"
+        state = get_reminder_state(db, state_key)
+
+        eod_token = _issue_eod_token(roster_entry.id, roster_entry.position_id, roster_entry.payroll_name)
+        url = f"{APP_URL}/eod?token={eod_token}"
+        first_name = a.driver_name.split()[0] if a.driver_name else "there"
+
+        if not state.get("initial_sent_at"):
+            if now_utc_naive >= send_at:
+                verb = "you're needed for a rescue before it," if rescued_today else "before you head out"
+                msg = (
+                    f"🏁 Hi {first_name}! Time to complete your *End of Day Survey* — "
+                    f"{'once your rescue wraps up' if rescued_today else verb}.\n"
+                    f"It only takes 2 minutes."
+                )
+                _dm(roster_entry.slack_member_id, msg, button_url=url, button_text="📋 Complete Survey")
+                set_reminder_state(db, state_key, {"initial_sent_at": now_utc_naive.isoformat(), "last_ping_at": None})
+                sent += 1
+            continue
+
+        if now_utc_naive >= anchor:
+            last_ping = state.get("last_ping_at")
+            last_ping_dt = datetime.fromisoformat(last_ping) if last_ping else None
+            if not last_ping_dt or (now_utc_naive - last_ping_dt) >= timedelta(minutes=_PING_INTERVAL_MINUTES):
+                msg = (
+                    f"🏁 Hi {first_name} — still need your *End of Day Survey* for today. "
+                    f"Takes 2 minutes, please complete it now."
+                )
+                _dm(roster_entry.slack_member_id, msg, button_url=url, button_text="📋 Complete Survey")
+                set_reminder_state(db, state_key, {**state, "last_ping_at": now_utc_naive.isoformat()})
+                pinged += 1
+
+    return {
+        "status": "checked", "date": today.isoformat(),
+        "sent": sent, "pinged": pinged, "already_submitted": already_submitted,
+        "no_slack_id": no_slack, "no_eta_yet": no_eta,
+        "all_in": all_in, "past_2200": cutoff,
+    }

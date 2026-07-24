@@ -35,11 +35,13 @@ app = FastAPI()
 
 
 async def _daily_notify_loop():
-    """Poll Slack for today's files every 10 min between 8:00–10:00 AM Pacific."""
+    """Poll Slack for today's files every 10 min between 7:00–10:00 AM
+    Pacific (widened from 8:00 on 2026-07-24, per explicit direction — a
+    10-min interval is fine for the whole window, including 7:00-8:30)."""
     while True:
         try:
             now = datetime.now(PACIFIC)
-            if 8 <= now.hour < 10:
+            if 7 <= now.hour < 10:
                 db = SessionLocal()
                 try:
                     await asyncio.to_thread(check_and_notify, db)
@@ -63,13 +65,39 @@ async def _dvic_reminder_loop():
 
 
 async def _eod_survey_loop():
-    """Every 60 s — handles both the 3 PM daily channel post and the 7:30 PM DM reminders."""
+    """Every 60 s — per-driver ETA-driven EOD survey send + escalating
+    pings (see run_eod_survey_check()'s docstring in eod_survey.py for the
+    full timing rules, added 2026-07-24 to replace the old flat 3 PM /
+    7:30 PM schedule)."""
     while True:
         try:
-            await asyncio.to_thread(eod_survey.post_daily_survey_message)
-            await asyncio.to_thread(eod_survey.send_eod_reminders)
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(eod_survey.run_eod_survey_check, db)
+            except Exception as exc:
+                logger.warning("EOD survey check error: %s", exc)
+            finally:
+                db.close()
         except Exception as exc:
             logger.warning("EOD survey loop error: %s", exc)
+        await asyncio.sleep(60)
+
+
+async def _rescue_payroll_hr_report_loop():
+    """Every 60 s — delegates to rescue.send_weekly_hr_report(), which
+    no-ops on any day but Sunday and respects an "already sent today"
+    guard. Gated by RESCUE_PAYROLL_REPORT_ACTIVE (default false)."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(rescue.send_weekly_hr_report, db)
+            except Exception as exc:
+                logger.warning("Rescue payroll HR report loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("Rescue payroll HR report loop outer error: %s", exc)
         await asyncio.sleep(60)
 
 
@@ -468,6 +496,7 @@ async def startup():
     asyncio.create_task(_misrouted_file_watch_loop())
     asyncio.create_task(_schedule_escalation_loop())
     asyncio.create_task(_schedule_gap_alert_loop())
+    asyncio.create_task(_rescue_payroll_hr_report_loop())
 
 cors_origins_env = os.getenv("CORS_ORIGINS", "").strip()
 if cors_origins_env:

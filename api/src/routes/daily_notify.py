@@ -1339,6 +1339,18 @@ def check_and_notify(
     if has_cortex and has_assignments:
         result["sweepers"] = send_sweeper_notifications(for_date, db)
 
+    # ── 7. Post the #nday-mgt Assignment Matrix ──────────────────────────────
+    # Added 2026-07-24: this pipeline never posted the matrix automatically —
+    # only the manual "Re-Run Route Assignments" button and route_assignment.py's
+    # own finalize flow did. Confirmed live: a morning where Cortex landed
+    # early produced no automatic matrix post at all. post_assignment_matrix()
+    # is already idempotent per shift_date (SlackIngestLog guard), so it's
+    # safe to call on every tick here too — it just no-ops once already posted
+    # for the day, same as send_day_of_dms()'s own per-driver guard above.
+    if has_cortex and has_assignments:
+        from api.src.routes.rostering import post_assignment_matrix
+        result["assignment_matrix"] = post_assignment_matrix(for_date, db)
+
     return result
 
 

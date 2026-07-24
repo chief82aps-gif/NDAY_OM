@@ -11,7 +11,8 @@ from sqlalchemy import func, and_, or_
 
 from api.src.database import (
     get_db, RescueEvent, RescueContribution, DriverRosterEntry,
-    Cortex, Assignment, Driver, Vehicle, User, get_latest_cortex_rows
+    Cortex, Assignment, Driver, Vehicle, User, get_latest_cortex_rows,
+    get_reminder_state, set_reminder_state,
 )
 
 logger = logging.getLogger(__name__)
@@ -539,13 +540,10 @@ def get_event(event_id: str, db: Session = Depends(get_db)):
 # Reports
 # ---------------------------------------------------------------------------
 
-@router.get("/payroll")
-def payroll_report(
-    week_of: Optional[str] = Query(None, description="Any date in the target week (YYYY-MM-DD). Defaults to current week."),
-    db: Session = Depends(get_db),
-):
-    """Weekly bonus report: sum bonus-eligible packages per driver, calculate payout."""
-    ref = date.fromisoformat(week_of) if week_of else date.today()
+def _compute_payroll_report(ref: date, db: Session) -> dict:
+    """Shared by GET /payroll and the Sunday HR report send — both need the
+    exact same weekly bonus computation, just one renders it in the
+    dashboard and the other DMs it."""
     sunday, saturday = _week_bounds(ref)
 
     contribs = (
@@ -594,6 +592,88 @@ def payroll_report(
         "total_payout": sum(r["bonus_amount"] for r in report),
         "all_paid": all(r["bonus_paid"] for r in report),
     }
+
+
+@router.get("/payroll")
+def payroll_report(
+    week_of: Optional[str] = Query(None, description="Any date in the target week (YYYY-MM-DD). Defaults to current week."),
+    db: Session = Depends(get_db),
+):
+    """Weekly bonus report: sum bonus-eligible packages per driver, calculate payout."""
+    ref = date.fromisoformat(week_of) if week_of else date.today()
+    return _compute_payroll_report(ref, db)
+
+
+# ─── Weekly HR report (Sunday) ───────────────────────────────────────────────
+# Added 2026-07-24. Hard off-switch, same pattern as every other new
+# automated send this session — the bonus math itself has been live for a
+# while (payroll_report()/rescue/payroll.tsx), but this is the first time
+# it gets pushed to a real person automatically rather than pulled on
+# demand, so it needs an explicit go-ahead before it's turned on for real.
+RESCUE_PAYROLL_REPORT_ACTIVE = os.getenv("RESCUE_PAYROLL_REPORT_ACTIVE", "false").lower() == "true"
+_HR_REPORT_KEY = "rescue_payroll_hr_report"
+
+
+def send_weekly_hr_report(db: Session, force: bool = False) -> dict:
+    """Sunday: DM HR (document_routing's 'hr' role) the just-closed week's
+    rescue bonus payout — same numbers as /rescue/payroll, computed for the
+    week that ended yesterday (Saturday), not the new week starting today.
+    force=True bypasses the day-of-week/already-sent guards for manual
+    testing/recovery; still safe to call any time."""
+    if not RESCUE_PAYROLL_REPORT_ACTIVE:
+        return {"status": "inactive", "note": "Set RESCUE_PAYROLL_REPORT_ACTIVE=true on Render to enable"}
+
+    import zoneinfo
+    tz = zoneinfo.ZoneInfo("America/Los_Angeles")
+    today = datetime.now(tz).date()
+
+    if not force:
+        if today.weekday() != 6:   # Monday=0 ... Sunday=6
+            return {"status": "not_sunday"}
+        state = get_reminder_state(db, _HR_REPORT_KEY)
+        if state.get("last_sent_date") == today.isoformat():
+            return {"status": "already_sent", "date": today.isoformat()}
+
+    # The week that just closed is the 7 days ending yesterday (Saturday).
+    ref = today - timedelta(days=1)
+    report = _compute_payroll_report(ref, db)
+
+    from api.src.routes.document_routing import get_role_slack_ids
+    hr_ids = get_role_slack_ids(db, "hr")
+    if not hr_ids:
+        logger.info("Rescue payroll HR report: no 'hr' role Slack ID configured, skipping send.")
+        return {"status": "no_hr_recipient", **report}
+
+    lines = [
+        f"💰 *Rescue Bonus Report — Week of {report['week_start']} to {report['week_end']}*",
+        f"Total payout: *${report['total_payout']}* across {len(report['drivers'])} driver(s)",
+        "",
+    ]
+    for d in report["drivers"]:
+        paid = "✅ paid" if d["bonus_paid"] else "⏳ unpaid"
+        lines.append(f"• {d['driver']} — {d['bonus_eligible_packages']} pkgs → *${d['bonus_amount']}* ({paid})")
+    if not report["drivers"]:
+        lines.append("_No bonus-eligible rescues this week._")
+    lines.append("")
+    lines.append(f"Full detail / mark-paid: {os.getenv('FRONTEND_URL', 'https://nday-om.vercel.app')}/rescue/payroll?week_of={ref.isoformat()}")
+
+    try:
+        client = _slack_client()
+        if client:
+            for sid in hr_ids:
+                client.chat_postMessage(channel=sid, text="\n".join(lines))
+    except Exception as exc:
+        logger.warning("Rescue payroll HR report send failed: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+    set_reminder_state(db, _HR_REPORT_KEY, {"last_sent_date": today.isoformat()})
+    return {"status": "sent", **report}
+
+
+@router.post("/payroll/send-hr-report")
+def trigger_hr_report(force: bool = True, db: Session = Depends(get_db)):
+    """Manual trigger for the weekly HR report — testing/recovery."""
+    return send_weekly_hr_report(db, force=force)
 
 
 class PayrollConfirmRequest(BaseModel):

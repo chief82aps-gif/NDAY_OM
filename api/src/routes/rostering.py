@@ -296,6 +296,72 @@ def _calc_eta(snap: "CortexSnapshot", wave_str: Optional[str], shift_date: "date
     return eta_pt.strftime("%-I:%M %p")
 
 
+def get_driver_expected_return_dt(driver_name: str, shift_date: date, db: Session) -> Optional[datetime]:
+    """Live, Cortex-pace-based return estimate for one driver — the same
+    calculation behind the Wave Status board's 'Return' column — as a
+    naive-UTC datetime instead of a display string. Used by
+    eod_survey.py's per-driver EOD timing (added 2026-07-24) to decide when
+    to send that driver's survey link. Returns None if there's no route or
+    no Cortex data for it yet."""
+    a = (
+        db.query(DailyRouteAssignment)
+        .filter(
+            DailyRouteAssignment.assignment_date == shift_date,
+            DailyRouteAssignment.driver_name == driver_name,
+        )
+        .first()
+    )
+    if not a or not a.route_code:
+        return None
+    snap = (
+        db.query(CortexSnapshot)
+        .filter(CortexSnapshot.route_code == a.route_code, CortexSnapshot.route_date == shift_date)
+        .order_by(CortexSnapshot.snapshot_at.desc())
+        .first()
+    )
+    if not snap:
+        return None
+    return _calc_eta_dt(snap, a.wave, shift_date)
+
+
+def get_driver_original_return_dt(driver_name: str, shift_date: date, db: Session) -> Optional[datetime]:
+    """Static, assignment-time expected return (wave + route_duration - 30
+    min buffer) as a naive-UTC datetime — same formula as _calc_return_time()
+    but returning a comparable datetime instead of a display string, and
+    critically, NOT re-derived from live Cortex pace like
+    get_driver_expected_return_dt() is. Added 2026-07-24 specifically for
+    the rescue-aware EOD survey timing: a driver pulled onto a rescue
+    mid-day will obviously finish later than their live pace would have
+    suggested pre-rescue, so eod_survey.py anchors that case to THIS
+    (original, pre-rescue) value + 1 hour instead, per explicit direction."""
+    a = (
+        db.query(DailyRouteAssignment)
+        .filter(
+            DailyRouteAssignment.assignment_date == shift_date,
+            DailyRouteAssignment.driver_name == driver_name,
+        )
+        .first()
+    )
+    if not a or not a.wave or not a.route_duration:
+        return None
+
+    from zoneinfo import ZoneInfo as _ZI
+    _PACIFIC = _ZI("America/Los_Angeles")
+    _UTC = _ZI("UTC")
+    for fmt in ("%I:%M %p", "%H:%M", "%I:%M%p"):
+        try:
+            parsed = datetime.strptime(a.wave.strip(), fmt)
+            wave_local = datetime(
+                shift_date.year, shift_date.month, shift_date.day,
+                parsed.hour, parsed.minute, 0, tzinfo=_PACIFIC,
+            )
+            wave_utc = wave_local.astimezone(_UTC).replace(tzinfo=None)
+            return wave_utc + timedelta(minutes=int(a.route_duration) - 30)
+        except ValueError:
+            continue
+    return None
+
+
 # ─── Roster suggestion builder ───────────────────────────────────────────────
 
 def _build_roster_suggestion(shift_date: date, db: Session) -> list[dict]:
@@ -1948,7 +2014,7 @@ def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str
     if a.wave:
         fields.append({"type": "mrkdwn", "text": f"*Wave:*\n{a.wave}"})
     if return_time:
-        fields.append({"type": "mrkdwn", "text": f"*Est. Return:*\n{return_time}"})
+        fields.append({"type": "mrkdwn", "text": f"*Est. Return:*\n*{return_time}*"})
     fields.append({"type": "mrkdwn", "text": f"*Wave Lead:*\n{wave_lead_name}"})
     # ACE Eligibility criteria aren't defined yet — reserved for a future
     # coaching/eligibility module (see Governance/DRIVER_DM_CONTENT_RULES.md).

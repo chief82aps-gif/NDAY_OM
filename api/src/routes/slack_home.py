@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -167,6 +167,71 @@ def _no_driver_blocks() -> list:
     ]
 
 
+def _driver_rescue_bonus_this_week(driver: DriverRosterEntry, db: Session) -> Optional[dict]:
+    """Driver's own accumulated rescue bonus for the current pay period
+    (Sun-Sat, same window rescue.py's payroll report uses), shown on their
+    Home tab per explicit 2026-07-24 request. Returns None if they have no
+    bonus-eligible rescues this week — keeps the tab quiet for the many
+    drivers who never rescue, rather than a permanent "$0" line."""
+    from sqlalchemy import or_ as _or
+    from api.src.database import RescueContribution, RescueEvent
+    from api.src.routes.rescue import _week_bounds, _bonus_amount
+
+    sunday, saturday = _week_bounds(date.today())
+    name_tokens = _name_tokens(driver.payroll_name)
+    if not name_tokens:
+        return None
+
+    contribs = (
+        db.query(RescueContribution)
+        .join(RescueEvent, RescueContribution.event_id == RescueEvent.event_id)
+        .filter(
+            RescueEvent.event_date >= sunday,
+            RescueEvent.event_date <= saturday,
+            _or(RescueContribution.bonus_eligible == True, RescueContribution.bonus_reinstated == True),
+        )
+        .all()
+    )
+    packages = sum(
+        c.packages_taken or 0
+        for c in contribs
+        if len(name_tokens & _name_tokens(c.rescuing_driver_name)) >= 2
+    )
+    if packages <= 0:
+        return None
+    return {"packages": packages, "bonus": _bonus_amount(packages), "week_start": str(sunday), "week_end": str(saturday)}
+
+
+def _driver_return_countdown(driver: DriverRosterEntry, db: Session) -> Optional[str]:
+    """'Time remaining until expected return', computed fresh each time the
+    Home tab is opened/re-rendered — there's no true live-ticking
+    countdown possible in a Slack Home tab (no client-side JS to run one),
+    so this is a snapshot that's accurate at open-time, not a continuously
+    updating clock. Reuses the same live Cortex-pace ETA that drives
+    eod_survey.py's per-driver timing and the Wave Status board's 'Return'
+    column, added 2026-07-24 per explicit request."""
+    from api.src.database import DailyRouteAssignment
+    from api.src.routes.rostering import get_driver_expected_return_dt
+
+    today = date.today()
+    a = (
+        db.query(DailyRouteAssignment)
+        .filter(DailyRouteAssignment.assignment_date == today, DailyRouteAssignment.roster_id == driver.id)
+        .first()
+    )
+    if not a:
+        return None
+    eta = get_driver_expected_return_dt(a.driver_name, today, db)
+    if not eta:
+        return None
+
+    remaining_minutes = int((eta - datetime.utcnow()).total_seconds() // 60)
+    if remaining_minutes <= 0:
+        return "Any time now"
+    hours, minutes = divmod(remaining_minutes, 60)
+    return f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
+
+
 def build_home_view_blocks(driver: Optional[DriverRosterEntry], db: Session) -> list:
     """Pure builder — no Slack API calls in here, so it's unit-testable
     against fixture data without a live token."""
@@ -205,6 +270,23 @@ def build_home_view_blocks(driver: Optional[DriverRosterEntry], db: Session) -> 
         blocks.append({
             "type": "section",
             "text": {"type": "mrkdwn", "text": "_No quality data matched to your driver record yet this week._"},
+        })
+
+    countdown = _driver_return_countdown(driver, db)
+    if countdown:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"⏱️ *Est. Return In:* {countdown}"},
+        })
+
+    bonus = _driver_rescue_bonus_this_week(driver, db)
+    if bonus:
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"💰 *Rescue Bonus This Week:* ${bonus['bonus']} ({bonus['packages']} eligible packages)",
+            },
         })
 
     blocks.append({"type": "divider"})

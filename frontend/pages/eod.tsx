@@ -13,7 +13,7 @@ function resolveApi(): string {
 }
 
 interface DriverInfo {
-  transporter_id: string;
+  transporter_id: string | null;
   driver_name: string;
   roster_id: number;
   van_number: string | null;
@@ -266,7 +266,8 @@ export default function EodPage() {
     try {
       const body = {
         token: token || undefined,
-        transporter_id: token ? undefined : driverInfo.transporter_id,
+        transporter_id: token ? undefined : driverInfo.transporter_id || undefined,
+        driver_name_hint: token || driverInfo.transporter_id ? undefined : driverInfo.driver_name,
         pin,
         survey_date: driverInfo.survey_date,
         van_number: vanNumber || driverInfo.van_number,

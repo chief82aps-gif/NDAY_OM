@@ -201,7 +201,11 @@ def _load_today_assignment(roster_id: int, today: date, db: Session) -> Optional
 # ─── Pydantic models ─────────────────────────────────────────────────────────
 
 class DriverLookupResponse(BaseModel):
-    transporter_id: str
+    # Optional — schedule_upload-sourced drivers (most of the roster) never
+    # get a real Amazon transporter/position ID, only ADP/DVIC-ingested ones
+    # do. This was previously required `str`, which raised an unhandled
+    # Pydantic validation error (opaque 500) for any such driver.
+    transporter_id: Optional[str]
     driver_name: str
     roster_id: int
     van_number: Optional[str]

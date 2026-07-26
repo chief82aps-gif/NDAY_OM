@@ -1143,6 +1143,26 @@ def sign_counseling_record(
     }
 
 
+@router.post("/violations/{violation_id}/reset-ack")
+def reset_violation_ack(
+    violation_id: int, db: Session = Depends(get_db),
+    caller_role: str = Depends(require_any_role("ops_manager")),
+):
+    """Admin correction — clears a violation's acknowledgment fields.
+    Added 2026-07-25/26 to undo a test call against a real violation
+    (verifying the training-video gate accidentally wrote a fake
+    acknowledgment onto a real driver's record). Not wired into any
+    automated flow; ops-manager-gated, same as sign_violation()."""
+    violation = db.query(DvicViolation).filter(DvicViolation.id == violation_id).first()
+    if not violation:
+        raise HTTPException(404, "Violation not found.")
+    violation.ack_status = "pending" if violation.actioned_at else None
+    violation.acknowledged_at = None
+    violation.ack_signature_name = None
+    db.commit()
+    return {"status": "reset", "id": violation.id, "ack_status": violation.ack_status}
+
+
 @router.post("/violations/{violation_id}/sign")
 def sign_violation(
     violation_id: int, req: CounselingSignRequest, db: Session = Depends(get_db),

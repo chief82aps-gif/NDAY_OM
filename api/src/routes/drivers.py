@@ -293,6 +293,130 @@ def recompute_stale(days: int = 30, db: Session = Depends(get_db)):
     return {"status": "ok", "days": days, "newly_flagged": flagged}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Weekly automatic Slack re-link — added 2026-07-26. Root cause: a driver
+# auto-created purely from appearing on a schedule upload (source=
+# "schedule_upload") starts with no Slack link at all, and the only way to
+# fix that was a fully manual file-upload run of /import-ssn-slack. If
+# nobody remembers to re-run it soon after someone joins, they sit
+# unlinked indefinitely — confirmed live (Alan Burgio, weeks unlinked).
+# This closes the gap for the Slack side specifically by fetching the
+# CURRENT workspace member list live via the Slack API (no file export
+# needed for this part) and re-running the same fuzzy-match logic
+# (driver_matching.best_slack_match) already trusted for the manual
+# upload path. Associate-Data bridging still requires a human-exported
+# file (Amazon portal access can't be automated — see CLAUDE.md), so this
+# doesn't replace /import-ssn-slack, it just catches the common case
+# automatically. Anyone still unmatched afterward becomes a direct,
+# named assignment to #nday-hr instead of silently sitting unlinked.
+# ─────────────────────────────────────────────────────────────────────────────
+
+WEEKLY_SLACK_RELINK_ACTIVE = os.getenv("WEEKLY_SLACK_RELINK_ACTIVE", "false").lower() == "true"
+_WEEKLY_RELINK_KEY = "weekly_slack_relink"
+
+
+def _fetch_live_slack_members(client) -> list[dict]:
+    """Live equivalent of driver_matching.load_slack() — same {user_id,
+    username, display_name} shape, fetched via users.list instead of a
+    file export."""
+    rows: list[dict] = []
+    cursor = None
+    while True:
+        resp = client.users_list(cursor=cursor, limit=200) if cursor else client.users_list(limit=200)
+        for m in resp.get("members", []):
+            if m.get("is_bot") or m.get("deleted"):
+                continue
+            profile = m.get("profile", {}) or {}
+            rows.append({
+                "user_id": m.get("id", ""),
+                "username": m.get("name", ""),
+                "display_name": profile.get("display_name") or profile.get("real_name") or "",
+            })
+        cursor = (resp.get("response_metadata") or {}).get("next_cursor")
+        if not cursor:
+            break
+    return rows
+
+
+def run_weekly_slack_relink(db: Session, force: bool = False) -> dict:
+    """Monday-only (unless force=True): re-match every active, unlinked
+    driver against the live Slack member list; anyone still unmatched
+    gets posted to #nday-hr by name."""
+    if not WEEKLY_SLACK_RELINK_ACTIVE:
+        return {"status": "inactive", "note": "Set WEEKLY_SLACK_RELINK_ACTIVE=true on Render to enable"}
+
+    import zoneinfo
+    tz = zoneinfo.ZoneInfo("America/Los_Angeles")
+    now = datetime.now(tz)
+    today = now.date()
+
+    if not force:
+        if today.weekday() != 0:  # Monday=0
+            return {"status": "not_monday"}
+        state = get_reminder_state(db, _WEEKLY_RELINK_KEY)
+        if state.get("last_run_date") == today.isoformat():
+            return {"status": "already_ran", "date": today.isoformat()}
+
+    token = os.getenv("SLACK_BOT_TOKEN")
+    if not token:
+        return {"status": "no_slack_token"}
+    from slack_sdk import WebClient
+    client = WebClient(token=token)
+
+    try:
+        slack_rows = _fetch_live_slack_members(client)
+    except Exception as exc:
+        logger.warning("Weekly Slack relink: failed to fetch member list: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+    from api.src.driver_matching import best_slack_match
+
+    unlinked = (
+        db.query(DriverRosterEntry)
+        .filter(DriverRosterEntry.is_active == True, DriverRosterEntry.slack_member_id.is_(None))
+        .all()
+    )
+
+    matched, still_unlinked = [], []
+    for driver in unlinked:
+        uid, display, score = best_slack_match(driver.payroll_name, slack_rows)
+        if uid:
+            driver.slack_member_id = uid
+            driver.slack_display_name = display
+            driver.slack_verified = True
+            matched.append(driver.payroll_name)
+        else:
+            still_unlinked.append(driver.payroll_name)
+    if matched:
+        db.commit()
+
+    if still_unlinked:
+        try:
+            from api.src.routes.document_routing import get_role_slack_ids
+            hr_ids = get_role_slack_ids(db, "hr")
+            if hr_ids:
+                lines = [
+                    f"👋 *Weekly Slack Link Check* — {len(still_unlinked)} active driver(s) still need to be connected to Slack:",
+                    *[f"• {name}" for name in still_unlinked],
+                    "",
+                    "Run the SSN/Slack/Associate Data import (`/import-ssn-slack`) once you have fresh exports, "
+                    "or link them individually via the driver profile page.",
+                ]
+                for sid in hr_ids:
+                    client.chat_postMessage(channel=sid, text="\n".join(lines))
+        except Exception as exc:
+            logger.warning("Weekly Slack relink: HR assignment post failed: %s", exc)
+
+    set_reminder_state(db, _WEEKLY_RELINK_KEY, {"last_run_date": today.isoformat()})
+    return {"status": "done", "matched": matched, "still_unlinked": still_unlinked}
+
+
+@router.post("/trigger-weekly-slack-relink")
+def trigger_weekly_slack_relink(force: bool = True, db: Session = Depends(get_db)):
+    """Manual trigger for testing/recovery."""
+    return run_weekly_slack_relink(db, force=force)
+
+
 @router.post("/import-ssn-slack")
 def import_ssn_slack(
     dry_run: bool = True,

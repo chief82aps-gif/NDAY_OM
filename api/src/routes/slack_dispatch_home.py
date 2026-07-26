@@ -232,6 +232,12 @@ def build_dispatch_home_view_blocks(db: Session) -> list:
                     "action_id": "dispatch_preview_driver_home",
                     "text": {"type": "plain_text", "text": "👁️ Preview Driver Home", "emoji": True},
                 },
+                {
+                    "type": "button",
+                    "action_id": "dispatch_add_new_hire_button",
+                    "text": {"type": "plain_text", "text": "🆕 Add New Hire", "emoji": True},
+                    "style": "primary",
+                },
             ],
         },
         {
@@ -829,6 +835,135 @@ def _handle_dispatch_invite_user_submit(payload: dict, db: Session) -> dict:
             )
         except Exception as exc:
             logger.warning("Invite audit log post failed: %s", exc)
+
+    return {"response_action": "clear"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Add New Hire — added 2026-07-26. Root cause this fixes: a driver only
+# ever got a DriverRosterEntry (and a Slack link) either via the ADP import
+# or by first appearing on a weekly schedule upload — the latter creates an
+# unlinked stub that then depends on someone remembering to re-run the
+# manual SSN/Slack import to ever get connected. This gives dispatch/HR a
+# one-click way to create a fully-linked roster entry at the moment someone
+# actually joins, with zero ambiguity (a real Slack user picker, not
+# fuzzy name-matching). No PIN field on purpose — per explicit direction,
+# a PIN is only needed once clock-in/out ties in, not for anything this
+# app currently does (every existing flow authenticates via a personal
+# Slack link, never a PIN, once a driver has one).
+# ─────────────────────────────────────────────────────────────────────────────
+
+ADD_NEW_HIRE_CALLBACK_ID = "dispatch_add_new_hire_submit"
+
+
+def _add_new_hire_modal() -> dict:
+    return {
+        "type": "modal",
+        "callback_id": ADD_NEW_HIRE_CALLBACK_ID,
+        "title": {"type": "plain_text", "text": "Add New Hire"},
+        "submit": {"type": "plain_text", "text": "Add"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "Creates a fully-linked driver profile immediately — no PIN needed yet, "
+                            "that's only required once clock-in/out is tied in.",
+                },
+            },
+            {
+                "type": "input",
+                "block_id": "name_block",
+                "label": {"type": "plain_text", "text": "Driver's full name"},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "name",
+                    "placeholder": {"type": "plain_text", "text": "e.g. John Smith"},
+                },
+            },
+            {
+                "type": "input",
+                "block_id": "slack_user_block",
+                "label": {"type": "plain_text", "text": "Slack user"},
+                "element": {"type": "users_select", "action_id": "slack_user"},
+            },
+        ],
+    }
+
+
+def _handle_dispatch_add_new_hire_button(payload: dict, db: Session) -> None:
+    user_id = payload.get("user", {}).get("id", "")
+    if not is_dispatch_staff(user_id, db):
+        logger.warning("Non-dispatch user %s attempted dispatch_add_new_hire_button", user_id)
+        return
+    trigger_id = payload.get("trigger_id")
+    client = _client()
+    if not client or not trigger_id:
+        return
+    try:
+        client.views_open(trigger_id=trigger_id, view=_add_new_hire_modal())
+    except Exception as exc:
+        logger.warning("views_open failed for add-new-hire modal: %s", exc)
+
+
+def _handle_dispatch_add_new_hire_submit(payload: dict, db: Session) -> dict:
+    clicker_id = payload.get("user", {}).get("id", "")
+    if not is_dispatch_staff(clicker_id, db):
+        logger.warning("Non-dispatch user %s attempted dispatch_add_new_hire_submit", clicker_id)
+        return {"response_action": "clear"}
+
+    values = payload.get("view", {}).get("state", {}).get("values", {})
+    name = (values.get("name_block", {}).get("name", {}).get("value") or "").strip()
+    slack_user_id = values.get("slack_user_block", {}).get("slack_user", {}).get("selected_user")
+
+    if not name:
+        return {"response_action": "errors", "errors": {"name_block": "Name is required."}}
+    if not slack_user_id:
+        return {"response_action": "errors", "errors": {"slack_user_block": "Select a Slack user."}}
+
+    existing = db.query(DriverRosterEntry).filter(DriverRosterEntry.payroll_name == name).first()
+    if existing:
+        existing.slack_member_id = slack_user_id
+        existing.slack_verified = True
+        existing.is_active = True
+        entry = existing
+        created = False
+    else:
+        entry = DriverRosterEntry(
+            payroll_name=name,
+            is_active=True,
+            source="onboarding",
+            slack_member_id=slack_user_id,
+            slack_verified=True,
+        )
+        db.add(entry)
+        created = True
+    db.commit()
+
+    client = _client()
+    if client:
+        try:
+            profile = client.users_info(user=slack_user_id)["user"]["profile"]
+            entry.slack_display_name = profile.get("display_name") or profile.get("real_name") or name
+            db.commit()
+        except Exception:
+            pass
+        try:
+            _dm_driver(
+                client, clicker_id,
+                f"🆕 *{'Added' if created else 'Re-linked'}* — {name} is now connected to Slack "
+                f"(<@{slack_user_id}>) and ready to receive driver DMs.",
+            )
+        except Exception as exc:
+            logger.warning("Add-new-hire confirmation DM failed: %s", exc)
+        try:
+            client.chat_postMessage(
+                channel=DISPATCH_HOME_CHANNEL_ID,
+                text=f"🆕 *New hire added* — {name}, linked to <@{slack_user_id}>",
+            )
+        except Exception as exc:
+            logger.warning("Add-new-hire audit log post failed: %s", exc)
 
     return {"response_action": "clear"}
 

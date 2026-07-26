@@ -120,6 +120,24 @@ async def _sentiment_survey_report_loop():
         await asyncio.sleep(60)
 
 
+async def _weekly_slack_relink_loop():
+    """Every 60 s — delegates to drivers.run_weekly_slack_relink(), which
+    no-ops on any day but Monday and respects an "already ran today"
+    guard. Gated by WEEKLY_SLACK_RELINK_ACTIVE (default false)."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(drivers.run_weekly_slack_relink, db)
+            except Exception as exc:
+                logger.warning("Weekly Slack relink loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("Weekly Slack relink loop outer error: %s", exc)
+        await asyncio.sleep(60)
+
+
 async def _dsp_scorecard_reminder_loop():
     """Every 60 s — delegates to dsp_scorecard_weekly.run_dsp_scorecard_reminder() which handles Wednesday 12:30-5 PM throttle."""
     while True:
@@ -517,6 +535,7 @@ async def startup():
     asyncio.create_task(_schedule_gap_alert_loop())
     asyncio.create_task(_rescue_payroll_hr_report_loop())
     asyncio.create_task(_sentiment_survey_report_loop())
+    asyncio.create_task(_weekly_slack_relink_loop())
 
 cors_origins_env = os.getenv("CORS_ORIGINS", "").strip()
 if cors_origins_env:

@@ -450,6 +450,9 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
         if callback_id == "dispatch_invite_user_submit":
             from api.src.routes.slack_dispatch_home import _handle_dispatch_invite_user_submit
             return _handle_dispatch_invite_user_submit(payload, db)
+        if callback_id == "dispatch_add_new_hire_submit":
+            from api.src.routes.slack_dispatch_home import _handle_dispatch_add_new_hire_submit
+            return _handle_dispatch_add_new_hire_submit(payload, db)
         if callback_id == "dispatch_reset_password_submit":
             from api.src.routes.slack_dispatch_home import _handle_dispatch_reset_password_submit
             return _handle_dispatch_reset_password_submit(payload, db)
@@ -538,6 +541,10 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
     elif action_id == "dispatch_invite_user_button":
         from api.src.routes.slack_dispatch_home import _handle_dispatch_invite_user_button
         _handle_dispatch_invite_user_button(payload, db)
+
+    elif action_id == "dispatch_add_new_hire_button":
+        from api.src.routes.slack_dispatch_home import _handle_dispatch_add_new_hire_button
+        _handle_dispatch_add_new_hire_button(payload, db)
 
     elif action_id == "dispatch_reset_password_button":
         from api.src.routes.slack_dispatch_home import _handle_dispatch_reset_password_button

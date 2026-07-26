@@ -56,6 +56,7 @@ export default function EodPage() {
   const [driverInfo, setDriverInfo] = useState<DriverInfo | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [sentimentToken, setSentimentToken] = useState<string | null>(null);
 
   // Auth fields
   const [nameHint, setNameHint] = useState('');
@@ -303,6 +304,8 @@ export default function EodPage() {
         const e = await res.json();
         throw new Error(e.detail || 'Submission failed');
       }
+      const data = await res.json();
+      if (data.sentiment_token) setSentimentToken(data.sentiment_token);
       setStep('done');
     } catch (e: unknown) {
       setErrorMsg(e instanceof Error ? e.message : 'Submission error');
@@ -380,6 +383,23 @@ export default function EodPage() {
         <p style={{ color: '#94a3b8', textAlign: 'center' }}>
           Thanks {driverInfo?.driver_name?.split(' ')[0]}! Your check-out has been recorded. Drive safe and see you next shift.
         </p>
+        {sentimentToken && (
+          <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid #334155', textAlign: 'center' }}>
+            <p style={{ color: '#94a3b8', fontSize: 13, marginBottom: 12 }}>
+              Got a minute for one more, totally optional thing? It&apos;s not shown with your name attached.
+            </p>
+            <a
+              href={`/sentiment-survey?token=${sentimentToken}`}
+              style={{
+                display: 'inline-block', background: '#1e293b', border: '1px solid #334155',
+                color: '#e2e8f0', borderRadius: 8, padding: '10px 20px', fontSize: 14,
+                fontWeight: 600, textDecoration: 'none',
+              }}
+            >
+              💬 Quick Check-In (Optional)
+            </a>
+          </div>
+        )}
       </div>
     </div>
   );

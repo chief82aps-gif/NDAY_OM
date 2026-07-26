@@ -402,7 +402,19 @@ def submit_survey(req: EodSubmitRequest, db: Session = Depends(get_db)):
     # dropped network call mid-flow.
     _alert_mgt_on_serious_flags(req, display_name, survey_date)
 
-    return {"status": "submitted", "driver": display_name, "flags": flags}
+    # Offer the optional sentiment follow-up right after EOD submission —
+    # added 2026-07-26, bundled here rather than as its own separate DM/
+    # reminder loop. Soft-fails: a driver's EOD submission must never be
+    # blocked by this being unavailable.
+    sentiment_token = None
+    try:
+        from api.src.routes.sentiment_survey import _issue_sentiment_token, SENTIMENT_SURVEY_ACTIVE
+        if SENTIMENT_SURVEY_ACTIVE:
+            sentiment_token = _issue_sentiment_token(entry.id, display_name, survey_date)
+    except Exception as exc:
+        logger.warning("Sentiment token issuance failed: %s", exc)
+
+    return {"status": "submitted", "driver": display_name, "flags": flags, "sentiment_token": sentiment_token}
 
 
 def _alert_mgt_on_serious_flags(req: "EodSubmitRequest", driver_name: str, survey_date: date) -> None:

@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.src.routes import uploads, auth, audit, enhanced_audit, weekly_audit, weekly_audit_upload, rescue
 from api.src.routes import daily_notify, quality, attendance, attendance_reports, ops_ingest, dvic, dsp_scorecard_weekly, eod_survey, route_assignment, slack_interactions, slack_home, manager_accountability
-from api.src.routes import rostering, cortex_tracking, adp, rts, mgt_reminders, document_routing, crash_report, drivers, candidates, safety_events, okami_capacity, driver_scoring, route_bands, driver_lead_schedule, injury_report
+from api.src.routes import rostering, cortex_tracking, adp, rts, mgt_reminders, document_routing, crash_report, drivers, candidates, safety_events, okami_capacity, driver_scoring, route_bands, driver_lead_schedule, injury_report, sentiment_survey
 from api.src.routes.daily_notify import check_and_notify, check_ecp_and_prompt
 from api.src.routes.rostering import send_nightly_roster_reminder, send_wave_lead_pre_wave_dm, send_missing_drivers_summary
 from api.src.schedule_config import SCHEDULE_GAP_CHECK_HOUR
@@ -98,6 +98,25 @@ async def _rescue_payroll_hr_report_loop():
                 db.close()
         except Exception as exc:
             logger.warning("Rescue payroll HR report loop outer error: %s", exc)
+        await asyncio.sleep(60)
+
+
+async def _sentiment_survey_report_loop():
+    """Every 60 s — delegates to sentiment_survey.send_daily_sentiment_report(),
+    which no-ops outside the 21:00+ Pacific window and respects an
+    "already sent today" guard. Gated by SENTIMENT_SURVEY_ACTIVE (default
+    false)."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(sentiment_survey.send_daily_sentiment_report, db)
+            except Exception as exc:
+                logger.warning("Sentiment survey report loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("Sentiment survey report loop outer error: %s", exc)
         await asyncio.sleep(60)
 
 
@@ -497,6 +516,7 @@ async def startup():
     asyncio.create_task(_schedule_escalation_loop())
     asyncio.create_task(_schedule_gap_alert_loop())
     asyncio.create_task(_rescue_payroll_hr_report_loop())
+    asyncio.create_task(_sentiment_survey_report_loop())
 
 cors_origins_env = os.getenv("CORS_ORIGINS", "").strip()
 if cors_origins_env:
@@ -538,6 +558,7 @@ app.include_router(ops_ingest.router)
 app.include_router(dvic.router)
 app.include_router(dsp_scorecard_weekly.router)
 app.include_router(eod_survey.router)
+app.include_router(sentiment_survey.router)
 app.include_router(route_assignment.router)
 app.include_router(slack_interactions.router)
 app.include_router(slack_home.router)

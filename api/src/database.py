@@ -2981,6 +2981,36 @@ class EodSurveyResponse(Base):
     )
 
 
+class SentimentSurveyResponse(Base):
+    """Optional, driver-facing sentiment check-in — added 2026-07-26 as a
+    follow-up step after the EOD survey. Deliberately "anonymous" from the
+    driver's side: roster_id is recorded so identity can be recovered, but
+    the submission form never asks for or displays a name, and normal
+    reads of this table should stay identity-blind (see
+    sentiment_survey.py's admin-report endpoint, which is the one place
+    identity is deliberately revealed, gated to owner/hr only since this
+    can surface claims about management)."""
+    __tablename__ = "sentiment_survey_responses"
+
+    id = Column(Integer, primary_key=True)
+    survey_date = Column(Date, nullable=False, index=True)
+    submitted_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    roster_id = Column(Integer, ForeignKey("driver_roster.id"), nullable=True, index=True)
+
+    feeling = Column(Text)              # "How are you feeling about work today?"
+    van_equipment_issues = Column(Text)  # van/equipment/route condition complaints
+    suggestions = Column(Text)          # recurring/actionable suggestions
+    treatment_concerns = Column(Text)   # anything about how they've been treated
+
+    # Set once the daily AI-analysis job has read this row, so it isn't
+    # re-summarized every time the loop ticks.
+    reviewed_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("idx_sentiment_date", "survey_date"),
+    )
+
+
 class ReminderThrottleState(Base):
     """Persisted throttle/dedup state for periodic Slack reminder loops.
 

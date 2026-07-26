@@ -12,6 +12,7 @@ interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   login: (username: string, password: string) => Promise<void>;
+  loginWithSlackToken: (token: string, username: string, name: string, role: string) => void;
   logout: () => void;
   isAuthenticated: boolean;
 }
@@ -99,6 +100,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const loginWithSlackToken = (token: string, username: string, name: string, role: string) => {
+    const slackUser: User = { username, name, role };
+    setUser(slackUser);
+    localStorage.setItem('user', JSON.stringify(slackUser));
+    localStorage.setItem('access_token', token);
+  };
+
   const logout = () => {
     setUser(null);
     localStorage.removeItem('user');
@@ -111,6 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         isLoading,
         login,
+        loginWithSlackToken,
         logout,
         isAuthenticated: !!user,
       }}

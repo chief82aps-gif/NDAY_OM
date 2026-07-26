@@ -2,15 +2,55 @@
 
 import { useRouter } from 'next/router';
 import { useAuth } from '../contexts/AuthContext';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+
+function resolveApi(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+    return 'https://nday-om.onrender.com';
+  }
+  return 'http://127.0.0.1:8001';
+}
+
+const SLACK_ERROR_MESSAGES: Record<string, string> = {
+  denied: 'Slack sign-in was cancelled.',
+  invalid_state: 'That Slack sign-in link expired — please try again.',
+  not_configured: 'Slack sign-in is not set up yet.',
+  slack_unreachable: "Couldn't reach Slack — please try again.",
+  token_exchange_failed: 'Slack sign-in failed — please try again.',
+  userinfo_failed: 'Slack sign-in failed — please try again.',
+  not_linked: "This Slack account isn't linked to a dashboard login yet. Contact your administrator.",
+  inactive: 'This account is not active. Contact your administrator.',
+};
 
 export default function Login() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { login, loginWithSlackToken } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!router.isReady) return;
+    const { slack_token: slackToken, username: slackUsername, name: slackName, role: slackRole, slack_error: slackError } = router.query;
+
+    if (typeof slackToken === 'string') {
+      loginWithSlackToken(
+        slackToken,
+        typeof slackUsername === 'string' ? slackUsername : '',
+        typeof slackName === 'string' ? slackName : '',
+        typeof slackRole === 'string' ? slackRole : 'driver'
+      );
+      router.replace('/');
+      return;
+    }
+
+    if (typeof slackError === 'string') {
+      setError(SLACK_ERROR_MESSAGES[slackError] || 'Slack sign-in failed — please try again.');
+      router.replace('/login', undefined, { shallow: true });
+    }
+  }, [router.isReady, router.query]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,6 +65,10 @@ export default function Login() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSlackLogin = () => {
+    window.location.href = `${resolveApi()}/auth/slack/login`;
   };
 
   return (
@@ -90,6 +134,27 @@ export default function Login() {
               {loading ? 'Signing in...' : 'Sign In'}
             </button>
           </form>
+
+          {/* Slack Sign-In */}
+          <div className="mt-6 pt-6 border-t border-gray-200">
+            <button
+              type="button"
+              onClick={handleSlackLogin}
+              className="w-full flex items-center justify-center gap-2 border border-gray-300 hover:bg-gray-50 text-gray-700 font-semibold py-2 px-4 rounded-lg transition duration-200"
+            >
+              <svg width="18" height="18" viewBox="0 0 122.8 122.8" xmlns="http://www.w3.org/2000/svg">
+                <path d="M25.8 77.6c0 7.1-5.8 12.9-12.9 12.9S0 84.7 0 77.6s5.8-12.9 12.9-12.9h12.9v12.9z" fill="#e01e5a"/>
+                <path d="M32.3 77.6c0-7.1 5.8-12.9 12.9-12.9s12.9 5.8 12.9 12.9v32.3c0 7.1-5.8 12.9-12.9 12.9s-12.9-5.8-12.9-12.9V77.6z" fill="#e01e5a"/>
+                <path d="M45.2 25.8c-7.1 0-12.9-5.8-12.9-12.9S38.1 0 45.2 0s12.9 5.8 12.9 12.9v12.9H45.2z" fill="#36c5f0"/>
+                <path d="M45.2 32.3c7.1 0 12.9 5.8 12.9 12.9s-5.8 12.9-12.9 12.9H12.9C5.8 58.1 0 52.3 0 45.2s5.8-12.9 12.9-12.9h32.3z" fill="#36c5f0"/>
+                <path d="M97 45.2c0-7.1 5.8-12.9 12.9-12.9s12.9 5.8 12.9 12.9-5.8 12.9-12.9 12.9H97V45.2z" fill="#2eb67d"/>
+                <path d="M90.5 45.2c0 7.1-5.8 12.9-12.9 12.9s-12.9-5.8-12.9-12.9V12.9C64.7 5.8 70.5 0 77.6 0s12.9 5.8 12.9 12.9v32.3z" fill="#2eb67d"/>
+                <path d="M77.6 97c7.1 0 12.9 5.8 12.9 12.9s-5.8 12.9-12.9 12.9-12.9-5.8-12.9-12.9V97h12.9z" fill="#ecb22e"/>
+                <path d="M77.6 90.5c-7.1 0-12.9-5.8-12.9-12.9s5.8-12.9 12.9-12.9h32.3c7.1 0 12.9 5.8 12.9 12.9s-5.8 12.9-12.9 12.9H77.6z" fill="#ecb22e"/>
+              </svg>
+              Sign in with Slack
+            </button>
+          </div>
 
           {/* Admin Note */}
           <div className="mt-6 pt-6 border-t border-gray-200">

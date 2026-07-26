@@ -1,16 +1,21 @@
+import logging
 import os
 import secrets
 from datetime import datetime, timedelta
 from typing import Optional
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import jwt
 import bcrypt
+import requests
 
 from api.src.database import get_db, User, get_user_by_username, get_user_by_reset_token
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # JWT Configuration
@@ -258,6 +263,129 @@ async def login(request: LoginRequest, db: Session = Depends(get_db)):
         access_token=access_token,
         token_type="bearer",
     )
+
+
+SLACK_CLIENT_ID = os.getenv("SLACK_CLIENT_ID", "")
+SLACK_CLIENT_SECRET = os.getenv("SLACK_CLIENT_SECRET", "")
+BACKEND_URL = os.getenv("BACKEND_URL", "https://nday-om.onrender.com")
+SLACK_OAUTH_REDIRECT_URI = f"{BACKEND_URL}/auth/slack/callback"
+SLACK_STATE_TTL_MINUTES = 10
+
+
+@router.get("/slack/login")
+async def slack_login():
+    """Full-page redirect into Slack's OpenID Connect authorize flow — the
+    frontend's "Sign in with Slack" button links straight here rather than
+    fetching it, since the OAuth handshake needs a real browser navigation."""
+    if not SLACK_CLIENT_ID:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Slack sign-in is not configured")
+
+    state = jwt.encode(
+        {
+            "purpose": "slack_oauth_state",
+            "exp": datetime.utcnow() + timedelta(minutes=SLACK_STATE_TTL_MINUTES),
+        },
+        JWT_SECRET,
+        algorithm=JWT_ALGORITHM,
+    )
+    params = urlencode({
+        "client_id": SLACK_CLIENT_ID,
+        "scope": "openid profile email",
+        "redirect_uri": SLACK_OAUTH_REDIRECT_URI,
+        "state": state,
+        "response_type": "code",
+    })
+    return RedirectResponse(f"https://slack.com/openid/connect/authorize?{params}")
+
+
+@router.get("/slack/callback")
+async def slack_callback(
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Slack redirects here after the user approves (or denies) sign-in.
+    Deliberately does NOT auto-create accounts — only a Slack ID already
+    linked to an existing User row (via /auth/invite or the dispatch "Add
+    New Hire" modal) can complete login, so no workspace member gets
+    dashboard access just by existing in Slack."""
+    def _fail(reason: str) -> RedirectResponse:
+        return RedirectResponse(f"{APP_URL}/login?slack_error={reason}")
+
+    if error or not code or not state:
+        return _fail("denied")
+
+    try:
+        jwt.decode(state, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.PyJWTError:
+        return _fail("invalid_state")
+
+    if not SLACK_CLIENT_ID or not SLACK_CLIENT_SECRET:
+        return _fail("not_configured")
+
+    try:
+        token_resp = requests.post(
+            "https://slack.com/api/openid.connect.token",
+            data={
+                "client_id": SLACK_CLIENT_ID,
+                "client_secret": SLACK_CLIENT_SECRET,
+                "code": code,
+                "redirect_uri": SLACK_OAUTH_REDIRECT_URI,
+            },
+            timeout=10,
+        ).json()
+    except requests.RequestException:
+        logger.warning("Slack OAuth token exchange request failed", exc_info=True)
+        return _fail("slack_unreachable")
+
+    if not token_resp.get("ok"):
+        logger.warning("Slack OAuth token exchange rejected: %s", token_resp.get("error"))
+        return _fail("token_exchange_failed")
+
+    slack_access_token = token_resp.get("access_token")
+
+    try:
+        userinfo_resp = requests.get(
+            "https://slack.com/api/openid.connect.userInfo",
+            headers={"Authorization": f"Bearer {slack_access_token}"},
+            timeout=10,
+        ).json()
+    except requests.RequestException:
+        logger.warning("Slack OAuth userinfo request failed", exc_info=True)
+        return _fail("slack_unreachable")
+
+    slack_user_id = userinfo_resp.get("https://slack.com/user_id") or userinfo_resp.get("sub")
+    if not slack_user_id:
+        logger.warning("Slack OAuth userinfo missing user id: %s", userinfo_resp)
+        return _fail("userinfo_failed")
+
+    user = db.query(User).filter(User.slack_user_id == slack_user_id).first()
+    if not user:
+        return _fail("not_linked")
+    if not user.is_active:
+        return _fail("inactive")
+
+    user.last_login = datetime.utcnow()
+    db.commit()
+
+    payload = {
+        "sub": user.username,
+        "username": user.username,
+        "role": user.role,
+        "name": user.name or user.username.capitalize(),
+        "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS),
+        "iat": datetime.utcnow(),
+    }
+    access_token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+    params = urlencode({
+        "slack_token": access_token,
+        "username": user.username,
+        "name": user.name or user.username.capitalize(),
+        "role": user.role,
+    })
+    return RedirectResponse(f"{APP_URL}/login?{params}")
 
 
 @router.post("/create-user")

@@ -256,10 +256,14 @@ def terminate_driver(driver_id: int, req: TerminateRequest, db: Session = Depend
     r = db.query(DriverRosterEntry).filter(DriverRosterEntry.id == driver_id).first()
     if not r:
         raise HTTPException(404, f"Driver {driver_id} not found")
-    if not r.is_active:
-        return {"status": "already_inactive", "driver": _serialize(r)}
+    already_inactive = not r.is_active
     r.is_active = False
 
+    # Purge runs even if already terminated — idempotent (deletes nothing on
+    # a second call), and it's the only way to clean up a driver who was
+    # terminated before the purge-on-terminate behavior existed, or whose
+    # future schedule rows were created by an ingest that ran after they
+    # were already terminated.
     purged = (
         db.query(DriverScheduleEntry)
         .filter(
@@ -271,10 +275,14 @@ def terminate_driver(driver_id: int, req: TerminateRequest, db: Session = Depend
     db.commit()
     db.refresh(r)
     logger.info(
-        "Driver %s (id=%s) marked terminated by %s; purged %d future schedule entr%s",
-        r.payroll_name, r.id, req.terminated_by or "unknown", purged, "y" if purged == 1 else "ies",
+        "Driver %s (id=%s) marked terminated by %s (was already inactive: %s); purged %d future schedule entr%s",
+        r.payroll_name, r.id, req.terminated_by or "unknown", already_inactive, purged, "y" if purged == 1 else "ies",
     )
-    return {"status": "terminated", "driver": _serialize(r), "purged_schedule_entries": purged}
+    return {
+        "status": "already_inactive_purged" if already_inactive else "terminated",
+        "driver": _serialize(r),
+        "purged_schedule_entries": purged,
+    }
 
 
 @router.post("/recompute-stale")

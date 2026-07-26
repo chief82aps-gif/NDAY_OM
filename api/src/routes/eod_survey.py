@@ -789,9 +789,6 @@ def run_eod_survey_check(db: Session) -> dict:
             already_submitted += 1
             continue
 
-        if all_in or cutoff:
-            continue
-
         if not roster_entry or not roster_entry.slack_member_id:
             no_slack += 1
             continue
@@ -849,6 +846,14 @@ def run_eod_survey_check(db: Session) -> dict:
         first_name = a.driver_name.split()[0] if a.driver_name else "there"
 
         if not state.get("initial_sent_at"):
+            # The initial send is NEVER blocked by all_in/cutoff — every
+            # driver gets at least one real attempt no matter how late in
+            # the day the loop gets a chance to run (confirmed live
+            # 2026-07-25: a delayed redeploy landing after 22:00 meant this
+            # check, applied blanket at the top of the loop before this
+            # fix, silently suppressed every driver's first-ever send for
+            # the rest of the day). all_in/cutoff only suppress the repeat
+            # ping below, which is what they were actually meant to stop.
             if now_utc_naive >= send_at:
                 verb = "you're needed for a rescue before it," if rescued_today else "before you head out"
                 msg = (
@@ -859,6 +864,9 @@ def run_eod_survey_check(db: Session) -> dict:
                 _dm(roster_entry.slack_member_id, msg, button_url=url, button_text="📋 Complete Survey")
                 set_reminder_state(db, state_key, {"initial_sent_at": now_utc_naive.isoformat(), "last_ping_at": None})
                 sent += 1
+            continue
+
+        if all_in or cutoff:
             continue
 
         if now_utc_naive >= anchor:

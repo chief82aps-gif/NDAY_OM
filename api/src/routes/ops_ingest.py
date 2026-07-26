@@ -635,7 +635,7 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
             tmp_path = tmp.name
         try:
             from api.src.orchestrator import orchestrator
-            from api.src.database import DriverScheduleEntry
+            from api.src.database import DriverScheduleEntry, DriverRosterEntry as _DRE
             ok = orchestrator.ingest_driver_schedule(tmp_path)
             if not ok:
                 errs = orchestrator.status.validation_errors[-3:]
@@ -649,6 +649,46 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
                 # Parse ALL dates from the Shifts & Availability tab so the
                 # callout page can filter by any shift date in the week.
                 by_date = _parse_all_schedule_dates(tmp_path)
+
+                # Terminated drivers must never repopulate — confirmed live
+                # 2026-07-25: a driver marked is_active=False (terminate_driver())
+                # kept reappearing every week because the weekly schedule
+                # spreadsheet the ops team builds still lists them, Amazon-side
+                # termination or not. Excluding their name here, before any
+                # DriverScheduleEntry row is created, stops both the roster-touch
+                # below (which used to silently reset last_seen_on_schedule/
+                # flagged_inactive on an exact-name match) and — worse — a near-
+                # miss spelling creating a brand NEW active duplicate roster row,
+                # since resolve_roster_entry() only ever matches active drivers
+                # and would otherwise treat a terminated driver's slightly-off
+                # schedule-file spelling as a new hire.
+                if by_date:
+                    all_names_raw = {n for dl in by_date.values() for n in dl}
+                    inactive_rows = db.query(_DRE).filter(_DRE.is_active == False).all()
+                    from api.src.driver_identity import _tokens as _name_tok
+
+                    def _inactive_match(name: str):
+                        for r in inactive_rows:
+                            if r.payroll_name == name:
+                                return r
+                        tokens = _name_tok(name)
+                        if not tokens:
+                            return None
+                        best, best_score = None, 1
+                        for r in inactive_rows:
+                            score = len(tokens & _name_tok(r.payroll_name))
+                            if score >= 2 and score > best_score:
+                                best, best_score = r, score
+                        return best
+
+                    terminated_names = {n for n in all_names_raw if _inactive_match(n)}
+                    if terminated_names:
+                        logger.info(
+                            "Driver schedule ingest: excluding %d terminated driver name(s) from %s: %s",
+                            len(terminated_names), job.file_name, sorted(terminated_names),
+                        )
+                        by_date = {d: [n for n in names if n not in terminated_names] for d, names in by_date.items()}
+
                 if by_date:
                     all_dates = list(by_date.keys())
                     db.query(DriverScheduleEntry).filter(
@@ -736,6 +776,14 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
                             # instead of linking to the existing one (found
                             # 2026-07-23 as part of the driver-identity refactor).
                             row = resolve_roster_entry(name, db)
+                        if row and not row.is_active:
+                            # Belt-and-suspenders — the by_date filter above
+                            # should already have removed every terminated
+                            # name before this loop ever sees it, but this is
+                            # the invariant this whole block depends on, so
+                            # make it explicit rather than trust the filter
+                            # silently.
+                            continue
                         if row:
                             if seen_date and (row.last_seen_on_schedule is None or seen_date > row.last_seen_on_schedule):
                                 row.last_seen_on_schedule = seen_date

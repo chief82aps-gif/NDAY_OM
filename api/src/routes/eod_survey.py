@@ -469,6 +469,31 @@ def list_responses(survey_date: Optional[str] = None, db: Session = Depends(get_
     return [_row_to_dict(r) for r in rows]
 
 
+@router.post("/test-send")
+def send_test_eod_dm(sample_driver_name: str, target_slack_id: str, db: Session = Depends(get_db)):
+    """Preview the real EOD survey DM by sending it to a reviewer instead
+    of the sampled driver — same pattern as rostering.py's
+    /day-of-dms/{date}/test. Added 2026-07-26 to directly verify Slack
+    delivery is working at all, separate from whether drivers are
+    completing it. Does not touch any real state (no ReminderThrottleState
+    write), so it's safe to call repeatedly."""
+    from api.src.driver_identity import resolve_roster_entry
+    entry = resolve_roster_entry(sample_driver_name, db)
+    if not entry:
+        raise HTTPException(404, f"No active roster match for '{sample_driver_name}'.")
+
+    today = date.today()
+    eod_token = _issue_eod_token(entry.id, entry.position_id, entry.payroll_name)
+    url = f"{APP_URL}/eod?token={eod_token}"
+    first_name = entry.payroll_name.split(",", 1)[1].strip().split()[0] if "," in entry.payroll_name else entry.payroll_name.split()[0]
+    msg = (
+        f"🏁 [TEST] Hi {first_name}! Time to complete your *End of Day Survey* before you head out.\n"
+        f"It only takes 2 minutes."
+    )
+    _dm(target_slack_id, msg, button_url=url, button_text="📋 Complete Survey")
+    return {"status": "sent", "sampled_driver": entry.payroll_name, "target_slack_id": target_slack_id, "survey_date": today.isoformat()}
+
+
 @router.post("/trigger-daily-post")
 def trigger_daily_post(force: bool = False):
     """Manual trigger for the 3 PM daily survey-link DM — for recovery if

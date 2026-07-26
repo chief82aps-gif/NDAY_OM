@@ -54,6 +54,22 @@ const nextConfig: NextConfig = {
         source: '/cortex-tracking/:path*',
         destination: `${backendUrl}/cortex-tracking/:path*`,
       },
+      {
+        source: '/eod-survey/:path*',
+        destination: `${backendUrl}/eod-survey/:path*`,
+      },
+      {
+        source: '/crash-report/:path*',
+        destination: `${backendUrl}/crash-report/:path*`,
+      },
+      {
+        source: '/injury-reports/:path*',
+        destination: `${backendUrl}/injury-reports/:path*`,
+      },
+      {
+        source: '/sentiment-survey/:path*',
+        destination: `${backendUrl}/sentiment-survey/:path*`,
+      },
     ];
   },
 };

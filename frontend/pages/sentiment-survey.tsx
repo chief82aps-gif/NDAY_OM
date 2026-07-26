@@ -2,11 +2,13 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 
 function resolveApi(): string {
-  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
-  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
-    return 'https://nday-om.onrender.com';
+  // Relative in production — proxied to the Render backend by next.config.ts's
+  // rewrites (same fix as eod.tsx; direct browser fetches to onrender.com
+  // are unreliable from some networks, surfacing as "Failed to fetch").
+  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+    return 'http://127.0.0.1:8001';
   }
-  return 'http://127.0.0.1:8001';
+  return '';
 }
 
 type Step = 'loading' | 'form' | 'done' | 'already_done' | 'error';

@@ -2,11 +2,14 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 
 function resolveApi(): string {
-  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
-  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
-    return 'https://nday-om.onrender.com';
+  // Relative in production — proxied to the Render backend by next.config.ts's
+  // rewrites, same fix as a2c88c1 applied to other pages. A direct browser
+  // fetch to nday-om.onrender.com is unreliable from some networks and
+  // surfaces as an opaque "Failed to fetch" with no HTTP status to debug.
+  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+    return 'http://127.0.0.1:8001';
   }
-  return 'http://127.0.0.1:8001';
+  return '';
 }
 
 interface DriverInfo {

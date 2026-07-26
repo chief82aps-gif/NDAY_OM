@@ -75,6 +75,8 @@ export default function EodPage() {
   const [clockInReason, setClockInReason] = useState('');
   const [vanIssues, setVanIssues] = useState<boolean | null>(null);
   const [vanDesc, setVanDesc] = useState('');
+  // packages_rts removed from this survey — already covered by the
+  // dispatch-generated RTS process (see rts.py); asking here duplicated it.
   // Crash — its own explicit question, auto-checked/created against the
   // real CrashReport engine (drivers have no web login, so this is
   // create-and-alert, never a page redirect).
@@ -100,7 +102,6 @@ export default function EodPage() {
   const [incidentDesc, setIncidentDesc] = useState('');
   const [postDvic, setPostDvic] = useState<boolean | null>(null);
   const [gasLevel, setGasLevel] = useState('');
-  const [packagesRts, setPackagesRts] = useState('0');
   const [routeIssues, setRouteIssues] = useState<boolean | null>(null);
   const [routeDesc, setRouteDesc] = useState('');
   const [sweep, setSweep] = useState<boolean | null>(null);
@@ -288,7 +289,6 @@ export default function EodPage() {
         medical_review_completed: injury ? medReview : null,
         post_trip_dvic_completed: postDvic,
         gas_level: gasLevel,
-        packages_rts: parseInt(packagesRts, 10) || 0,
         route_issues: routeIssues,
         route_issue_description: routeIssues ? routeDesc : null,
         performed_sweep: sweep,
@@ -524,7 +524,7 @@ export default function EodPage() {
 
         {/* 1. Clock-in */}
         <div style={s.section}>
-          <label style={s.label}>Did you clock in on time (10:00 AM)?</label>
+          <label style={s.label}>Did you clock in on time{wave ? ` (${wave})` : ''}?</label>
           <YN value={clockedInOnTime} onChange={setClockedInOnTime} />
           {clockedInOnTime === false && (
             <>
@@ -570,12 +570,6 @@ export default function EodPage() {
               >{opt}</button>
             ))}
           </div>
-        </div>
-
-        {/* 7. RTS */}
-        <div style={s.section}>
-          <label style={s.label}>Packages returned to station (RTS)</label>
-          <input style={s.input} type="number" min="0" value={packagesRts} onChange={e => setPackagesRts(e.target.value)} />
         </div>
 
         {/* 8. Route issues */}

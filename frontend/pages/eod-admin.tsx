@@ -183,7 +183,6 @@ export default function EodAdminPage() {
                           {r.van_number && <span>Van {r.van_number}</span>}
                           {r.wave && <span>Wave {r.wave}</span>}
                           <span>Out: {r.clock_out_time || '—'}</span>
-                          <span>RTS: {r.packages_rts}</span>
                           <span style={{ color: '#475569' }}>Submitted {fmt(r.submitted_at)}</span>
                         </div>
                       </div>
@@ -203,7 +202,6 @@ export default function EodAdminPage() {
                               r.injury_occurred ? ['Medical review', yn(r.medical_review_completed)] : null,
                               ['Post-trip DVIC', yn(r.post_trip_dvic_completed)],
                               ['Gas level', r.gas_level || '—'],
-                              ['Packages RTS', String(r.packages_rts)],
                               ['Route issues', yn(r.route_issues, 'Yes ⚠️', 'No')],
                               r.route_issues ? ['Route issue', r.route_issue_description || '—'] : null,
                               ['Sweep', yn(r.performed_sweep)],

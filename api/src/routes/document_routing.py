@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -78,6 +79,13 @@ _DEFAULT_ROLE_DIRECTORY = {
     "dispatch_staff": [
         sid.strip() for sid in os.getenv("DOC_ROUTING_DISPATCH_STAFF_SLACK_IDS", "").split(",") if sid.strip()
     ],
+    # Individual people who see the HR Home tab (slack_hr_home.py) — added
+    # 2026-07-26. Deliberately separate from "hr" above, which now routes
+    # to a channel (#nday-hr, C0BLRE793L0) for message posts, not
+    # individual people — same split as dispatch/dispatch_staff.
+    "hr_staff": [
+        sid.strip() for sid in os.getenv("DOC_ROUTING_HR_STAFF_SLACK_IDS", "").split(",") if sid.strip()
+    ],
 }
 
 
@@ -116,6 +124,61 @@ def is_dispatch_staff(slack_user_id: str, db: Session) -> bool:
     Home-tab render time — don't trust that only dispatch staff can trigger
     a given action_id."""
     return slack_user_id in get_role_slack_ids(db, "dispatch_staff")
+
+
+_HR_STAFF_CACHE_TTL_SECONDS = 60
+_hr_staff_channel_cache: dict = {"ids": set(), "fetched_at": 0.0}
+
+
+def _slack_client():
+    token = os.getenv("SLACK_BOT_TOKEN")
+    if not token:
+        return None
+    from slack_sdk import WebClient
+    return WebClient(token=token)
+
+
+def _live_hr_channel_members(db: Session) -> set:
+    """Live membership of the #nday-hr channel — per explicit user
+    direction, whoever is actually IN that Slack channel IS the HR staff
+    list, rather than a separately maintained one. Cached briefly since a
+    single Home-tab open/action can call is_hr_staff() several times in
+    quick succession."""
+    now = time.time()
+    if now - _hr_staff_channel_cache["fetched_at"] < _HR_STAFF_CACHE_TTL_SECONDS:
+        return _hr_staff_channel_cache["ids"]
+
+    channel_ids = get_role_slack_ids(db, "hr")
+    client = _slack_client()
+    members: set = set()
+    if client and channel_ids:
+        for channel_id in channel_ids:
+            try:
+                cursor = None
+                while True:
+                    resp = client.conversations_members(channel=channel_id, cursor=cursor, limit=200)
+                    members.update(resp.get("members", []))
+                    cursor = (resp.get("response_metadata") or {}).get("next_cursor")
+                    if not cursor:
+                        break
+            except Exception as exc:
+                logger.warning("conversations_members failed for %s: %s", channel_id, exc)
+
+    _hr_staff_channel_cache["ids"] = members
+    _hr_staff_channel_cache["fetched_at"] = now
+    return members
+
+
+def is_hr_staff(slack_user_id: str, db: Session) -> bool:
+    """Gates the HR Home tab (slack_hr_home.py) and its actions. Rule: live
+    membership of the #nday-hr Slack channel — join that channel, get the
+    tab; leave it, lose it. Falls back to the static hr_staff RoleDirectory
+    list too, in case the live channel lookup fails (missing bot token/
+    scope) or someone was linked that way instead. Same re-check-inside-
+    every-handler rule as is_dispatch_staff()."""
+    if slack_user_id in _live_hr_channel_members(db):
+        return True
+    return slack_user_id in get_role_slack_ids(db, "hr_staff")
 
 
 def resolve_recipients(document_type: str, db: Session) -> dict[str, list[str]]:

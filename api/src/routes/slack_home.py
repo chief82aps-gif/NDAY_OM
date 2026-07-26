@@ -42,7 +42,7 @@ from api.src.database import (
     TimeOffRequest,
 )
 from api.src.routes.dvic import _name_tokens
-from api.src.routes.document_routing import resolve_recipients, is_dispatch_staff
+from api.src.routes.document_routing import resolve_recipients, is_dispatch_staff, is_hr_staff
 from api.src.routes.quality import get_rankings, _METRIC_LABELS
 from api.src.routes.slack_interactions import (
     _resolve_driver,
@@ -360,6 +360,13 @@ def _publish_home(slack_user_id: str, db: Session) -> None:
         if is_dispatch_staff(slack_user_id, db):
             from api.src.routes.slack_dispatch_home import build_dispatch_home_view_blocks
             blocks = build_dispatch_home_view_blocks(db)
+            client.views_publish(user_id=slack_user_id, view={"type": "home", "blocks": blocks})
+            return
+        # Checked after dispatch so anyone who is both (e.g. Jayson) keeps
+        # seeing the tab they already use daily — HR-only staff get this one.
+        if is_hr_staff(slack_user_id, db):
+            from api.src.routes.slack_hr_home import build_hr_home_view_blocks
+            blocks = build_hr_home_view_blocks(db)
             client.views_publish(user_id=slack_user_id, view={"type": "home", "blocks": blocks})
             return
         if not _DM_ACTIVE:

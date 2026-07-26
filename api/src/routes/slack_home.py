@@ -291,9 +291,19 @@ def build_home_view_blocks(driver: Optional[DriverRosterEntry], db: Session) -> 
 
     blocks.append({"type": "divider"})
 
+    from api.src.routes.eod_survey import _issue_eod_token
+    eod_token = _issue_eod_token(driver.id, driver.position_id, driver.payroll_name)
+
     blocks.append({
         "type": "actions",
         "elements": [
+            {
+                "type": "button",
+                "action_id": "home_eod_survey_button",
+                "text": {"type": "plain_text", "text": "🏁 End of Day Survey", "emoji": True},
+                "style": "primary",
+                "url": f"{FRONTEND_URL}/eod?token={eod_token}",
+            },
             {
                 "type": "button",
                 "action_id": "home_callout_button",

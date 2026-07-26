@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import Optional
 
 import jwt
@@ -801,16 +801,45 @@ def run_eod_survey_check(db: Session) -> dict:
             RescueEvent.rescuing_driver_name == a.driver_name,
         ).first() is not None
 
+        # 1900 Pacific is now a hard, guaranteed send time regardless of
+        # whether Cortex/pace data ever loads — confirmed live 2026-07-25
+        # that CortexSnapshot (the live-pace ETA source) is only populated
+        # by a separate, manual "upload every ~2 hours" endpoint
+        # (cortex_tracking.py's POST /cortex-tracking/snapshot), not by the
+        # daily morning Cortex file check_and_notify() processes, so on a
+        # day nobody feeds that endpoint, no driver would ever get a live
+        # ETA and this redesign would silently never fire. Per explicit
+        # direction: fire at 1900 no matter what; the only reason to send
+        # earlier is real data (live Cortex pace, or the static
+        # wave+route_duration estimate) suggesting an earlier time.
+        today_1900_pt = now_pt.replace(hour=19, minute=0, second=0, microsecond=0)
+        today_1900_utc_naive = today_1900_pt.astimezone(timezone.utc).replace(tzinfo=None)
+
         if rescued_today:
+            # Rescued drivers keep their own dedicated exception — they're
+            # legitimately expected out later than a normal return, so they
+            # are NOT capped at 1900 the way everyone else is.
             anchor = get_driver_original_return_dt(a.driver_name, today, db)
             send_at = anchor + timedelta(hours=1) if anchor else None
+            if anchor is None or send_at is None:
+                no_eta += 1
+                continue
         else:
-            anchor = get_driver_expected_return_dt(a.driver_name, today, db)
-            send_at = anchor - timedelta(hours=1) if anchor else None
-
-        if anchor is None or send_at is None:
-            no_eta += 1
-            continue
+            anchor = (
+                get_driver_expected_return_dt(a.driver_name, today, db)
+                or get_driver_original_return_dt(a.driver_name, today, db)
+            )
+            if anchor is not None:
+                # Real data (live or static) exists — cap only the send
+                # time at 1900, not the anchor itself. The anchor still
+                # drives when ping escalation starts, and it shouldn't be
+                # dragged earlier than a driver's actual expected return
+                # just because of the 1900 send-time ceiling.
+                send_at = min(anchor - timedelta(hours=1), today_1900_utc_naive)
+            else:
+                # No data at all — 1900 is the only thing we have.
+                anchor = today_1900_utc_naive
+                send_at = today_1900_utc_naive
 
         state_key = f"{_DRIVER_DM_KEY_PREFIX}{today.isoformat()}_{roster_entry.id}"
         state = get_reminder_state(db, state_key)

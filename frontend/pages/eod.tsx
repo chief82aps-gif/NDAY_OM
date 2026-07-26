@@ -18,6 +18,7 @@ interface DriverInfo {
   role: string;
   already_submitted: boolean;
   submitted_at: string | null;
+  survey_date: string;
 }
 
 type Step = 'auth' | 'survey' | 'done' | 'already_done' | 'error';
@@ -47,10 +48,9 @@ const s = {
 
 export default function EodPage() {
   const router = useRouter();
-  const { tid, token } = router.query as { tid?: string; token?: string };
+  const { tid, token, date: targetDateParam } = router.query as { tid?: string; token?: string; date?: string };
   const hasAuth = Boolean(tid || token);
   const api = resolveApi();
-  const today = new Date().toISOString().slice(0, 10);
 
   const [step, setStep] = useState<Step>('auth');
   const [driverInfo, setDriverInfo] = useState<DriverInfo | null>(null);
@@ -125,6 +125,9 @@ export default function EodPage() {
         params.set('pin', pin);
         if (nameHint.trim()) params.set('driver_name_hint', nameHint.trim());
       }
+      // ?date=YYYY-MM-DD — used by the outstanding-items gate to send a
+      // driver straight to a missed day's survey instead of today's.
+      if (targetDateParam) params.set('target_date', targetDateParam);
       const res = await fetch(`${api}/eod-survey/driver-lookup?${params}`);
       if (!res.ok) {
         const e = await res.json();
@@ -156,7 +159,7 @@ export default function EodPage() {
       const res = await fetch(`${api}/crash-report/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ driver_name: driverInfo.driver_name, shift_date: today }),
+        body: JSON.stringify({ driver_name: driverInfo.driver_name, shift_date: driverInfo.survey_date }),
       });
       if (!res.ok) throw new Error('start failed');
       const data = await res.json();
@@ -262,7 +265,7 @@ export default function EodPage() {
         token: token || undefined,
         transporter_id: token ? undefined : driverInfo.transporter_id,
         pin,
-        survey_date: today,
+        survey_date: driverInfo.survey_date,
         van_number: vanNumber || driverInfo.van_number,
         wave: wave || driverInfo.wave,
         role,

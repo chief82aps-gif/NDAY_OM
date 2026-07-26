@@ -10,7 +10,7 @@ function resolveApi(): string {
 }
 
 interface Item {
-  type: 'dvic' | 'attendance';
+  type: 'dvic' | 'attendance' | 'missed_eod_survey';
   id: number;
   label: string;
   transporter_id?: string;
@@ -18,6 +18,8 @@ interface Item {
   stage?: number;
   event_type?: string;
   event_date?: string;
+  survey_date?: string;
+  eod_token?: string;
 }
 
 type Step = 'loading' | 'list' | 'error';
@@ -197,6 +199,15 @@ export default function OutstandingItemsPage() {
                   {busy === item.id ? 'Submitting…' : 'Sign'}
                 </button>
               </>
+            )}
+
+            {item.type === 'missed_eod_survey' && item.eod_token && (
+              <a
+                href={`/eod?token=${item.eod_token}&date=${item.survey_date}`}
+                style={{ ...s.btn(false), display: 'block', textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}
+              >
+                Complete Missed Survey →
+              </a>
             )}
           </div>
         ))}

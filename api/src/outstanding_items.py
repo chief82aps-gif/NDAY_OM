@@ -20,11 +20,12 @@ their part on those, so they don't belong here.
 """
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from api.src.database import DvicCounselingRecord, AttendanceEvent
+from api.src.database import DvicCounselingRecord, AttendanceEvent, DailyRouteAssignment, EodSurveyResponse
 from api.src.driver_identity import _tokens
 
 
@@ -65,5 +66,37 @@ def get_outstanding_items(driver_name: str, roster_id: Optional[int], db: Sessio
             "event_type": event.event_type,
             "event_date": event.event_date.isoformat() if event.event_date else None,
         })
+
+    # Missed EOD survey — added 2026-07-26, explicit direction: "explain
+    # why you missed it" is just completing that overdue survey, not a
+    # separate form. Checked over the last 7 days (not just yesterday) so
+    # a multi-day gap doesn't silently stop resurfacing once today's route
+    # DM would otherwise dedup past it. Only counts a day the driver
+    # actually had a route (no assignment = nothing to have submitted).
+    if roster_id is not None:
+        from api.src.routes.eod_survey import _issue_eod_token
+
+        today = date.today()
+        for days_back in range(1, 8):
+            check_date = today - timedelta(days=days_back)
+            had_route = db.query(DailyRouteAssignment).filter(
+                DailyRouteAssignment.assignment_date == check_date,
+                DailyRouteAssignment.roster_id == roster_id,
+            ).first()
+            if not had_route:
+                continue
+            submitted = db.query(EodSurveyResponse).filter(
+                EodSurveyResponse.roster_id == roster_id,
+                EodSurveyResponse.survey_date == check_date,
+            ).first()
+            if submitted:
+                continue
+            items.append({
+                "type": "missed_eod_survey",
+                "id": had_route.id,
+                "survey_date": check_date.isoformat(),
+                "label": f"Missed End of Day Survey — {check_date.strftime('%A, %b %-d')}",
+                "eod_token": _issue_eod_token(roster_id, None, driver_name),
+            })
 
     return items

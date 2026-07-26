@@ -209,6 +209,7 @@ class DriverLookupResponse(BaseModel):
     role: str
     already_submitted: bool
     submitted_at: Optional[str]
+    survey_date: str
 
 
 class EodSubmitRequest(BaseModel):
@@ -279,13 +280,17 @@ def driver_lookup(
     transporter_id: Optional[str] = None,
     driver_name_hint: Optional[str] = None,
     token: Optional[str] = None,
+    target_date: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """Return driver info + today's pre-fill data. PIN only required
-    with neither token nor transporter_id — see _authenticate_driver()'s
-    docstring."""
+    """Return driver info + pre-fill data for target_date (defaults to
+    today). target_date exists so the outstanding-items gate (added
+    2026-07-26) can send a driver straight to a *missed* day's survey —
+    "explain why you missed it" is just completing that overdue survey,
+    not a separate form. PIN only required with neither token nor
+    transporter_id — see _authenticate_driver()'s docstring."""
     entry = _authenticate_driver(transporter_id, driver_name_hint, pin, db, token=token)
-    today = date.today()
+    today = date.fromisoformat(target_date) if target_date else date.today()
     assignment = _load_today_assignment(entry.id, today, db)
 
     # Check if already submitted
@@ -316,6 +321,7 @@ def driver_lookup(
         role=role,
         already_submitted=existing is not None,
         submitted_at=existing.submitted_at.isoformat() if existing else None,
+        survey_date=today.isoformat(),
     )
 
 

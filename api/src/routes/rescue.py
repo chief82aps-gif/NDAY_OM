@@ -317,6 +317,33 @@ def redeem_bonus(payload: RedeemBonusRequest, db: Session = Depends(get_db)):
     return {"redemption_id": redemption.id, "amount": redemption.amount, "remaining_banked": ledger.banked_amount if ledger else 0}
 
 
+@router.post("/bonus/backfill-legacy")
+def backfill_legacy_bonus_ledger(db: Session = Depends(get_db)):
+    """One-time (idempotent) backfill for contributions that earned a bonus
+    before the ledger existed (2026-07-27) — without this, an already-earned
+    but not-yet-paid legacy bonus (bonus_paid=False) has nowhere to surface
+    in either the old or new UI. Only touches rows where
+    bonus_credited_to_ledger is still False; anything already bonus_paid=True
+    under the old weekly flow is skipped so it can't be double-counted into
+    the new ledger. Safe to call more than once — a no-op on subsequent runs."""
+    candidates = (
+        db.query(RescueContribution)
+        .filter(
+            RescueContribution.bonus_credited_to_ledger == False,  # noqa: E712
+            RescueContribution.bonus_paid == False,  # noqa: E712
+            or_(RescueContribution.bonus_eligible == True, RescueContribution.bonus_reinstated == True),  # noqa: E712
+        )
+        .all()
+    )
+    credited = 0
+    for c in candidates:
+        before = c.bonus_credited_to_ledger
+        _credit_bonus_ledger(c, db)
+        if not before and c.bonus_credited_to_ledger:
+            credited += 1
+    return {"contributions_examined": len(candidates), "contributions_credited": credited}
+
+
 @router.get("/bonus/ledger-summary")
 def bonus_ledger_summary(db: Session = Depends(get_db)):
     """Every driver's current banked balance — read-only, for the mentoring

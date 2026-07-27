@@ -217,8 +217,12 @@ def _bonus_ledger_block(driver: DriverRosterEntry, db: Session) -> Optional[list
         return None
     return [
         {
+            "type": "header",
+            "text": {"type": "plain_text", "text": f"🏦 ${ledger.banked_amount} Banked Bonus!", "emoji": True},
+        },
+        {
             "type": "section",
-            "text": {"type": "mrkdwn", "text": f"🏦 *Banked Bonus:* ${ledger.banked_amount} ready to redeem"},
+            "text": {"type": "mrkdwn", "text": "Ready to redeem in $10 increments — tap below any time."},
         },
         {
             "type": "actions",
@@ -348,6 +352,27 @@ def build_home_view_blocks(driver: Optional[DriverRosterEntry], db: Session) -> 
         {"type": "header", "text": {"type": "plain_text", "text": f"👋 {driver.payroll_name}", "emoji": True}},
     ]
 
+    # Bonus gets top billing — moved above standing/quality per explicit
+    # 2026-07-27 request to emphasize it, rather than being buried further
+    # down the tab. Banked ledger balance (if any) uses a bigger "header"
+    # block so it visually pops; this week's raw eligible-package text
+    # stays a plain section underneath it.
+    ledger_block = _bonus_ledger_block(driver, db)
+    if ledger_block:
+        blocks.extend(ledger_block)
+        blocks.append({"type": "divider"})
+
+    bonus = _driver_rescue_bonus_this_week(driver, db)
+    if bonus:
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"💰 *Rescue Bonus This Week:* ${bonus['bonus']} ({bonus['packages']} eligible packages)",
+            },
+        })
+        blocks.append({"type": "divider"})
+
     quality_row = _resolve_quality_driver(driver, db)
     match = None
     driver_count = 0
@@ -384,20 +409,6 @@ def build_home_view_blocks(driver: Optional[DriverRosterEntry], db: Session) -> 
             "type": "section",
             "text": {"type": "mrkdwn", "text": f"⏱️ *Est. Return In:* {countdown}"},
         })
-
-    bonus = _driver_rescue_bonus_this_week(driver, db)
-    if bonus:
-        blocks.append({
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"💰 *Rescue Bonus This Week:* ${bonus['bonus']} ({bonus['packages']} eligible packages)",
-            },
-        })
-
-    ledger_block = _bonus_ledger_block(driver, db)
-    if ledger_block:
-        blocks.extend(ledger_block)
 
     blocks.append({"type": "divider"})
 

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Header, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -548,6 +548,46 @@ async def delete_user_endpoint(request: CreateUserRequest, db: Session = Depends
     db.commit()
 
     return {"message": f"User '{username_to_delete}' deleted successfully"}
+
+
+class SetMyPasswordRequest(BaseModel):
+    new_password: str
+
+
+@router.post("/set-my-password")
+async def set_my_password_endpoint(
+    request: SetMyPasswordRequest,
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    """Self-service password set, gated by a valid session token instead of
+    the old password or admin credentials — added 2026-07-27 specifically
+    for setting a break-glass password once Sign in with Slack works
+    (there's no other way to prove identity for an account whose real
+    password nobody can currently confirm). A valid Bearer token can only
+    exist if the caller already successfully authenticated (password OR
+    Slack), so that possession is the proof of identity here."""
+    if not authorization:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing Authorization header")
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise ValueError("not bearer")
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired session")
+
+    username = payload.get("username")
+    user = get_user_by_username(db, username) if username else None
+    if not user or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found or inactive")
+
+    if len(request.new_password) < 8:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 8 characters")
+
+    user.password_hash = hash_password(request.new_password)
+    db.commit()
+    return {"message": "Password set successfully", "username": user.username}
 
 
 @router.post("/change-password")

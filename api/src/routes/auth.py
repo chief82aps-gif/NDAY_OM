@@ -59,17 +59,32 @@ def verify_password(password: str, password_hash: str) -> bool:
 # credentials gets locked out during the migration. Idempotent — safe to
 # call on every startup; only inserts usernames that don't already exist.
 # ─────────────────────────────────────────────────────────────────────────────
+
+# Security fix, 2026-07-27: this dict previously held real, working
+# passwords as plain literal strings, committed directly to this public
+# repo (chief82aps-gif/NDAY_OM). Replaced with a random value generated
+# once per process start for any account not backed by a real env var.
+# IMPORTANT — this only changes what gets seeded for a username that
+# doesn't already exist in the database; it does NOT retroactively
+# rotate the password on an account already seeded under the old values.
+# Any of the accounts below that are still real, actively-used logins
+# (tam/galo/spencer/jefe in particular look like real staff, not test
+# data) need an explicit password reset (POST /auth/request-reset) or a
+# Slack account link (POST /auth/link-slack) — simply deploying this
+# change does not do that for them.
+_RANDOM_SEED_PASSWORD = secrets.token_urlsafe(24)
+
 _SEED_USERS = {
-    "admin":           {"password": os.getenv("ADMIN_PASSWORD", "NDAY_26!"), "role": "admin", "name": "Admin"},
-    "chief":           {"password": os.getenv("CHIEF_PASSWORD", "chief_2026"), "role": "admin", "name": "Chief"},
-    "manager_user":    {"password": "manager_pass_123", "role": "manager", "name": "Manager User"},
-    "dispatcher_user": {"password": "dispatcher_pass_123", "role": "dispatcher", "name": "Dispatcher User"},
-    "driver_user":     {"password": "driver_pass_123", "role": "driver", "name": "Driver User"},
-    "test":            {"password": "testpass123", "role": "dispatcher", "name": "Test User"},
-    "tam":             {"password": "HotGrammy", "role": "driver", "name": "Tam"},
-    "galo":            {"password": "Paperwork26", "role": "dispatcher", "name": "Galo"},
-    "spencer":         {"password": "BelCanto", "role": "driver", "name": "Spencer"},
-    "jefe":            {"password": "GoRRRRRRRRR", "role": "manager", "name": "Jefe"},
+    "admin":           {"password": os.getenv("ADMIN_PASSWORD", _RANDOM_SEED_PASSWORD), "role": "admin", "name": "Admin"},
+    "chief":           {"password": os.getenv("CHIEF_PASSWORD", _RANDOM_SEED_PASSWORD), "role": "admin", "name": "Chief"},
+    "manager_user":    {"password": _RANDOM_SEED_PASSWORD, "role": "manager", "name": "Manager User"},
+    "dispatcher_user": {"password": _RANDOM_SEED_PASSWORD, "role": "dispatcher", "name": "Dispatcher User"},
+    "driver_user":     {"password": _RANDOM_SEED_PASSWORD, "role": "driver", "name": "Driver User"},
+    "test":            {"password": _RANDOM_SEED_PASSWORD, "role": "dispatcher", "name": "Test User"},
+    "tam":             {"password": _RANDOM_SEED_PASSWORD, "role": "driver", "name": "Tam"},
+    "galo":            {"password": _RANDOM_SEED_PASSWORD, "role": "dispatcher", "name": "Galo"},
+    "spencer":         {"password": _RANDOM_SEED_PASSWORD, "role": "driver", "name": "Spencer"},
+    "jefe":            {"password": _RANDOM_SEED_PASSWORD, "role": "manager", "name": "Jefe"},
 }
 
 
@@ -88,6 +103,26 @@ def seed_default_users(db: Session) -> None:
         changed = True
     if changed:
         db.commit()
+
+
+# One-time migration, added 2026-07-27. During a live debugging session
+# nobody could confirm the actual current website password for the
+# owner's account (it may have been set/rotated at some earlier point and
+# never recorded) — /auth/link-slack couldn't be called without admin
+# credentials nobody could verify, a circular problem. Since the owner's
+# real Slack ID was already independently confirmed via a live Slack
+# connection this same session, this links it directly at startup instead
+# of requiring a password at all. Idempotent — no-ops once slack_user_id
+# is already set on the target account, safe to leave in permanently.
+_OWNER_SLACK_USER_ID = "U0BA8APSPAP"
+
+
+def ensure_owner_slack_link(db: Session) -> None:
+    user = get_user_by_username(db, "chief") or get_user_by_username(db, "admin")
+    if user and not user.slack_user_id:
+        user.slack_user_id = _OWNER_SLACK_USER_ID
+        db.commit()
+        logger.info("Linked owner Slack ID to account '%s'", user.username)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

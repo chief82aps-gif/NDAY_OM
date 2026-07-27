@@ -548,10 +548,11 @@ async def startup():
     ensure_daily_route_assignment_pending_ack_column()
     ensure_safety_event_review_columns()
     ensure_user_auth_columns()
-    from api.src.routes.auth import seed_default_users
+    from api.src.routes.auth import seed_default_users, ensure_owner_slack_link
     _seed_db = SessionLocal()
     try:
         seed_default_users(_seed_db)
+        ensure_owner_slack_link(_seed_db)
     finally:
         _seed_db.close()
     asyncio.create_task(_daily_notify_loop())

@@ -33,7 +33,7 @@ from api.src.routes.document_routing import is_dispatch_staff
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/safety-events", tags=["safety-events"])
 
-NDAY_MGT_CHANNEL = os.getenv("NDAY_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
+SAFETY_EVENTS_CHANNEL = os.getenv("SAFETY_EVENTS_CHANNEL_ID", "C0ADM0M5UNQ")   # dedicated safety events channel
 
 # Safety Violation Review/Dispute workflow — added 2026-07-23
 # (BUILD_QUEUE.md #6). Hard off-switch, same pattern as DRIVER_DM_ACTIVE/
@@ -225,7 +225,7 @@ def post_pending_safety_violations(db: Session) -> dict:
         ]
         try:
             resp = client.chat_postMessage(
-                channel=NDAY_MGT_CHANNEL,
+                channel=SAFETY_EVENTS_CHANNEL,
                 text=f"Safety Violation — {event.driver_name} — {event.metric_type}",
                 blocks=blocks,
             )
@@ -326,10 +326,10 @@ def refresh_safety_ack_summary(db: Session) -> dict:
     existing_ts = state.get("ts")
     try:
         if existing_ts:
-            client.chat_update(channel=NDAY_MGT_CHANNEL, ts=existing_ts, text="Safety Violation Acknowledgments", blocks=blocks)
+            client.chat_update(channel=SAFETY_EVENTS_CHANNEL, ts=existing_ts, text="Safety Violation Acknowledgments", blocks=blocks)
             ts = existing_ts
         else:
-            resp = client.chat_postMessage(channel=NDAY_MGT_CHANNEL, text="Safety Violation Acknowledgments", blocks=blocks)
+            resp = client.chat_postMessage(channel=SAFETY_EVENTS_CHANNEL, text="Safety Violation Acknowledgments", blocks=blocks)
             ts = resp.get("ts")
         set_reminder_state(db, state_key, {"ts": ts})
         return {"status": "ok", "acknowledged": len(acknowledged), "pending": len(pending)}

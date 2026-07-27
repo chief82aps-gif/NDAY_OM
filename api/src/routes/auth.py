@@ -493,6 +493,29 @@ async def link_slack_endpoint(request: LinkSlackRequest, db: Session = Depends(g
     return {"status": "linked", "username": user.username, "slack_user_id": user.slack_user_id}
 
 
+@router.get("/debug-owner-link")
+async def debug_owner_link(db: Session = Depends(get_db)) -> dict:
+    """Read-only, no credentials needed — added 2026-07-27 to diagnose why
+    Sign in with Slack still wasn't working after ensure_owner_slack_link()
+    should have run. Exposes only non-sensitive fields (no password hash)."""
+    def _summarize(u: Optional[User]) -> Optional[dict]:
+        if not u:
+            return None
+        return {
+            "username": u.username, "role": u.role, "is_active": u.is_active,
+            "slack_user_id": u.slack_user_id,
+        }
+    chief = get_user_by_username(db, "chief")
+    admin = get_user_by_username(db, "admin")
+    matched_by_slack_id = db.query(User).filter(User.slack_user_id == _OWNER_SLACK_USER_ID).all()
+    return {
+        "chief": _summarize(chief),
+        "admin": _summarize(admin),
+        "users_with_owner_slack_id": [_summarize(u) for u in matched_by_slack_id],
+        "expected_slack_id": _OWNER_SLACK_USER_ID,
+    }
+
+
 @router.post("/list-users")
 async def list_users(request: LoginRequest, db: Session = Depends(get_db)):
     """List all users. Requires valid admin credentials."""

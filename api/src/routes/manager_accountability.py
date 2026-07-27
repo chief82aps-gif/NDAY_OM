@@ -373,7 +373,7 @@ def discipline_tracker(db: Session = Depends(get_db)):
     ops-manager-signed and crash's per-stage role; None for crash rows
     since those aren't signable from here).
     """
-    from api.src.database import DvicCounselingRecord, DvicViolation, AttendanceEvent, InjuryReport, CrashReport, CrashReportApproval
+    from api.src.database import DvicCounselingRecord, DvicViolation, AttendanceEvent, InjuryReport, CrashReport, CrashReportApproval, SafetyEvent
 
     # unsigned_callout/dvic_repeat_violation are now fully covered by the
     # direct attendance/dvic queries below (with real occurrence counts
@@ -418,6 +418,17 @@ def discipline_tracker(db: Session = Depends(get_db)):
         db.query(InjuryReport)
         .filter((InjuryReport.ops_manager_signed_at == None) | (InjuryReport.hr_signed_at == None))
         .order_by(InjuryReport.created_at.desc())
+        .all()
+    )
+    # Confirmed safety violations (Netradyne-sourced or manually entered)
+    # awaiting driver acknowledgment of their write-up DM — added 2026-07-27
+    # per explicit user direction that a confirmed violation "follows the
+    # escalation of discipline rules" like every other write-up catalyst
+    # here, not just a Slack-only side channel.
+    safety_violation_items = (
+        db.query(SafetyEvent)
+        .filter(SafetyEvent.review_status == "confirmed", SafetyEvent.ack_status != "acknowledged")
+        .order_by(SafetyEvent.reviewed_at.desc())
         .all()
     )
     crash_items = (
@@ -531,6 +542,20 @@ def discipline_tracker(db: Session = Depends(get_db)):
             "occurrence_count": None,
         }
         for c in crash_items
+    ] + [
+        {
+            "source": "safety_violation",
+            "id": v.id,
+            "shift_date": v.reviewed_at.date().isoformat() if v.reviewed_at else None,
+            "driver_name": v.driver_name,
+            "manager_name": None,
+            "writeup_type": "safety_violation",
+            "source_detail": f"{v.driver_name} — {v.metric_type}" + (f" ({v.metric_subtype})" if v.metric_subtype else ""),
+            "dm_sent_at": v.reviewed_at.isoformat() if v.reviewed_at else None,
+            "needs_sign_role": "ops_manager",
+            "occurrence_count": 1,
+        }
+        for v in safety_violation_items
     ]
     return {"total_pending": len(items), "items": items}
 

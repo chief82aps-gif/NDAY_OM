@@ -3,7 +3,7 @@ import ProtectedRoute from '../components/ProtectedRoute';
 import { useAuth } from '../contexts/AuthContext';
 
 interface TrackerItem {
-  source: 'manager_accountability' | 'dvic' | 'dvic_violation' | 'attendance' | 'injury' | 'crash';
+  source: 'manager_accountability' | 'dvic' | 'dvic_violation' | 'attendance' | 'injury' | 'crash' | 'safety_violation';
   id: number;
   shift_date: string | null;
   driver_name: string | null;
@@ -24,6 +24,7 @@ const TYPE_LABELS: Record<string, string> = {
   dvic_stage_4: 'DVIC — Formal Write-Up',
   injury_report: 'Injury Report',
   crash_report: 'Crash Report',
+  safety_violation: 'Safety Violation',
 };
 
 const TYPE_COLORS: Record<string, string> = {
@@ -35,6 +36,7 @@ const TYPE_COLORS: Record<string, string> = {
   dvic_repeat_violation: '#ef4444',
   injury_report: '#dc2626',
   crash_report: '#7c2d12',
+  safety_violation: '#b91c1c',
 };
 
 const ROLE_LABELS: Record<string, string> = {
@@ -196,6 +198,7 @@ export default function DisciplineTrackerPage() {
               ['dvic', `DVIC (${items.filter(i => i.source === 'dvic' || i.source === 'dvic_violation').length})`],
               ['injury', `Injury (${items.filter(i => i.source === 'injury').length})`],
               ['crash', `Crash (${items.filter(i => i.source === 'crash').length})`],
+              ['safety_violation', `Safety (${items.filter(i => i.source === 'safety_violation').length})`],
               ['manager_accountability', `Other (${items.filter(i => i.source === 'manager_accountability').length})`],
             ] as const).map(([key, label]) => (
               <button

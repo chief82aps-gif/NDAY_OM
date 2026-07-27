@@ -423,11 +423,12 @@ def _handle_safety_event_false_flag(payload: dict, db: Session) -> None:
             client.chat_update(
                 channel=event.review_slack_channel,
                 ts=event.review_slack_ts,
-                text="Safety violation false-flagged",
+                text="Dispute recorded",
                 blocks=[{
                     "type": "section",
                     "text": {"type": "mrkdwn", "text": (
-                        f"❌ *False-flagged* by <@{user_id}> — {event.driver_name} — {event.metric_type}"
+                        f"❌ *Dispute recorded* — {event.driver_name} — {event.metric_type} marked as a "
+                        f"false flag by <@{user_id}>. No write-up sent; no further action needed."
                     )},
                 }],
             )

@@ -120,6 +120,28 @@ async def _sentiment_survey_report_loop():
         await asyncio.sleep(60)
 
 
+async def _safety_violation_review_loop():
+    """Every 60 s — delegates to safety_events.post_pending_safety_violations(),
+    which posts a Confirm/False-Flag review message for every not-yet-posted
+    SafetyEvent (whether from CSV ingest or manual entry) to the dedicated
+    safety events channel. Previously only ran on manual trigger — added
+    2026-07-27 per explicit user direction that validation requests must go
+    out automatically, not wait for someone to remember to hit the endpoint.
+    Gated by SAFETY_VIOLATION_REVIEW_ACTIVE (default false)."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(safety_events.post_pending_safety_violations, db)
+            except Exception as exc:
+                logger.warning("Safety violation review loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("Safety violation review loop outer error: %s", exc)
+        await asyncio.sleep(60)
+
+
 async def _eod_category_digest_loop():
     """Every 60 s — delegates to eod_survey.send_daily_eod_category_digests(),
     which no-ops outside the 22:15+ Pacific window and respects an
@@ -556,6 +578,7 @@ async def startup():
     asyncio.create_task(_sentiment_survey_report_loop())
     asyncio.create_task(_weekly_slack_relink_loop())
     asyncio.create_task(_eod_category_digest_loop())
+    asyncio.create_task(_safety_violation_review_loop())
 
 cors_origins_env = os.getenv("CORS_ORIGINS", "").strip()
 if cors_origins_env:

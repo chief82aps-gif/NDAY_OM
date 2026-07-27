@@ -379,6 +379,51 @@ def _publish_home(slack_user_id: str, db: Session) -> None:
         logger.warning("views_publish failed for %s: %s", slack_user_id, exc)
 
 
+@router.get("/debug-publish-home")
+async def debug_publish_home(slack_user_id: str, db: Session = Depends(get_db)) -> dict:
+    """Read-only-ish diagnostic (does actually call views_publish, same as
+    the real thing) — added 2026-07-27 because _publish_home() swallows
+    every exception into a log line we can't see without Render log
+    access, and coordinating "have them open it right now, then paste
+    logs" was too slow/unreliable. Runs the exact same branch logic and
+    returns the real exception + traceback directly in the response."""
+    import traceback
+
+    result = {"slack_user_id": slack_user_id}
+    client = _client()
+    if not client:
+        result["error"] = "No SLACK_BOT_TOKEN configured"
+        return result
+
+    try:
+        if is_dispatch_staff(slack_user_id, db):
+            from api.src.routes.slack_dispatch_home import build_dispatch_home_view_blocks
+            result["branch"] = "dispatch_staff"
+            blocks = build_dispatch_home_view_blocks(db)
+        elif is_hr_staff(slack_user_id, db):
+            from api.src.routes.slack_hr_home import build_hr_home_view_blocks
+            result["branch"] = "hr_staff"
+            blocks = build_hr_home_view_blocks(db)
+        elif not _DM_ACTIVE:
+            result["branch"] = "dm_inactive"
+            blocks = _INACTIVE_BLOCKS
+        else:
+            result["branch"] = "driver"
+            driver = _resolve_driver(slack_user_id, db)
+            result["resolved_driver"] = driver.payroll_name if driver else None
+            blocks = build_home_view_blocks(driver, db)
+
+        result["block_count"] = len(blocks)
+        resp = client.views_publish(user_id=slack_user_id, view={"type": "home", "blocks": blocks})
+        result["status"] = "published"
+        result["slack_ok"] = resp.get("ok")
+    except Exception as exc:
+        result["status"] = "error"
+        result["error"] = str(exc)
+        result["traceback"] = traceback.format_exc()
+    return result
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Events API — Home tab open
 # ─────────────────────────────────────────────────────────────────────────────

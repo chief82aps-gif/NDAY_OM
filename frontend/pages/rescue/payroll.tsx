@@ -32,6 +32,15 @@ interface PayrollReport {
   all_paid: boolean;
 }
 
+interface PendingRedemption {
+  redemption_id: number;
+  roster_id: number;
+  driver: string;
+  amount: number;
+  reason: 'driver_redeemed' | 'cap_auto';
+  requested_at: string;
+}
+
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -40,9 +49,19 @@ export default function PayrollReport() {
   const router = useRouter();
   const [weekOf, setWeekOf] = useState(todayISO());
   const [report, setReport] = useState<PayrollReport | null>(null);
+  const [pending, setPending] = useState<PendingRedemption[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [paying, setPaying] = useState<string | null>(null);
+  const [paying, setPaying] = useState<number | null>(null);
+
+  const fetchPending = async () => {
+    try {
+      const res = await fetch(`${resolveApi()}/rescue/bonus/pending-redemptions`);
+      if (res.ok) setPending(await res.json());
+    } catch {
+      setError('Network error.');
+    }
+  };
 
   const fetchReport = async () => {
     setLoading(true);
@@ -58,17 +77,18 @@ export default function PayrollReport() {
     }
   };
 
+  useEffect(() => { fetchPending(); }, []);
   useEffect(() => { fetchReport(); }, [weekOf]);
 
-  const markPaid = async (driver: string) => {
-    setPaying(driver);
+  const markRedemptionPaid = async (redemptionId: number) => {
+    setPaying(redemptionId);
     try {
-      const res = await fetch(`${resolveApi()}/rescue/payroll/confirm`, {
+      const res = await fetch(`${resolveApi()}/rescue/bonus/redeem/${redemptionId}/mark-paid`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ driver, week_of: weekOf, confirmed_by: 'dispatch' }),
+        body: JSON.stringify({ paid_by: 'dispatch' }),
       });
-      if (res.ok) await fetchReport();
+      if (res.ok) await fetchPending();
       else setError('Failed to mark as paid.');
     } catch {
       setError('Network error.');
@@ -103,6 +123,52 @@ export default function PayrollReport() {
         <PageHeader title="Rescue Bonus — Payroll Report" showBack />
 
         <main className="max-w-3xl mx-auto px-4 py-8">
+          {/* Pending redemptions — the real "what's owed" view. Banked bonus
+              carries across weeks now (rescue.py's RescueBonusLedger), so a
+              redemption can be requested any day, not just at week's end. */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-8">
+            <div className="px-5 py-4 border-b border-slate-200 bg-amber-50">
+              <h2 className="font-bold text-slate-800">Pending Bonus Redemptions</h2>
+              <p className="text-xs text-slate-500 mt-1">Driver-requested $10-increment redemptions, plus auto-forced payouts when a driver's banked balance hits the $250 cap.</p>
+            </div>
+            {pending === null ? (
+              <p className="text-slate-400 p-5">Loading...</p>
+            ) : pending.length === 0 ? (
+              <div className="p-8 text-center text-slate-400">No pending redemptions.</div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr>
+                    <th className="text-left px-4 py-3 font-semibold text-slate-600">Driver</th>
+                    <th className="text-right px-4 py-3 font-semibold text-slate-600">Amount</th>
+                    <th className="text-left px-4 py-3 font-semibold text-slate-600">Reason</th>
+                    <th className="text-left px-4 py-3 font-semibold text-slate-600">Requested</th>
+                    <th className="text-right px-4 py-3 font-semibold text-slate-600">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {pending.map((r) => (
+                    <tr key={r.redemption_id} className="hover:bg-slate-50">
+                      <td className="px-4 py-3 font-medium text-slate-800">{r.driver}</td>
+                      <td className="px-4 py-3 text-right font-bold text-green-700">${r.amount}</td>
+                      <td className="px-4 py-3 text-slate-500 text-xs">{r.reason === 'cap_auto' ? 'Auto ($250 cap)' : 'Driver-requested'}</td>
+                      <td className="px-4 py-3 text-slate-500 text-xs">{r.requested_at.slice(0, 10)}</td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          onClick={() => markRedemptionPaid(r.redemption_id)}
+                          disabled={paying === r.redemption_id}
+                          className="px-3 py-1 text-xs bg-green-600 text-white rounded font-semibold hover:bg-green-700 disabled:opacity-50"
+                        >
+                          {paying === r.redemption_id ? 'Saving...' : 'Mark Paid'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
           {/* Week selector */}
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 mb-6 flex flex-wrap gap-4 items-end">
             <div>
@@ -136,13 +202,16 @@ export default function PayrollReport() {
 
           {report && !loading && (
             <>
-              {/* Week summary */}
-              <div className="bg-green-50 border border-green-200 rounded-xl p-5 mb-6">
-                <p className="text-sm text-green-700 mb-1">
-                  Pay period: <strong>{report.week_start}</strong> — <strong>{report.week_end}</strong>
+              {/* Week activity — historical/informational only now. Bonus
+                  packages bank persistently (RescueBonusLedger), so this no
+                  longer reflects what's owed; see Pending Bonus Redemptions
+                  above for that. */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 mb-6">
+                <p className="text-sm text-slate-600 mb-1">
+                  Activity for week: <strong>{report.week_start}</strong> — <strong>{report.week_end}</strong>
                 </p>
-                <p className="text-3xl font-bold text-green-800">${report.total_payout} total payout</p>
-                <p className="text-sm text-green-600 mt-1">{report.drivers.length} driver{report.drivers.length !== 1 ? 's' : ''} with bonus-eligible rescues</p>
+                <p className="text-3xl font-bold text-slate-700">${report.total_payout} earned this week</p>
+                <p className="text-sm text-slate-500 mt-1">{report.drivers.length} driver{report.drivers.length !== 1 ? 's' : ''} with bonus-eligible rescues — historical view, not a payment action</p>
               </div>
 
               {/* Driver rows */}
@@ -157,32 +226,18 @@ export default function PayrollReport() {
                       <tr>
                         <th className="text-left px-4 py-3 font-semibold text-slate-600">Driver</th>
                         <th className="text-right px-4 py-3 font-semibold text-slate-600">Eligible Packages</th>
-                        <th className="text-right px-4 py-3 font-semibold text-slate-600">Bonus</th>
+                        <th className="text-right px-4 py-3 font-semibold text-slate-600">Earned</th>
                         <th className="text-right px-4 py-3 font-semibold text-slate-600">Formula</th>
-                        <th className="text-right px-4 py-3 font-semibold text-slate-600">Status</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {report.drivers.map((d) => (
-                        <tr key={d.driver} className={`hover:bg-slate-50 ${d.bonus_paid ? 'opacity-60' : ''}`}>
+                        <tr key={d.driver} className="hover:bg-slate-50">
                           <td className="px-4 py-3 font-medium text-slate-800">{d.driver}</td>
                           <td className="px-4 py-3 text-right text-slate-600">{d.bonus_eligible_packages}</td>
-                          <td className="px-4 py-3 text-right font-bold text-green-700">${d.bonus_amount}</td>
+                          <td className="px-4 py-3 text-right font-bold text-slate-700">${d.bonus_amount}</td>
                           <td className="px-4 py-3 text-right text-slate-400 text-xs">
                             ⌊{d.bonus_eligible_packages} ÷ 40⌋ × $10
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            {d.bonus_paid ? (
-                              <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700">Paid</span>
-                            ) : (
-                              <button
-                                onClick={() => markPaid(d.driver)}
-                                disabled={paying === d.driver}
-                                className="px-3 py-1 text-xs bg-green-600 text-white rounded font-semibold hover:bg-green-700 disabled:opacity-50"
-                              >
-                                {paying === d.driver ? 'Saving...' : 'Mark Paid'}
-                              </button>
-                            )}
                           </td>
                         </tr>
                       ))}
@@ -195,11 +250,6 @@ export default function PayrollReport() {
                         </td>
                         <td className="px-4 py-3 text-right font-bold text-green-700">${report.total_payout}</td>
                         <td />
-                        <td className="px-4 py-3 text-right">
-                          {report.all_paid && (
-                            <span className="text-xs font-semibold text-green-600">All paid</span>
-                          )}
-                        </td>
                       </tr>
                     </tfoot>
                   </table>

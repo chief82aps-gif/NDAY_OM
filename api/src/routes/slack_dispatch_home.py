@@ -293,6 +293,12 @@ def build_dispatch_home_view_blocks(db: Session) -> list:
                     "text": {"type": "plain_text", "text": "📝 Write-Ups", "emoji": True},
                     "url": _slack_login_url("/discipline-tracker"),
                 },
+                {
+                    "type": "button",
+                    "action_id": "hr_home_open_mentoring_dashboard",
+                    "text": {"type": "plain_text", "text": "🏆 Mentoring Dashboard", "emoji": True},
+                    "url": _slack_login_url("/driver-quality"),
+                },
             ],
         },
         {

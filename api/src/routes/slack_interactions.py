@@ -444,6 +444,9 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
         if callback_id == "home_rto_submit":
             from api.src.routes.slack_home import _handle_home_rto_submit
             return _handle_home_rto_submit(payload, db)
+        if callback_id == "home_redeem_bonus_submit":
+            from api.src.routes.slack_home import _handle_home_redeem_bonus_submit
+            return _handle_home_redeem_bonus_submit(payload, db)
         if callback_id == "dispatch_remove_terminated_submit":
             from api.src.routes.slack_dispatch_home import _handle_dispatch_remove_terminated_submit
             return _handle_dispatch_remove_terminated_submit(payload, db)
@@ -516,6 +519,10 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
     elif action_id == "home_rto_button":
         from api.src.routes.slack_home import _handle_home_rto_button
         _handle_home_rto_button(payload, db)
+
+    elif action_id == "home_redeem_bonus_button":
+        from api.src.routes.slack_home import _handle_home_redeem_bonus_button
+        _handle_home_redeem_bonus_button(payload, db)
 
     elif action_id == "dispatch_remove_terminated_button":
         from api.src.routes.slack_dispatch_home import _handle_dispatch_remove_terminated_button

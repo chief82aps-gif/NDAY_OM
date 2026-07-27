@@ -424,10 +424,17 @@ class RescueContribution(Base):
     reinstated_at = Column(DateTime)
     reinstatement_reason = Column(Text)
 
-    # Payroll confirmation — set when admin marks bonus as paid on payroll report
+    # Payroll confirmation — legacy weekly all-or-nothing flow, superseded by
+    # RescueBonusLedger/RescueBonusRedemption below but left in place (frozen)
+    # for historical rows already marked paid under the old model.
     bonus_paid = Column(Boolean, default=False)
     bonus_paid_by = Column(String(100))
     bonus_paid_at = Column(DateTime)
+
+    # Set once this contribution's packages have been credited to the driver's
+    # RescueBonusLedger — prevents double-crediting if reinstate_bonus() runs
+    # on a contribution that was already eligible.
+    bonus_credited_to_ledger = Column(Boolean, default=False, nullable=False)
 
     # Stage 3 verification
     verified = Column(String(20), default='Pending')  # Pending | Verified
@@ -445,6 +452,41 @@ class RescueContribution(Base):
 
     def __repr__(self):
         return f"<RescueContribution(event_id={self.event_id}, driver={self.rescuing_driver_name}, pkgs={self.packages_taken}, eligible={self.bonus_eligible})>"
+
+
+class RescueBonusLedger(Base):
+    """Persistent per-driver bonus bank — replaces the old per-week floor
+    calculation so leftover packages (under 40) carry forward instead of
+    being discarded. Capped at BONUS_LEDGER_CAP (rescue.py); reaching the cap
+    auto-creates a RescueBonusRedemption and resets banked_amount to 0."""
+    __tablename__ = "rescue_bonus_ledger"
+
+    id = Column(Integer, primary_key=True)
+    roster_id = Column(Integer, ForeignKey("driver_roster.id"), unique=True, nullable=False)
+    banked_packages = Column(Integer, default=0, nullable=False)  # remainder toward next $10 unit, always 0-39
+    banked_amount = Column(Integer, default=0, nullable=False)    # whole dollars banked, not yet requested for payout
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<RescueBonusLedger(roster_id={self.roster_id}, banked_amount={self.banked_amount}, banked_packages={self.banked_packages})>"
+
+
+class RescueBonusRedemption(Base):
+    """A request (driver-initiated in $10 increments, or auto-forced at the
+    $250 cap) to cash out banked bonus. HR marks it paid from the payroll page,
+    same idiom as the old confirm_payroll flow but scoped to one redemption."""
+    __tablename__ = "rescue_bonus_redemptions"
+
+    id = Column(Integer, primary_key=True)
+    roster_id = Column(Integer, ForeignKey("driver_roster.id"), nullable=False, index=True)
+    amount = Column(Integer, nullable=False)          # always a multiple of $10
+    reason = Column(String(20), nullable=False)       # driver_redeemed | cap_auto
+    requested_at = Column(DateTime, default=datetime.utcnow)
+    paid_at = Column(DateTime, nullable=True)
+    paid_by = Column(String(100), nullable=True)
+
+    def __repr__(self):
+        return f"<RescueBonusRedemption(roster_id={self.roster_id}, amount={self.amount}, paid={self.paid_at is not None})>"
 
 
 class DriverRosterEntry(Base):
@@ -3358,6 +3400,20 @@ def ensure_crash_report_evidence_columns():
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {typedef}"))
         except Exception:
             pass  # Column already exists
+
+
+def ensure_rescue_bonus_ledger_columns():
+    """Add bonus_credited_to_ledger to rescue_contributions for the persistent
+    banked-bonus ledger (RescueBonusLedger/RescueBonusRedemption) — added
+    2026-07-27, replaces the old per-week floor-and-discard bonus calc."""
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE rescue_contributions ADD COLUMN bonus_credited_to_ledger BOOLEAN DEFAULT FALSE"))
+            else:
+                conn.execute(text("ALTER TABLE rescue_contributions ADD COLUMN IF NOT EXISTS bonus_credited_to_ledger BOOLEAN DEFAULT FALSE"))
+    except Exception:
+        pass  # Column already exists
 
 
 # ============================================================================

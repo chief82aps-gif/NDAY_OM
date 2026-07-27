@@ -11,15 +11,18 @@ from sqlalchemy import func, and_, or_
 
 from api.src.database import (
     get_db, RescueEvent, RescueContribution, DriverRosterEntry,
+    RescueBonusLedger, RescueBonusRedemption,
     Cortex, Assignment, Driver, Vehicle, User, get_latest_cortex_rows,
     get_reminder_state, set_reminder_state,
 )
+from api.src.driver_identity import resolve_roster_entry
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/rescue", tags=["rescue"])
 
 BONUS_RATE = 10          # dollars per full unit
 BONUS_UNIT = 40          # packages per unit
+BONUS_LEDGER_CAP = 250   # banked $ cap — hitting it auto-forces a payout (see _credit_bonus_ledger)
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +219,164 @@ def _bonus_amount(total_packages: int) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Bonus ledger — persistent per-driver bank, replaces the old per-week floor
+# calculation (which discarded any packages under 40 at the end of each
+# week). Added 2026-07-27 per explicit direction: leftover packages must
+# carry forward, and the bank auto-forces a payout at BONUS_LEDGER_CAP
+# rather than blocking further bonus-eligible rescues.
+# ---------------------------------------------------------------------------
+
+def _credit_bonus_ledger(contribution: RescueContribution, db: Session) -> None:
+    """Credit a newly-bonus-eligible contribution's packages to its driver's
+    ledger. Idempotent via bonus_credited_to_ledger — safe to call from both
+    log_contribution() (initial eligibility) and reinstate_bonus() (later
+    eligibility) without double-crediting the same contribution."""
+    if contribution.bonus_credited_to_ledger:
+        return
+
+    entry = resolve_roster_entry(contribution.rescuing_driver_name, db)
+    if not entry:
+        logger.warning(
+            "Bonus ledger: could not resolve roster entry for '%s' (contribution %s) — leaving uncredited",
+            contribution.rescuing_driver_name, contribution.contribution_id,
+        )
+        return
+
+    ledger = db.query(RescueBonusLedger).filter(RescueBonusLedger.roster_id == entry.id).first()
+    if not ledger:
+        ledger = RescueBonusLedger(roster_id=entry.id, banked_packages=0, banked_amount=0)
+        db.add(ledger)
+        db.flush()
+
+    ledger.banked_packages += contribution.packages_taken or 0
+    earned_units = ledger.banked_packages // BONUS_UNIT
+    if earned_units:
+        ledger.banked_amount += earned_units * BONUS_RATE
+        ledger.banked_packages -= earned_units * BONUS_UNIT
+
+    if ledger.banked_amount >= BONUS_LEDGER_CAP:
+        db.add(RescueBonusRedemption(roster_id=entry.id, amount=ledger.banked_amount, reason="cap_auto"))
+        ledger.banked_amount = 0
+
+    ledger.updated_at = datetime.utcnow()
+    contribution.bonus_credited_to_ledger = True
+    db.commit()
+
+
+class RedeemBonusRequest(BaseModel):
+    roster_id: int
+    amount: int
+
+
+@router.get("/bonus/ledger/{roster_id}")
+def get_bonus_ledger(roster_id: int, db: Session = Depends(get_db)):
+    """Driver's own banked balance — powers the Slack Home tab Redeem block."""
+    ledger = db.query(RescueBonusLedger).filter(RescueBonusLedger.roster_id == roster_id).first()
+    if not ledger:
+        return {"roster_id": roster_id, "banked_amount": 0, "banked_packages": 0, "packages_to_next_unit": BONUS_UNIT}
+    return {
+        "roster_id": roster_id,
+        "banked_amount": ledger.banked_amount,
+        "banked_packages": ledger.banked_packages,
+        "packages_to_next_unit": BONUS_UNIT - ledger.banked_packages,
+    }
+
+
+def do_redeem_bonus(roster_id: int, amount: int, db: Session) -> RescueBonusRedemption:
+    """Core redemption logic, shared by the POST /bonus/redeem endpoint and
+    the Slack Home tab modal handler (slack_home.py) — the latter has no
+    HTTP request to make this call through. Raises ValueError on invalid
+    input/insufficient balance; callers translate that into their own
+    error surface (HTTPException for the route, a Slack error message for
+    the modal)."""
+    if amount <= 0 or amount % BONUS_RATE != 0:
+        raise ValueError(f"Amount must be a positive multiple of ${BONUS_RATE}")
+
+    ledger = db.query(RescueBonusLedger).filter(RescueBonusLedger.roster_id == roster_id).first()
+    if not ledger or amount > ledger.banked_amount:
+        raise ValueError("Insufficient banked balance")
+
+    ledger.banked_amount -= amount
+    ledger.updated_at = datetime.utcnow()
+    redemption = RescueBonusRedemption(roster_id=roster_id, amount=amount, reason="driver_redeemed")
+    db.add(redemption)
+    db.commit()
+    db.refresh(redemption)
+    return redemption
+
+
+@router.post("/bonus/redeem")
+def redeem_bonus(payload: RedeemBonusRequest, db: Session = Depends(get_db)):
+    """Driver-initiated redemption in $10 increments, from their Slack Home tab."""
+    try:
+        redemption = do_redeem_bonus(payload.roster_id, payload.amount, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    ledger = db.query(RescueBonusLedger).filter(RescueBonusLedger.roster_id == payload.roster_id).first()
+    return {"redemption_id": redemption.id, "amount": redemption.amount, "remaining_banked": ledger.banked_amount if ledger else 0}
+
+
+@router.get("/bonus/ledger-summary")
+def bonus_ledger_summary(db: Session = Depends(get_db)):
+    """Every driver's current banked balance — read-only, for the mentoring
+    dashboard's 'Banked Bonus' column (managers/HR visibility; the driver's
+    own Redeem action lives on their Slack Home tab, not here)."""
+    rows = (
+        db.query(RescueBonusLedger, DriverRosterEntry)
+        .join(DriverRosterEntry, RescueBonusLedger.roster_id == DriverRosterEntry.id)
+        .filter(RescueBonusLedger.banked_amount > 0)
+        .all()
+    )
+    return [
+        {"driver": entry.payroll_name, "banked_amount": ledger.banked_amount, "banked_packages": ledger.banked_packages}
+        for ledger, entry in rows
+    ]
+
+
+@router.get("/bonus/pending-redemptions")
+def pending_redemptions(db: Session = Depends(get_db)):
+    """All unpaid redemption requests, across all time — the real 'what's
+    owed' view for HR, replacing the old weekly all-or-nothing totals."""
+    rows = (
+        db.query(RescueBonusRedemption, DriverRosterEntry)
+        .join(DriverRosterEntry, RescueBonusRedemption.roster_id == DriverRosterEntry.id)
+        .filter(RescueBonusRedemption.paid_at.is_(None))
+        .order_by(RescueBonusRedemption.requested_at.asc())
+        .all()
+    )
+    return [
+        {
+            "redemption_id": r.id,
+            "roster_id": r.roster_id,
+            "driver": entry.payroll_name,
+            "amount": r.amount,
+            "reason": r.reason,
+            "requested_at": r.requested_at.isoformat() if r.requested_at else None,
+        }
+        for r, entry in rows
+    ]
+
+
+class MarkRedemptionPaidRequest(BaseModel):
+    paid_by: str
+
+
+@router.post("/bonus/redeem/{redemption_id}/mark-paid")
+def mark_redemption_paid(redemption_id: int, payload: MarkRedemptionPaidRequest, db: Session = Depends(get_db)):
+    redemption = db.query(RescueBonusRedemption).filter(RescueBonusRedemption.id == redemption_id).first()
+    if not redemption:
+        raise HTTPException(status_code=404, detail="Redemption not found")
+    if redemption.paid_at:
+        raise HTTPException(status_code=400, detail="Already marked paid")
+
+    redemption.paid_at = datetime.utcnow()
+    redemption.paid_by = payload.paid_by
+    db.commit()
+    return {"redemption_id": redemption.id, "paid_at": redemption.paid_at.isoformat()}
+
+
+# ---------------------------------------------------------------------------
 # Stage 1 — Open Rescue
 # ---------------------------------------------------------------------------
 
@@ -392,6 +553,9 @@ def log_contribution(payload: Stage2Request, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(contribution)
 
+    if bonus_eligible:
+        _credit_bonus_ledger(contribution, db)
+
     # Slack confirmation
     status_flag = "✅" if bonus_eligible else "⚠️ (not confirmed all taken)"
     msg = (
@@ -458,6 +622,8 @@ def reinstate_bonus(contribution_id: str, payload: ReinstateRequest, db: Session
     contrib.reinstated_at = datetime.utcnow()
     contrib.reinstatement_reason = payload.reinstatement_reason
     db.commit()
+
+    _credit_bonus_ledger(contrib, db)
 
     return {"contribution_id": contribution_id, "bonus_eligible": True, "reinstated": True}
 
@@ -615,11 +781,13 @@ _HR_REPORT_KEY = "rescue_payroll_hr_report"
 
 
 def send_weekly_hr_report(db: Session, force: bool = False) -> dict:
-    """Sunday: DM HR (document_routing's 'hr' role) the just-closed week's
-    rescue bonus payout — same numbers as /rescue/payroll, computed for the
-    week that ended yesterday (Saturday), not the new week starting today.
-    force=True bypasses the day-of-week/already-sent guards for manual
-    testing/recovery; still safe to call any time."""
+    """Sunday: DM HR (document_routing's 'hr' role) every currently-pending
+    bonus redemption request — driver-initiated $10-increment redeems plus
+    any auto-forced $250-cap payouts, across all time (not week-scoped,
+    since a redemption can be requested any day). Replaces the old
+    weekly-totals framing now that bonuses bank persistently instead of
+    resetting each week (2026-07-27). force=True bypasses the day-of-week/
+    already-sent guards for manual testing/recovery; still safe to call any time."""
     if not RESCUE_PAYROLL_REPORT_ACTIVE:
         return {"status": "inactive", "note": "Set RESCUE_PAYROLL_REPORT_ACTIVE=true on Render to enable"}
 
@@ -634,28 +802,27 @@ def send_weekly_hr_report(db: Session, force: bool = False) -> dict:
         if state.get("last_sent_date") == today.isoformat():
             return {"status": "already_sent", "date": today.isoformat()}
 
-    # The week that just closed is the 7 days ending yesterday (Saturday).
-    ref = today - timedelta(days=1)
-    report = _compute_payroll_report(ref, db)
+    pending = pending_redemptions(db)
+    total_owed = sum(r["amount"] for r in pending)
 
     from api.src.routes.document_routing import get_role_slack_ids
     hr_ids = get_role_slack_ids(db, "hr")
     if not hr_ids:
         logger.info("Rescue payroll HR report: no 'hr' role Slack ID configured, skipping send.")
-        return {"status": "no_hr_recipient", **report}
+        return {"status": "no_hr_recipient", "pending_redemptions": pending, "total_owed": total_owed}
 
     lines = [
-        f"💰 *Rescue Bonus Report — Week of {report['week_start']} to {report['week_end']}*",
-        f"Total payout: *${report['total_payout']}* across {len(report['drivers'])} driver(s)",
+        "💰 *Rescue Bonus — Pending Redemptions*",
+        f"Total owed: *${total_owed}* across {len(pending)} request(s)",
         "",
     ]
-    for d in report["drivers"]:
-        paid = "✅ paid" if d["bonus_paid"] else "⏳ unpaid"
-        lines.append(f"• {d['driver']} — {d['bonus_eligible_packages']} pkgs → *${d['bonus_amount']}* ({paid})")
-    if not report["drivers"]:
-        lines.append("_No bonus-eligible rescues this week._")
+    for r in pending:
+        reason = "auto (hit $250 cap)" if r["reason"] == "cap_auto" else "driver-requested"
+        lines.append(f"• {r['driver']} — *${r['amount']}* ({reason}, requested {r['requested_at'][:10]})")
+    if not pending:
+        lines.append("_No pending redemptions._")
     lines.append("")
-    lines.append(f"Full detail / mark-paid: {os.getenv('FRONTEND_URL', 'https://nday-om.vercel.app')}/rescue/payroll?week_of={ref.isoformat()}")
+    lines.append(f"Mark paid: {os.getenv('FRONTEND_URL', 'https://nday-om.vercel.app')}/rescue/payroll")
 
     try:
         client = _slack_client()
@@ -667,7 +834,7 @@ def send_weekly_hr_report(db: Session, force: bool = False) -> dict:
         return {"status": "error", "detail": str(exc)}
 
     set_reminder_state(db, _HR_REPORT_KEY, {"last_sent_date": today.isoformat()})
-    return {"status": "sent", **report}
+    return {"status": "sent", "pending_redemptions": pending, "total_owed": total_owed}
 
 
 @router.post("/payroll/send-hr-report")

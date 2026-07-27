@@ -202,6 +202,112 @@ def _driver_rescue_bonus_this_week(driver: DriverRosterEntry, db: Session) -> Op
     return {"packages": packages, "bonus": _bonus_amount(packages), "week_start": str(sunday), "week_end": str(saturday)}
 
 
+REDEEM_BONUS_MODAL_CALLBACK_ID = "home_redeem_bonus_submit"
+
+
+def _bonus_ledger_block(driver: DriverRosterEntry, db: Session) -> Optional[list]:
+    """Driver's persistent banked bonus balance (RescueBonusLedger) with a
+    Redeem button, shown only when there's something to redeem — added
+    2026-07-27 alongside the banked-balance redesign (rescue.py). Separate
+    from _driver_rescue_bonus_this_week above, which is just this week's
+    activity, not the running balance."""
+    from api.src.database import RescueBonusLedger
+    ledger = db.query(RescueBonusLedger).filter(RescueBonusLedger.roster_id == driver.id).first()
+    if not ledger or ledger.banked_amount < 10:
+        return None
+    return [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"🏦 *Banked Bonus:* ${ledger.banked_amount} ready to redeem"},
+        },
+        {
+            "type": "actions",
+            "elements": [{
+                "type": "button",
+                "action_id": "home_redeem_bonus_button",
+                "text": {"type": "plain_text", "text": "💵 Redeem Bonus", "emoji": True},
+                "style": "primary",
+            }],
+        },
+    ]
+
+
+def _redeem_bonus_modal(banked_amount: int) -> dict:
+    options = [
+        {"text": {"type": "plain_text", "text": f"${amt}"}, "value": str(amt)}
+        for amt in range(10, banked_amount + 1, 10)
+    ]
+    return {
+        "type": "modal",
+        "callback_id": REDEEM_BONUS_MODAL_CALLBACK_ID,
+        "title": {"type": "plain_text", "text": "Redeem Bonus"},
+        "submit": {"type": "plain_text", "text": "Redeem"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": [
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"You have *${banked_amount}* banked. Redeem in $10 increments — HR will mark it paid on the weekly report."},
+            },
+            {
+                "type": "input",
+                "block_id": "amount_block",
+                "label": {"type": "plain_text", "text": "Amount to redeem"},
+                "element": {"type": "static_select", "action_id": "amount", "options": options},
+            },
+        ],
+    }
+
+
+def _handle_home_redeem_bonus_button(payload: dict, db: Session) -> None:
+    from api.src.database import RescueBonusLedger
+    user_id = payload.get("user", {}).get("id", "")
+    trigger_id = payload.get("trigger_id")
+    client = _client()
+    if not client or not trigger_id:
+        return
+    driver = _resolve_driver(user_id, db)
+    if not driver:
+        return
+    ledger = db.query(RescueBonusLedger).filter(RescueBonusLedger.roster_id == driver.id).first()
+    if not ledger or ledger.banked_amount < 10:
+        return
+    try:
+        client.views_open(trigger_id=trigger_id, view=_redeem_bonus_modal(ledger.banked_amount))
+    except Exception as exc:
+        logger.warning("views_open failed for redeem-bonus modal: %s", exc)
+
+
+def _handle_home_redeem_bonus_submit(payload: dict, db: Session) -> dict:
+    from api.src.routes.rescue import do_redeem_bonus
+    user_id = payload.get("user", {}).get("id", "")
+    driver = _resolve_driver(user_id, db)
+    if not driver:
+        return {"response_action": "clear"}
+
+    values = payload.get("view", {}).get("state", {}).get("values", {})
+    amount_str = values.get("amount_block", {}).get("amount", {}).get("selected_option", {}).get("value")
+    if not amount_str:
+        return {"response_action": "errors", "errors": {"amount_block": "Select an amount."}}
+
+    try:
+        redemption = do_redeem_bonus(driver.id, int(amount_str), db)
+    except ValueError as exc:
+        return {"response_action": "errors", "errors": {"amount_block": str(exc)}}
+
+    client = _client()
+    if client:
+        try:
+            _dm_driver(client, user_id, f"✅ Redeemed *${redemption.amount}* — HR will mark it paid on the weekly rescue bonus report.")
+        except Exception as exc:
+            logger.warning("Redeem confirmation DM failed: %s", exc)
+        try:
+            _publish_home(user_id, db)
+        except Exception as exc:
+            logger.warning("Home refresh after redeem failed: %s", exc)
+
+    return {"response_action": "clear"}
+
+
 def _driver_return_countdown(driver: DriverRosterEntry, db: Session) -> Optional[str]:
     """'Time remaining until expected return', computed fresh each time the
     Home tab is opened/re-rendered — there's no true live-ticking
@@ -288,6 +394,10 @@ def build_home_view_blocks(driver: Optional[DriverRosterEntry], db: Session) -> 
                 "text": f"💰 *Rescue Bonus This Week:* ${bonus['bonus']} ({bonus['packages']} eligible packages)",
             },
         })
+
+    ledger_block = _bonus_ledger_block(driver, db)
+    if ledger_block:
+        blocks.extend(ledger_block)
 
     blocks.append({"type": "divider"})
 

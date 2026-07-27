@@ -1,38 +1,39 @@
 """
-Driver Individual Scoring — a weighted percentage score per active driver,
-mirroring the DSP Scorecard's own category weights (Appendix A of the
-weekly scorecard PDF), with two deliberate departures per explicit
-2026-07-17 decision:
+Driver Individual Scoring — a weighted percentage score per active driver.
 
-  - Team & Fleet (Tenured Workforce 0% + Fleet Execution 5%) is dropped
-    entirely from the weighted score -- these are DSP-wide/vehicle-level
-    metrics, not something an individual driver's own behavior controls.
-    A separate 5.0 Attendance component is added instead (see below) --
-    the two aren't meant to sum to a fixed 100 with everything else;
-    compute_driver_scores() normalizes by whatever weight is actually
-    available, not a hardcoded total.
-  - Driver tenure is NOT part of the weighted score at all -- it's a
-    pass/fail eligibility gate (the Tenured Workforce report's own
-    "Tenure Status" field), same as the 30-route trailing-6-week floor.
+Category weights are Attendance 20% / Safety 40% / Quality 40% (explicit
+2026-07-27 decision, sums to a clean 100). Within Safety and Quality, the
+per-metric proportions still mirror Amazon's current DA Performance
+Scoring config (screenshot, 2026-07-22) -- _weighted_avg() normalizes by
+whatever weight is actually available inside each category, so these
+relative proportions determine the category's own 0-100 score
+independent of how much that category counts toward the overall blend.
+Amazon's per-driver CSV still gives one combined "CDF DPMO" score rather
+than Customer Delivery Feedback and Customer Escalation Defect (CED)
+separately, so CDF here continues to stand in for both combined
+(5.9 + 11.9 = 17.8):
 
-Category weights below match Amazon's current DA Performance Scoring
-config (screenshot, 2026-07-22) -- their own weighting page no longer
-carves out a separate Team & Fleet slice at all (Safety + Quality sum to
-100% on their side), so these updated numbers are simply the 12 metric
-weights straight off that page. Amazon's per-driver CSV still gives one
-combined "CDF DPMO" score rather than Customer Delivery Feedback and
-Customer Escalation Defect (CED) separately, so CDF here continues to
-stand in for both combined (5.9 + 11.9 = 17.8):
-
-  Safety (50.0 total):
+  Safety metric proportions:
     Speeding 12.5 | Seatbelt 12.5 | Sign/Signal 12.5 | Distractions 7.5 | Following Distance 5.0
-  Quality (50.0 total):
+  Quality metric proportions:
     DC DPMO 11.9 | DSB 11.9 | POD 2.9 | CDF DPMO (+CED) 17.8 | PSB 5.5
-  Attendance (5.0, same as before -- Amazon's weighting page has no
-  equivalent category, this stays our own addition):
+  Attendance (20% of overall):
     100 - (trailing-60-day attendance points x 10), floored at 0 -- reuses
     attendance.py's existing HRM-023.1 points ladder (10 points is that
-    system's own termination threshold), no new data collection.
+    system's own termination threshold, so e.g. 8 points nets a 20%
+    attendance score), no new data collection.
+
+Team & Fleet (Tenured Workforce + Fleet Execution) is dropped entirely
+from the weighted score -- these are DSP-wide/vehicle-level metrics, not
+something an individual driver's own behavior controls. Driver tenure is
+NOT part of the weighted score at all -- it's a pass/fail eligibility
+gate (the Tenured Workforce report's own "Tenure Status" field), same as
+the 30-route trailing-6-week floor.
+
+NOTE: the tier cutoffs below (TIER_THRESHOLDS) were calibrated against
+the prior 50/50/5 blend and have not yet been re-checked against the new
+20/40/40 weighting -- revisit once real score data is available under
+the new blend.
 
   Note: Amazon's own scoring page also lists a Safe Driving Metric
   (FICO) row, currently weighted 0% -- intentionally excluded here since
@@ -91,9 +92,9 @@ QUALITY_WEIGHTS = {
     "psb_score": 5.5,
 }
 CATEGORY_WEIGHTS = {
-    "safety": sum(SAFETY_WEIGHTS.values()),      # 50.0
-    "quality": sum(QUALITY_WEIGHTS.values()),    # 50.0
-    "attendance": 5.0,
+    "safety": 40.0,
+    "quality": 40.0,
+    "attendance": 20.0,
 }
 
 ROUTE_ELIGIBILITY_THRESHOLD = 30

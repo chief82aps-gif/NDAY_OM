@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import date
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://nday-om.vercel.app")
 BACKEND_URL = os.getenv("BACKEND_URL", "https://nday-om.onrender.com")
+PACIFIC = ZoneInfo("America/Los_Angeles")
 
 
 def _slack_login_url(redirect_path: str) -> str:
@@ -42,7 +44,7 @@ HR_INVITE_ROLE_OPTIONS = ["admin", "manager", "dispatcher", "driver"]
 
 def build_hr_home_view_blocks(db: Session) -> list:
     """Pure builder — no Slack API calls, unit-testable against fixture data."""
-    today = date.today()
+    today = datetime.now(PACIFIC).date()
 
     blocks = [
         {"type": "header", "text": {"type": "plain_text", "text": "🗂️ HR Dashboard", "emoji": True}},

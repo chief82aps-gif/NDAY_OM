@@ -411,6 +411,51 @@ def run_weekly_slack_relink(db: Session, force: bool = False) -> dict:
     return {"status": "done", "matched": matched, "still_unlinked": still_unlinked}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Test phantom employees — added 2026-07-26 after a real driver (Adrian
+# Shelton) ended up with a genuine, alarming-looking EOD survey response
+# ("hit a dog") from our own manual click-through testing, which reached
+# HR's real digest and caused a scare. These five fictional roster rows
+# exist so click-through/submit testing never again writes fake data onto
+# a real employee's record. Each gets a clearly-fake position_id (not
+# null) so testing also exercises the "has a transporter_id" code path,
+# distinct from the null-position_id path most real schedule_upload
+# drivers hit. source="test_phantom" makes them easy to filter out of any
+# real reporting later if that's ever needed.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_TEST_PHANTOMS = [
+    ("Ron Swanson", "PHANTOM-0001"),
+    ("Tammy One", "PHANTOM-0002"),
+    ("Tammy Two", "PHANTOM-0003"),
+    ("Klem Kadittlehopper", "PHANTOM-0004"),
+    ("Gipper", "PHANTOM-0005"),
+]
+
+
+@router.post("/create-test-phantoms")
+def create_test_phantoms(db: Session = Depends(get_db)):
+    """Idempotent — safe to call repeatedly. Creates any of the five
+    phantom test employees that don't already exist by payroll_name."""
+    created = []
+    already_existed = []
+    for name, position_id in _TEST_PHANTOMS:
+        existing = db.query(DriverRosterEntry).filter_by(payroll_name=name).first()
+        if existing:
+            already_existed.append(name)
+            continue
+        db.add(DriverRosterEntry(
+            payroll_name=name,
+            position_id=position_id,
+            is_active=True,
+            source="test_phantom",
+            ssn_last4="9999",
+        ))
+        created.append(name)
+    db.commit()
+    return {"created": created, "already_existed": already_existed}
+
+
 @router.post("/trigger-weekly-slack-relink")
 def trigger_weekly_slack_relink(force: bool = True, db: Session = Depends(get_db)):
     """Manual trigger for testing/recovery."""

@@ -569,6 +569,19 @@ def trigger_category_digest(force: bool = True, db: Session = Depends(get_db)):
     return send_daily_eod_category_digests(db, force=force)
 
 
+@router.delete("/responses/{response_id}")
+def delete_response(response_id: int, db: Session = Depends(get_db)):
+    """Admin cleanup — e.g. removing a real click-through test submission
+    that accidentally landed on a real driver's record before phantom test
+    employees existed (2026-07-26)."""
+    row = db.query(EodSurveyResponse).filter_by(id=response_id).first()
+    if not row:
+        raise HTTPException(404, f"Response {response_id} not found")
+    db.delete(row)
+    db.commit()
+    return {"status": "deleted", "id": response_id}
+
+
 @router.get("/responses")
 def list_responses(survey_date: Optional[str] = None, db: Session = Depends(get_db)):
     """Admin: list all responses for a date (defaults to today)."""

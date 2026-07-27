@@ -135,7 +135,13 @@ def _slack_client():
     if not token:
         return None
     from slack_sdk import WebClient
-    return WebClient(token=token)
+    # Explicit short timeout, added 2026-07-27 — this client backs
+    # is_hr_staff(), which runs on EVERY Home tab open for every driver
+    # (not just HR-related checks), synchronously, inside Slack's
+    # app_home_opened webhook handler. With no timeout, a slow/hanging
+    # Slack API response would block every driver's Home tab from
+    # loading at all, not just the HR check.
+    return WebClient(token=token, timeout=5)
 
 
 def _live_hr_channel_members(db: Session) -> set:
@@ -143,7 +149,9 @@ def _live_hr_channel_members(db: Session) -> set:
     direction, whoever is actually IN that Slack channel IS the HR staff
     list, rather than a separately maintained one. Cached briefly since a
     single Home-tab open/action can call is_hr_staff() several times in
-    quick succession."""
+    quick succession. Any failure (timeout, rate limit, etc.) falls back
+    to the last-known cached set rather than blocking the caller — see
+    _slack_client()'s timeout note."""
     now = time.time()
     if now - _hr_staff_channel_cache["fetched_at"] < _HR_STAFF_CACHE_TTL_SECONDS:
         return _hr_staff_channel_cache["ids"]
@@ -151,9 +159,9 @@ def _live_hr_channel_members(db: Session) -> set:
     channel_ids = get_role_slack_ids(db, "hr")
     client = _slack_client()
     members: set = set()
-    if client and channel_ids:
-        for channel_id in channel_ids:
-            try:
+    try:
+        if client and channel_ids:
+            for channel_id in channel_ids:
                 cursor = None
                 while True:
                     resp = client.conversations_members(channel=channel_id, cursor=cursor, limit=200)
@@ -161,8 +169,9 @@ def _live_hr_channel_members(db: Session) -> set:
                     cursor = (resp.get("response_metadata") or {}).get("next_cursor")
                     if not cursor:
                         break
-            except Exception as exc:
-                logger.warning("conversations_members failed for %s: %s", channel_id, exc)
+    except Exception as exc:
+        logger.warning("conversations_members failed: %s — using last-known cached HR staff list", exc)
+        return _hr_staff_channel_cache["ids"]
 
     _hr_staff_channel_cache["ids"] = members
     _hr_staff_channel_cache["fetched_at"] = now

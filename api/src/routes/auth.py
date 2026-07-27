@@ -273,16 +273,25 @@ SLACK_STATE_TTL_MINUTES = 10
 
 
 @router.get("/slack/login")
-async def slack_login():
+async def slack_login(redirect: Optional[str] = None):
     """Full-page redirect into Slack's OpenID Connect authorize flow — the
     frontend's "Sign in with Slack" button links straight here rather than
-    fetching it, since the OAuth handshake needs a real browser navigation."""
+    fetching it, since the OAuth handshake needs a real browser navigation.
+
+    redirect (added 2026-07-27): where to land after a successful login —
+    e.g. Slack Home buttons link here with redirect=/eod-admin so clicking
+    a dashboard button from Slack authenticates AND lands directly on that
+    page, no separate login screen. Only a same-site relative path
+    (starting with "/", not "//") is accepted — anything else is dropped
+    to "/" to avoid this becoming an open-redirect vector."""
     if not SLACK_CLIENT_ID:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Slack sign-in is not configured")
 
+    safe_redirect = redirect if redirect and redirect.startswith("/") and not redirect.startswith("//") else "/"
     state = jwt.encode(
         {
             "purpose": "slack_oauth_state",
+            "redirect": safe_redirect,
             "exp": datetime.utcnow() + timedelta(minutes=SLACK_STATE_TTL_MINUTES),
         },
         JWT_SECRET,
@@ -317,9 +326,10 @@ async def slack_callback(
         return _fail("denied")
 
     try:
-        jwt.decode(state, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        state_claims = jwt.decode(state, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.PyJWTError:
         return _fail("invalid_state")
+    redirect_path = state_claims.get("redirect") or "/"
 
     if not SLACK_CLIENT_ID or not SLACK_CLIENT_SECRET:
         return _fail("not_configured")
@@ -385,7 +395,7 @@ async def slack_callback(
         "name": user.name or user.username.capitalize(),
         "role": user.role,
     })
-    return RedirectResponse(f"{APP_URL}/login?{params}")
+    return RedirectResponse(f"{APP_URL}{redirect_path}?{params}")
 
 
 @router.post("/create-user")

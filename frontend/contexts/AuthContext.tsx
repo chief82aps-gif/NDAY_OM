@@ -38,8 +38,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Check if user is already logged in on mount
+  // Check if user is already logged in on mount. Also handles a Slack OAuth
+  // callback landing on ANY page (not just /login) — added 2026-07-27 so
+  // Slack Home/Dispatch Home dashboard buttons can link straight to
+  // /auth/slack/login?redirect=/eod-admin and land already authenticated,
+  // instead of always bouncing through the plain login screen.
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const slackToken = params.get('slack_token');
+    if (slackToken) {
+      const slackUser: User = {
+        username: params.get('username') || '',
+        name: params.get('name') || '',
+        role: params.get('role') || undefined,
+      };
+      setUser(slackUser);
+      localStorage.setItem('user', JSON.stringify(slackUser));
+      localStorage.setItem('access_token', slackToken);
+
+      ['slack_token', 'username', 'name', 'role'].forEach((k) => params.delete(k));
+      const cleanQuery = params.toString();
+      window.history.replaceState(null, '', window.location.pathname + (cleanQuery ? `?${cleanQuery}` : ''));
+
+      setIsLoading(false);
+      return;
+    }
+
     const storedUser = localStorage.getItem('user');
     if (storedUser) {
       try {

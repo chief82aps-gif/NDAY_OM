@@ -29,6 +29,7 @@ from api.src.database import DriverRosterEntry, User, SlackIngestLog, OpsIngestJ
 from api.src.routes.document_routing import is_dispatch_staff
 from api.src.routes.slack_home import _client, _dm_driver
 from api.src.routes.slack_interactions import FRONTEND_URL
+from api.src.routes.slack_hr_home import _slack_login_url
 from api.src.routes import auth as auth_routes
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
@@ -278,19 +279,19 @@ def build_dispatch_home_view_blocks(db: Session) -> list:
                     "type": "button",
                     "action_id": "hr_home_open_eod_admin",
                     "text": {"type": "plain_text", "text": "📋 EOD Responses", "emoji": True},
-                    "url": f"{FRONTEND_URL}/eod-admin",
+                    "url": _slack_login_url("/eod-admin"),
                 },
                 {
                     "type": "button",
                     "action_id": "hr_home_open_sentiment_admin",
                     "text": {"type": "plain_text", "text": "💬 Sentiment Survey", "emoji": True},
-                    "url": f"{FRONTEND_URL}/sentiment-survey-admin",
+                    "url": _slack_login_url("/sentiment-survey-admin"),
                 },
                 {
                     "type": "button",
                     "action_id": "hr_home_open_discipline_tracker",
                     "text": {"type": "plain_text", "text": "📝 Write-Ups", "emoji": True},
-                    "url": f"{FRONTEND_URL}/discipline-tracker",
+                    "url": _slack_login_url("/discipline-tracker"),
                 },
             ],
         },

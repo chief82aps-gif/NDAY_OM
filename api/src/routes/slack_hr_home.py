@@ -24,6 +24,17 @@ from api.src.routes.document_routing import is_hr_staff, get_role_slack_ids
 logger = logging.getLogger(__name__)
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://nday-om.vercel.app")
+BACKEND_URL = os.getenv("BACKEND_URL", "https://nday-om.onrender.com")
+
+
+def _slack_login_url(redirect_path: str) -> str:
+    """Routes a dashboard button through Slack OAuth login first (added
+    2026-07-27) so clicking it from Slack authenticates via the clicker's
+    Slack identity and lands directly on the target page — no separate
+    website login screen, as long as their Slack ID is already linked to
+    a User row (same as the plain Sign in with Slack flow)."""
+    from urllib.parse import quote
+    return f"{BACKEND_URL}/auth/slack/login?redirect={quote(redirect_path)}"
 
 HR_INVITE_CALLBACK_ID = "hr_home_invite_user_submit"
 HR_INVITE_ROLE_OPTIONS = ["admin", "manager", "dispatcher", "driver"]
@@ -42,19 +53,19 @@ def build_hr_home_view_blocks(db: Session) -> list:
                     "type": "button",
                     "action_id": "hr_home_open_eod_admin",
                     "text": {"type": "plain_text", "text": "📋 EOD Responses", "emoji": True},
-                    "url": f"{FRONTEND_URL}/eod-admin",
+                    "url": _slack_login_url("/eod-admin"),
                 },
                 {
                     "type": "button",
                     "action_id": "hr_home_open_sentiment_admin",
                     "text": {"type": "plain_text", "text": "💬 Sentiment Survey", "emoji": True},
-                    "url": f"{FRONTEND_URL}/sentiment-survey-admin",
+                    "url": _slack_login_url("/sentiment-survey-admin"),
                 },
                 {
                     "type": "button",
                     "action_id": "hr_home_open_discipline_tracker",
                     "text": {"type": "plain_text", "text": "📝 Write-Ups", "emoji": True},
-                    "url": f"{FRONTEND_URL}/discipline-tracker",
+                    "url": _slack_login_url("/discipline-tracker"),
                 },
                 {
                     "type": "button",

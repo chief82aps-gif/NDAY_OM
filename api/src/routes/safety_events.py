@@ -132,19 +132,25 @@ class ManualSafetyEventRequest(BaseModel):
     driver_name: str
     metric_type: str                      # e.g. "Speeding", "Roadside Parking"
     metric_subtype: Optional[str] = None
-    event_at: Optional[str] = None        # ISO datetime — defaults to now
+    transporter_id: Optional[str] = None
+    vin: Optional[str] = None
+    event_at: Optional[str] = None        # ISO datetime, station-local (Pacific) — defaults to now
     review_details: Optional[str] = None
     reported_by: Optional[str] = None
 
 
 @router.post("/manual")
 def create_manual_safety_event(req: ManualSafetyEventRequest, db: Session = Depends(get_db)):
-    event_at = datetime.fromisoformat(req.event_at) if req.event_at else datetime.utcnow()
+    # event_at is "Station Local Time" per the model's own column comment,
+    # same as CSV-sourced rows — Pacific, not UTC (see CLAUDE.md's Pacific
+    # local-time rule).
+    event_at = datetime.fromisoformat(req.event_at) if req.event_at else datetime.now(PACIFIC).replace(tzinfo=None)
     event = SafetyEvent(
         event_id=f"MANUAL-{uuid.uuid4().hex[:12]}",
         report_date=event_at.date(),
         driver_name=req.driver_name,
-        transporter_id=None,
+        transporter_id=req.transporter_id,
+        vin=req.vin,
         event_at=event_at,
         metric_type=req.metric_type,
         metric_subtype=req.metric_subtype,

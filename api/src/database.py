@@ -488,6 +488,20 @@ class DriverRosterEntry(Base):
         return f"<DriverRosterEntry(name={self.payroll_name}, position={self.position_code}, active={self.is_active})>"
 
 
+class AppPinConfirmation(Base):
+    """Self-reported confirmation that a driver found/pinned the Slack app
+    and turned on notifications for it — added 2026-07-27. There's no
+    Slack API that exposes whether someone actually pinned/starred an app
+    (deliberately not exposed by the platform), so this is a self-attest
+    button press, not a verified fact — same honesty tradeoff as any
+    "did you do the thing" survey."""
+    __tablename__ = "app_pin_confirmations"
+
+    id = Column(Integer, primary_key=True)
+    roster_id = Column(Integer, ForeignKey("driver_roster.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    confirmed_at = Column(DateTime, default=datetime.utcnow)
+
+
 class VanInspection(Base):
     """Vehicle condition checks"""
     __tablename__ = "van_inspections"

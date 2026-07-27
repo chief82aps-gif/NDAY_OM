@@ -462,6 +462,127 @@ def trigger_weekly_slack_relink(force: bool = True, db: Session = Depends(get_db
     return run_weekly_slack_relink(db, force=force)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# "Pin the app" one-time broadcast + self-report — added 2026-07-27. Slack
+# has no API exposing whether a user has pinned/starred an app (that's
+# deliberately a personal client preference, not queryable), so this is a
+# one-time DM with instructions plus a self-attest "I did it" button, not
+# a verified fact. A driver who never taps the button just shows up as
+# unconfirmed, same honesty tradeoff as any survey.
+# ─────────────────────────────────────────────────────────────────────────────
+
+PIN_CONFIRM_ACTION_ID = "confirm_app_pinned"
+
+
+def _pin_instructions_blocks(roster_id: int) -> list:
+    return [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    "📌 *Quick one-time setup* — this app now has your End of Day Survey, "
+                    "schedule, and Call Out button all in one place, but it can be easy to lose "
+                    "track of in your sidebar. Two things to do, once:\n\n"
+                    "1. Press *Ctrl/Cmd+K* (or tap the search icon), type *NDAY Route Manager*, "
+                    "and open it.\n"
+                    "2. Click the *⭐ star* icon at the top of that screen to keep it easy to find, "
+                    "then open the *•••* menu and make sure *notifications are turned on* for it "
+                    "so you don't miss anything important."
+                ),
+            },
+        },
+        {
+            "type": "actions",
+            "elements": [{
+                "type": "button",
+                "action_id": PIN_CONFIRM_ACTION_ID,
+                "text": {"type": "plain_text", "text": "✅ Done — I pinned it & turned on notifications", "emoji": True},
+                "style": "primary",
+                "value": str(roster_id),
+            }],
+        },
+    ]
+
+
+@router.post("/broadcast-pin-instructions")
+def broadcast_pin_instructions(db: Session = Depends(get_db)) -> dict:
+    """One-time manual broadcast (not a recurring loop — this is a single
+    announcement, not an ongoing nag). Sends every active, Slack-linked
+    driver the pin/notification instructions with a self-report button."""
+    client = _slack_client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    drivers = db.query(DriverRosterEntry).filter(
+        DriverRosterEntry.is_active == True,  # noqa: E712
+        DriverRosterEntry.slack_member_id.isnot(None),
+    ).all()
+
+    sent, failed = [], []
+    for d in drivers:
+        try:
+            client.chat_postMessage(
+                channel=d.slack_member_id,
+                text="📌 Quick one-time setup for the NDAY Route Manager app",
+                blocks=_pin_instructions_blocks(d.id),
+            )
+            sent.append(d.payroll_name)
+        except Exception as exc:
+            logger.warning("Pin-instructions DM failed for %s: %s", d.payroll_name, exc)
+            failed.append(d.payroll_name)
+
+    return {"status": "sent", "sent_count": len(sent), "failed": failed}
+
+
+def handle_confirm_app_pinned(payload: dict, db: Session) -> None:
+    """Slack interaction handler for the self-report button — wired in
+    slack_interactions.py."""
+    from api.src.database import AppPinConfirmation
+
+    action = next((a for a in payload.get("actions", []) if a.get("action_id") == PIN_CONFIRM_ACTION_ID), None)
+    if not action:
+        return
+    try:
+        roster_id = int(action.get("value") or "")
+    except ValueError:
+        return
+
+    if not db.query(AppPinConfirmation).filter(AppPinConfirmation.roster_id == roster_id).first():
+        db.add(AppPinConfirmation(roster_id=roster_id))
+        db.commit()
+
+    user_id = payload.get("user", {}).get("id", "")
+    client = _slack_client()
+    if client and user_id:
+        try:
+            client.chat_postMessage(channel=user_id, text="✅ Thanks — you're all set!")
+        except Exception as exc:
+            logger.warning("Pin-confirmation thank-you DM failed: %s", exc)
+
+
+@router.get("/pin-confirmation-status")
+def pin_confirmation_status(db: Session = Depends(get_db)) -> dict:
+    """Admin: who has (and hasn't) self-confirmed pinning the app."""
+    from api.src.database import AppPinConfirmation
+
+    drivers = db.query(DriverRosterEntry).filter(
+        DriverRosterEntry.is_active == True,  # noqa: E712
+        DriverRosterEntry.slack_member_id.isnot(None),
+    ).all()
+    confirmed_ids = {c.roster_id for c in db.query(AppPinConfirmation).all()}
+
+    confirmed = [d.payroll_name for d in drivers if d.id in confirmed_ids]
+    not_confirmed = [d.payroll_name for d in drivers if d.id not in confirmed_ids]
+    return {
+        "total": len(drivers),
+        "confirmed_count": len(confirmed),
+        "not_confirmed_count": len(not_confirmed),
+        "confirmed": confirmed,
+        "not_confirmed": not_confirmed,
+    }
+
+
 @router.post("/import-ssn-slack")
 def import_ssn_slack(
     dry_run: bool = True,

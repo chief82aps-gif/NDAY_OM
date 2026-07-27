@@ -180,6 +180,31 @@ def list_drivers(
     }
 
 
+@router.get("/pin-confirmation-status")
+def pin_confirmation_status(db: Session = Depends(get_db)) -> dict:
+    """Admin: who has (and hasn't) self-confirmed pinning the app. Must
+    stay registered before GET /{driver_id} below — FastAPI matches routes
+    in registration order, and {driver_id} is a catch-all that would
+    otherwise swallow this path and fail trying to parse it as an int."""
+    from api.src.database import AppPinConfirmation
+
+    drivers = db.query(DriverRosterEntry).filter(
+        DriverRosterEntry.is_active == True,  # noqa: E712
+        DriverRosterEntry.slack_member_id.isnot(None),
+    ).all()
+    confirmed_ids = {c.roster_id for c in db.query(AppPinConfirmation).all()}
+
+    confirmed = [d.payroll_name for d in drivers if d.id in confirmed_ids]
+    not_confirmed = [d.payroll_name for d in drivers if d.id not in confirmed_ids]
+    return {
+        "total": len(drivers),
+        "confirmed_count": len(confirmed),
+        "not_confirmed_count": len(not_confirmed),
+        "confirmed": confirmed,
+        "not_confirmed": not_confirmed,
+    }
+
+
 @router.get("/{driver_id}")
 def get_driver(driver_id: int, db: Session = Depends(get_db)):
     r = db.query(DriverRosterEntry).filter(DriverRosterEntry.id == driver_id).first()
@@ -559,28 +584,6 @@ def handle_confirm_app_pinned(payload: dict, db: Session) -> None:
             client.chat_postMessage(channel=user_id, text="✅ Thanks — you're all set!")
         except Exception as exc:
             logger.warning("Pin-confirmation thank-you DM failed: %s", exc)
-
-
-@router.get("/pin-confirmation-status")
-def pin_confirmation_status(db: Session = Depends(get_db)) -> dict:
-    """Admin: who has (and hasn't) self-confirmed pinning the app."""
-    from api.src.database import AppPinConfirmation
-
-    drivers = db.query(DriverRosterEntry).filter(
-        DriverRosterEntry.is_active == True,  # noqa: E712
-        DriverRosterEntry.slack_member_id.isnot(None),
-    ).all()
-    confirmed_ids = {c.roster_id for c in db.query(AppPinConfirmation).all()}
-
-    confirmed = [d.payroll_name for d in drivers if d.id in confirmed_ids]
-    not_confirmed = [d.payroll_name for d in drivers if d.id not in confirmed_ids]
-    return {
-        "total": len(drivers),
-        "confirmed_count": len(confirmed),
-        "not_confirmed_count": len(not_confirmed),
-        "confirmed": confirmed,
-        "not_confirmed": not_confirmed,
-    }
 
 
 @router.post("/import-ssn-slack")

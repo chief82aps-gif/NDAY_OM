@@ -120,6 +120,24 @@ async def _sentiment_survey_report_loop():
         await asyncio.sleep(60)
 
 
+async def _website_user_sync_loop():
+    """Every 60 s — delegates to auth.run_website_user_sync(), which
+    throttles itself to once an hour. Gated by WEBSITE_USER_SYNC_ACTIVE
+    (default false)."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(auth.run_website_user_sync, db)
+            except Exception as exc:
+                logger.warning("Website user sync loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("Website user sync loop outer error: %s", exc)
+        await asyncio.sleep(60)
+
+
 async def _safety_violation_review_loop():
     """Every 60 s — delegates to safety_events.post_pending_safety_violations(),
     which posts a Confirm/False-Flag review message for every not-yet-posted
@@ -580,6 +598,7 @@ async def startup():
     asyncio.create_task(_weekly_slack_relink_loop())
     asyncio.create_task(_eod_category_digest_loop())
     asyncio.create_task(_safety_violation_review_loop())
+    asyncio.create_task(_website_user_sync_loop())
 
 cors_origins_env = os.getenv("CORS_ORIGINS", "").strip()
 if cors_origins_env:

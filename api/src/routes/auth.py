@@ -13,7 +13,10 @@ import jwt
 import bcrypt
 import requests
 
-from api.src.database import get_db, User, UserSlackAlias, get_user_by_username, get_user_by_reset_token
+from api.src.database import (
+    get_db, User, UserSlackAlias, get_user_by_username, get_user_by_reset_token,
+    get_reminder_state, set_reminder_state,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -138,6 +141,136 @@ def ensure_owner_slack_link(db: Session) -> None:
         db.add(UserSlackAlias(user_id=user.id, slack_user_id=_OWNER_SLACK_ALIAS_USER_ID))
         db.commit()
         logger.info("Linked owner's second Slack identity as an alias on '%s'", user.username)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Website user sync from #nday-mgt / #nday-hr membership — added 2026-07-27
+# per explicit user direction ("all users will link through slack"). Anyone
+# in either channel gets a website account automatically: Tamra and Luis
+# (named "full non-admin access") get role="owner", everyone else gets
+# role="manager". Ongoing — removed from both channels deactivates the
+# account; re-added reactivates it. Only ever touches accounts with
+# role in (owner, manager) — never an unrelated driver/dispatcher/admin
+# account that happens to have a slack_user_id set for some other reason.
+# ─────────────────────────────────────────────────────────────────────────────
+
+WEBSITE_USER_SYNC_ACTIVE = os.getenv("WEBSITE_USER_SYNC_ACTIVE", "false").lower() == "true"
+_WEBSITE_USER_SYNC_KEY = "website_user_sync"
+_WEBSITE_USER_SYNC_INTERVAL_MINUTES = 60
+_SYNCED_ROLES = ("owner", "manager")
+
+# Confirmed real Slack IDs (via live Slack search this session) — Tamra and
+# Luis get role="owner" (full access, not literal admin); everyone else
+# synced from these two channels gets "manager".
+_OWNER_TIER_SLACK_IDS = {
+    "U0AFXHH44UR",  # Tamra
+    "U0B36C9R8N4",  # Luis
+}
+
+
+def _sync_slack_client():
+    token = os.getenv("SLACK_BOT_TOKEN")
+    if not token:
+        return None
+    from slack_sdk import WebClient
+    return WebClient(token=token)
+
+
+def _fetch_channel_member_ids(client, channel_id: str) -> set:
+    members: set = set()
+    cursor = None
+    while True:
+        resp = client.conversations_members(channel=channel_id, cursor=cursor, limit=200)
+        members.update(resp.get("members", []))
+        cursor = (resp.get("response_metadata") or {}).get("next_cursor")
+        if not cursor:
+            break
+    return members
+
+
+def run_website_user_sync(db: Session, force: bool = False) -> dict:
+    """Idempotent, safe to call repeatedly — throttled to once an hour
+    unless force=True."""
+    if not WEBSITE_USER_SYNC_ACTIVE:
+        return {"status": "inactive"}
+
+    if not force:
+        state = get_reminder_state(db, _WEBSITE_USER_SYNC_KEY)
+        last_run = state.get("last_run_at")
+        if last_run and (datetime.utcnow() - datetime.fromisoformat(last_run)) < timedelta(minutes=_WEBSITE_USER_SYNC_INTERVAL_MINUTES):
+            return {"status": "throttled"}
+
+    client = _sync_slack_client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    from api.src.routes.document_routing import get_role_slack_ids
+    channel_ids = set(get_role_slack_ids(db, "dispatch")) | set(get_role_slack_ids(db, "hr"))
+
+    member_ids: set = set()
+    for cid in channel_ids:
+        try:
+            member_ids |= _fetch_channel_member_ids(client, cid)
+        except Exception as exc:
+            logger.warning("website_user_sync: conversations_members failed for %s: %s", cid, exc)
+
+    created, reactivated, deactivated = [], [], []
+
+    for slack_id in member_ids:
+        user = (
+            db.query(User).filter(User.slack_user_id == slack_id).first()
+            or db.query(User).join(UserSlackAlias, UserSlackAlias.user_id == User.id)
+                 .filter(UserSlackAlias.slack_user_id == slack_id).first()
+        )
+        role = "owner" if slack_id in _OWNER_TIER_SLACK_IDS else "manager"
+        if user:
+            if not user.is_active:
+                user.is_active = True
+                reactivated.append(user.username)
+            continue
+        try:
+            info = client.users_info(user=slack_id).get("user", {})
+        except Exception as exc:
+            logger.warning("website_user_sync: users_info failed for %s: %s", slack_id, exc)
+            continue
+        if info.get("is_bot") or info.get("deleted"):
+            continue
+        real_name = info.get("real_name") or info.get("name") or slack_id
+        base_username = "".join(c for c in real_name.lower().split()[0] if c.isalnum()) or slack_id.lower()
+        username = base_username
+        suffix = 1
+        while get_user_by_username(db, username):
+            suffix += 1
+            username = f"{base_username}{suffix}"
+        db.add(User(
+            username=username,
+            password_hash=hash_password(secrets.token_urlsafe(24)),
+            role=role,
+            name=real_name,
+            slack_user_id=slack_id,
+            is_active=True,
+        ))
+        created.append(username)
+
+    # Deactivate anyone this sync previously created/manages who's no longer
+    # in either channel — scoped to owner/manager roles only.
+    for user in db.query(User).filter(User.role.in_(_SYNCED_ROLES), User.slack_user_id.isnot(None)).all():
+        if user.slack_user_id not in member_ids and user.is_active:
+            user.is_active = False
+            deactivated.append(user.username)
+
+    db.commit()
+    set_reminder_state(db, _WEBSITE_USER_SYNC_KEY, {"last_run_at": datetime.utcnow().isoformat()})
+    return {
+        "status": "ok", "created": created, "reactivated": reactivated, "deactivated": deactivated,
+        "total_channel_members": len(member_ids),
+    }
+
+
+@router.post("/trigger-website-user-sync")
+async def trigger_website_user_sync(force: bool = True, db: Session = Depends(get_db)):
+    """Manual trigger for testing/recovery."""
+    return run_website_user_sync(db, force=force)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

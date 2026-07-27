@@ -118,16 +118,8 @@ def get_role_slack_ids(db: Session, role_name: str) -> list[str]:
     return list(entry.slack_ids) if entry and entry.slack_ids else []
 
 
-def is_dispatch_staff(slack_user_id: str, db: Session) -> bool:
-    """Gates the Dispatch Home tab (slack_dispatch_home.py) and its actions.
-    Re-check this inside every dispatch-only action handler, not just at
-    Home-tab render time — don't trust that only dispatch staff can trigger
-    a given action_id."""
-    return slack_user_id in get_role_slack_ids(db, "dispatch_staff")
-
-
-_HR_STAFF_CACHE_TTL_SECONDS = 60
-_hr_staff_channel_cache: dict = {"ids": set(), "fetched_at": 0.0}
+_LIVE_CHANNEL_CACHE_TTL_SECONDS = 60
+_live_channel_member_cache: dict = {}   # role_name -> {"ids": set, "fetched_at": float}
 
 
 def _slack_client():
@@ -136,27 +128,29 @@ def _slack_client():
         return None
     from slack_sdk import WebClient
     # Explicit short timeout, added 2026-07-27 — this client backs
-    # is_hr_staff(), which runs on EVERY Home tab open for every driver
-    # (not just HR-related checks), synchronously, inside Slack's
-    # app_home_opened webhook handler. With no timeout, a slow/hanging
-    # Slack API response would block every driver's Home tab from
-    # loading at all, not just the HR check.
+    # is_hr_staff()/is_dispatch_staff(), which run on EVERY Home tab open
+    # for every driver (not just HR/dispatch-related checks), synchronously,
+    # inside Slack's app_home_opened webhook handler. With no timeout, a
+    # slow/hanging Slack API response would block every driver's Home tab
+    # from loading at all, not just these checks.
     return WebClient(token=token, timeout=5)
 
 
-def _live_hr_channel_members(db: Session) -> set:
-    """Live membership of the #nday-hr channel — per explicit user
-    direction, whoever is actually IN that Slack channel IS the HR staff
-    list, rather than a separately maintained one. Cached briefly since a
-    single Home-tab open/action can call is_hr_staff() several times in
-    quick succession. Any failure (timeout, rate limit, etc.) falls back
-    to the last-known cached set rather than blocking the caller — see
-    _slack_client()'s timeout note."""
+def _live_channel_members(db: Session, role_name: str) -> set:
+    """Live membership of whichever channel(s) `role_name` resolves to
+    (e.g. "hr" -> #nday-hr, "dispatch" -> #nday-mgt) — per explicit user
+    direction, whoever is actually IN that Slack channel gets the
+    corresponding Home-tab access, rather than a separately maintained
+    list. Cached per-role briefly since a single Home-tab open/action can
+    call this several times in quick succession. Any failure (timeout,
+    rate limit, etc.) falls back to the last-known cached set rather than
+    blocking the caller — see _slack_client()'s timeout note."""
+    cache = _live_channel_member_cache.setdefault(role_name, {"ids": set(), "fetched_at": 0.0})
     now = time.time()
-    if now - _hr_staff_channel_cache["fetched_at"] < _HR_STAFF_CACHE_TTL_SECONDS:
-        return _hr_staff_channel_cache["ids"]
+    if now - cache["fetched_at"] < _LIVE_CHANNEL_CACHE_TTL_SECONDS:
+        return cache["ids"]
 
-    channel_ids = get_role_slack_ids(db, "hr")
+    channel_ids = get_role_slack_ids(db, role_name)
     client = _slack_client()
     members: set = set()
     try:
@@ -170,12 +164,26 @@ def _live_hr_channel_members(db: Session) -> set:
                     if not cursor:
                         break
     except Exception as exc:
-        logger.warning("conversations_members failed: %s — using last-known cached HR staff list", exc)
-        return _hr_staff_channel_cache["ids"]
+        logger.warning("conversations_members failed for role=%s: %s — using last-known cached list", role_name, exc)
+        return cache["ids"]
 
-    _hr_staff_channel_cache["ids"] = members
-    _hr_staff_channel_cache["fetched_at"] = now
+    cache["ids"] = members
+    cache["fetched_at"] = now
     return members
+
+
+def is_dispatch_staff(slack_user_id: str, db: Session) -> bool:
+    """Gates the Dispatch Home tab (slack_dispatch_home.py) and its
+    actions. Rule: live membership of the #nday-mgt Slack channel (the
+    "dispatch" role's channel) — join it, get the tab; leave it, lose it.
+    Falls back to the static dispatch_staff RoleDirectory list too, in
+    case the live channel lookup fails or someone was linked that way
+    instead. Re-check this inside every dispatch-only action handler, not
+    just at Home-tab render time — don't trust that only dispatch staff
+    can trigger a given action_id."""
+    if slack_user_id in _live_channel_members(db, "dispatch"):
+        return True
+    return slack_user_id in get_role_slack_ids(db, "dispatch_staff")
 
 
 def is_hr_staff(slack_user_id: str, db: Session) -> bool:
@@ -185,7 +193,7 @@ def is_hr_staff(slack_user_id: str, db: Session) -> bool:
     list too, in case the live channel lookup fails (missing bot token/
     scope) or someone was linked that way instead. Same re-check-inside-
     every-handler rule as is_dispatch_staff()."""
-    if slack_user_id in _live_hr_channel_members(db):
+    if slack_user_id in _live_channel_members(db, "hr"):
         return True
     return slack_user_id in get_role_slack_ids(db, "hr_staff")
 

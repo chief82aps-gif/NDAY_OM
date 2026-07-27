@@ -18,6 +18,7 @@ import os
 import time
 from datetime import datetime, date, timedelta, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException
@@ -31,6 +32,19 @@ from api.src.database import (
 )
 
 logger = logging.getLogger(__name__)
+PACIFIC = ZoneInfo("America/Los_Angeles")
+
+
+def _pacific_today() -> date:
+    """Shifts are Pacific-anchored, but Render's server clock runs UTC —
+    naive date.today() drifts a calendar day ahead of the real business
+    day for roughly a third of every day (evening Pacific = already
+    tomorrow UTC). Confirmed live 2026-07-27: a submission taken in
+    Pacific evening stored survey_date one day ahead of what the
+    Pacific-aware category digest computed as "today", so the digest
+    found nothing. Every date.today() in this module must go through
+    this instead."""
+    return datetime.now(PACIFIC).date()
 router = APIRouter(prefix="/eod-survey", tags=["eod-survey"])
 
 DRIVER_DASHBOARD_CHANNEL = os.getenv("DRIVER_DASHBOARD_CHANNEL_ID", "C0BEDCXNQNT")
@@ -294,7 +308,7 @@ def driver_lookup(
     not a separate form. PIN only required with neither token nor
     transporter_id — see _authenticate_driver()'s docstring."""
     entry = _authenticate_driver(transporter_id, driver_name_hint, pin, db, token=token)
-    today = date.fromisoformat(target_date) if target_date else date.today()
+    today = date.fromisoformat(target_date) if target_date else _pacific_today()
     assignment = _load_today_assignment(entry.id, today, db)
 
     # Check if already submitted
@@ -482,9 +496,7 @@ def send_daily_eod_category_digests(db: Session, force: bool = False) -> dict:
     if not EOD_CATEGORY_DIGEST_ACTIVE:
         return {"status": "inactive"}
 
-    import zoneinfo
-    tz = zoneinfo.ZoneInfo("America/Los_Angeles")
-    now = datetime.now(tz)
+    now = datetime.now(PACIFIC)
     today = now.date()
 
     if not force:
@@ -585,7 +597,7 @@ def delete_response(response_id: int, db: Session = Depends(get_db)):
 @router.get("/responses")
 def list_responses(survey_date: Optional[str] = None, db: Session = Depends(get_db)):
     """Admin: list all responses for a date (defaults to today)."""
-    target = date.fromisoformat(survey_date) if survey_date else date.today()
+    target = date.fromisoformat(survey_date) if survey_date else _pacific_today()
     rows = (
         db.query(EodSurveyResponse)
         .filter_by(survey_date=target)
@@ -608,7 +620,7 @@ def send_test_eod_dm(sample_driver_name: str, target_slack_id: str, db: Session 
     if not entry:
         raise HTTPException(404, f"No active roster match for '{sample_driver_name}'.")
 
-    today = date.today()
+    today = _pacific_today()
     eod_token = _issue_eod_token(entry.id, entry.position_id, entry.payroll_name)
     url = f"{APP_URL}/eod?token={eod_token}"
     first_name = entry.payroll_name.split(",", 1)[1].strip().split()[0] if "," in entry.payroll_name else entry.payroll_name.split()[0]
@@ -648,7 +660,7 @@ def trigger_check(db: Session = Depends(get_db)):
 @router.get("/missing")
 def missing_drivers(survey_date: Optional[str] = None, db: Session = Depends(get_db)):
     """Admin: drivers scheduled today who haven't submitted."""
-    target = date.fromisoformat(survey_date) if survey_date else date.today()
+    target = date.fromisoformat(survey_date) if survey_date else _pacific_today()
     scheduled = (
         db.query(DailyRouteAssignment)
         .filter_by(assignment_date=target)
@@ -894,9 +906,7 @@ def _all_in_posted_today(db: Session) -> bool:
     #nday-mgt today. Cached in ReminderThrottleState for the rest of the
     day once found, so this only re-scans Slack history on ticks before
     it's been seen."""
-    import zoneinfo
-    tz = zoneinfo.ZoneInfo("America/Los_Angeles")
-    today = datetime.now(tz).date()
+    today = _pacific_today()
     key = f"{_ALL_IN_KEY_PREFIX}{today.isoformat()}"
 
     state = get_reminder_state(db, key)

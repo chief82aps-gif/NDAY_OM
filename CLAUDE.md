@@ -129,6 +129,19 @@ pattern, don't reinvent it. When in doubt, grep for `PT = ZoneInfo(...)` —
 several files already define this constant; reuse it rather than adding a
 new naive date call.
 
+**Second confirmed instance, 2026-07-27**: `eod_survey.py` had the identical
+bug in four places (`driver_lookup`, `list_responses`, `send_test_eod_dm`,
+one more), all defaulting to naive `date.today()`. Caught live: a real
+Pacific-evening survey submission stored `survey_date` one calendar day
+ahead of what the (correctly Pacific-aware) daily category-digest job
+computed as "today," so the digest silently found nothing. Fixed via a
+shared `_pacific_today()` helper at the top of that file — every date
+default in the module now goes through it. **Any file with a bare
+`date.today()` call is presumptively broken by this same bug** — when
+touching a module for an unrelated reason, grep it for `date.today()` and
+fix opportunistically rather than leaving it for the next person to
+rediscover the hard way.
+
 ## Okami Capacity — locked 2026-07-19
 
 User confirmed `okami_capacity.py` (submit/finalize, the card-style

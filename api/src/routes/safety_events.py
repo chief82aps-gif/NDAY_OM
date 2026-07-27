@@ -16,10 +16,12 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+import uuid
 from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -113,6 +115,48 @@ def _store_safety_events(content: bytes, filename: str, slack_file_id: Optional[
             os.unlink(tmp_path)
         except Exception:
             pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Manual entry — added 2026-07-27. The Netradyne CSV export is a nightly/
+# rolling-window batch file, so a real, just-happened violation has no way
+# into this table until that file eventually lands. This lets dispatch key
+# one in immediately so it flows through the exact same Confirm/False-Flag
+# -> driver DM+ack pipeline as CSV-sourced rows, rather than waiting.
+# Synthetic event_id (Netradyne's own ID doesn't exist for this path) so
+# the CSV ingest's dedup-by-event_id can never collide with it later if
+# the same real event eventually also shows up in an export.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ManualSafetyEventRequest(BaseModel):
+    driver_name: str
+    metric_type: str                      # e.g. "Speeding", "Roadside Parking"
+    metric_subtype: Optional[str] = None
+    event_at: Optional[str] = None        # ISO datetime — defaults to now
+    review_details: Optional[str] = None
+    reported_by: Optional[str] = None
+
+
+@router.post("/manual")
+def create_manual_safety_event(req: ManualSafetyEventRequest, db: Session = Depends(get_db)):
+    event_at = datetime.fromisoformat(req.event_at) if req.event_at else datetime.utcnow()
+    event = SafetyEvent(
+        event_id=f"MANUAL-{uuid.uuid4().hex[:12]}",
+        report_date=event_at.date(),
+        driver_name=req.driver_name,
+        transporter_id=None,
+        event_at=event_at,
+        metric_type=req.metric_type,
+        metric_subtype=req.metric_subtype,
+        source="manual_entry",
+        review_details=(req.review_details or "") + (f" (reported by {req.reported_by})" if req.reported_by else ""),
+        source_file="manual_entry",
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    logger.info("Manual safety event created: id=%s driver=%s type=%s", event.id, req.driver_name, req.metric_type)
+    return {"status": "created", "id": event.id, "event_id": event.event_id}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -1066,3 +1066,62 @@ def run_eod_survey_check(db: Session) -> dict:
         "no_slack_id": no_slack, "no_eta_yet": no_eta,
         "all_in": all_in, "past_2200": cutoff,
     }
+
+
+@router.get("/debug-today")
+def debug_today(db: Session = Depends(get_db)) -> dict:
+    """Read-only — per-driver view of exactly what run_eod_survey_check()
+    sees right now (anchor/send_at, whether the initial DM already fired,
+    last ping time). Added 2026-07-27 to answer "did this actually send or
+    not" without guessing from the aggregate counters, which don't
+    distinguish "already sent, just not due for a re-ping yet" from
+    "never sent". Never sends anything itself."""
+    from api.src.routes.rostering import get_driver_expected_return_dt, get_driver_original_return_dt
+    from api.src.driver_identity import resolve_roster_entry
+    from api.src.database import RescueEvent
+
+    now_pt = datetime.now(PACIFIC)
+    today = now_pt.date()
+    now_utc_naive = datetime.utcnow()
+    today_1900_utc_naive = now_pt.replace(hour=19, minute=0, second=0, microsecond=0).astimezone(timezone.utc).replace(tzinfo=None)
+
+    scheduled = db.query(DailyRouteAssignment).filter_by(assignment_date=today).all()
+    out = []
+    for a in scheduled:
+        roster_entry = None
+        if a.roster_id is not None:
+            roster_entry = db.query(DriverRosterEntry).filter(DriverRosterEntry.id == a.roster_id).first()
+        if roster_entry is None:
+            roster_entry = resolve_roster_entry(a.driver_name, db)
+
+        row = {"driver_name": a.driver_name, "wave": a.wave}
+        submitted = roster_entry and db.query(EodSurveyResponse).filter_by(roster_id=roster_entry.id, survey_date=today).first()
+        row["already_submitted"] = bool(submitted)
+        row["has_slack_id"] = bool(roster_entry and roster_entry.slack_member_id)
+        if not roster_entry or not roster_entry.slack_member_id or submitted:
+            out.append(row)
+            continue
+
+        rescued_today = db.query(RescueEvent).filter(
+            RescueEvent.event_date == today, RescueEvent.rescuing_driver_name == a.driver_name,
+        ).first() is not None
+        row["rescued_today"] = rescued_today
+
+        if rescued_today:
+            anchor = get_driver_original_return_dt(a.driver_name, today, db)
+            send_at = anchor + timedelta(hours=1) if anchor else None
+        else:
+            anchor = get_driver_expected_return_dt(a.driver_name, today, db) or get_driver_original_return_dt(a.driver_name, today, db)
+            send_at = min(anchor - timedelta(hours=1), today_1900_utc_naive) if anchor else today_1900_utc_naive
+
+        row["anchor_utc"] = anchor.isoformat() if anchor else None
+        row["send_at_utc"] = send_at.isoformat() if send_at else None
+        row["now_utc"] = now_utc_naive.isoformat()
+        row["send_at_has_passed"] = bool(send_at and now_utc_naive >= send_at)
+
+        state = get_reminder_state(db, f"{_DRIVER_DM_KEY_PREFIX}{today.isoformat()}_{roster_entry.id}")
+        row["initial_sent_at"] = state.get("initial_sent_at")
+        row["last_ping_at"] = state.get("last_ping_at")
+        out.append(row)
+
+    return {"date": today.isoformat(), "now_utc": now_utc_naive.isoformat(), "drivers": out}

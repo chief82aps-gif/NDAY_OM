@@ -112,6 +112,22 @@ class User(Base):
         return self.role in {Role.ADMIN.value, Role.MANAGER.value, Role.DISPATCHER.value}
 
 
+class UserSlackAlias(Base):
+    """Added 2026-07-27 — some people (confirmed: Jayson) have TWO separate
+    Slack accounts in the same workspace (one per email address, e.g.
+    jaysonwatson@newdaylogisticsllc.com vs a personal gmail), not just two
+    emails on one account. User.slack_user_id only holds one ID, so Sign in
+    with Slack would fail with "not_linked" depending on which of the two
+    identities the browser happened to be signed into. This table lets a
+    second (or third) Slack ID resolve to the same website account."""
+    __tablename__ = "user_slack_aliases"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    slack_user_id = Column(String(20), unique=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Driver(Base):
     """Driver profiles"""
     __tablename__ = "drivers"

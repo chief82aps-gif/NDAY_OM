@@ -353,30 +353,53 @@ def _publish_home(slack_user_id: str, db: Session) -> None:
     if not client:
         return
     try:
-        # Dispatch staff get a completely different Home tab — not gated by
-        # DRIVER_DM_ACTIVE, since that flag is specifically about whether
-        # it's safe to DM real drivers, not about dispatch staff using
-        # their own tool.
-        if is_dispatch_staff(slack_user_id, db):
-            from api.src.routes.slack_dispatch_home import build_dispatch_home_view_blocks
-            blocks = build_dispatch_home_view_blocks(db)
-            client.views_publish(user_id=slack_user_id, view={"type": "home", "blocks": blocks})
-            return
-        # Checked after dispatch so anyone who is both (e.g. Jayson) keeps
-        # seeing the tab they already use daily — HR-only staff get this one.
-        if is_hr_staff(slack_user_id, db):
-            from api.src.routes.slack_hr_home import build_hr_home_view_blocks
-            blocks = build_hr_home_view_blocks(db)
-            client.views_publish(user_id=slack_user_id, view={"type": "home", "blocks": blocks})
-            return
-        if not _DM_ACTIVE:
-            client.views_publish(user_id=slack_user_id, view={"type": "home", "blocks": _INACTIVE_BLOCKS})
-            return
-        driver = _resolve_driver(slack_user_id, db)
-        blocks = build_home_view_blocks(driver, db)
+        blocks, _ = _build_combined_home_blocks(slack_user_id, db)
         client.views_publish(user_id=slack_user_id, view={"type": "home", "blocks": blocks})
     except Exception as exc:
         logger.warning("views_publish failed for %s: %s", slack_user_id, exc)
+
+
+def _build_combined_home_blocks(slack_user_id: str, db: Session) -> tuple[list, dict]:
+    """Additive, not exclusive — added 2026-07-27 per explicit user
+    direction ("every employee should be able to see the driver
+    dashboard, no filters"). Dispatch/HR tools used to REPLACE the driver
+    dashboard entirely for anyone with either role, which broke for
+    people who are both real drivers AND dispatch/HR staff (e.g. Krista,
+    in both #nday-mgt and #nday-hr) — they lost access to their own EOD
+    survey/callout button. Every applicable section is appended onto one
+    combined view instead of picking only one. Shared by _publish_home()
+    and the debug-publish-home diagnostic below so they can't drift out
+    of sync with each other the way the old duplicated branch logic did.
+    Returns (blocks, debug_info) — debug_info records which sections got
+    included, for the diagnostic endpoint."""
+    blocks: list = []
+    info: dict = {"sections": []}
+
+    if is_dispatch_staff(slack_user_id, db):
+        from api.src.routes.slack_dispatch_home import build_dispatch_home_view_blocks
+        blocks += build_dispatch_home_view_blocks(db)
+        blocks.append({"type": "divider"})
+        info["sections"].append("dispatch_staff")
+
+    if is_hr_staff(slack_user_id, db):
+        from api.src.routes.slack_hr_home import build_hr_home_view_blocks
+        blocks += build_hr_home_view_blocks(db)
+        blocks.append({"type": "divider"})
+        info["sections"].append("hr_staff")
+
+    # Driver dashboard — always included, no role filter. Still gated by
+    # DRIVER_DM_ACTIVE (a different, unrelated flag about whether it's
+    # safe to show/DM real driver content at all).
+    if not _DM_ACTIVE:
+        blocks += _INACTIVE_BLOCKS
+        info["sections"].append("dm_inactive")
+    else:
+        driver = _resolve_driver(slack_user_id, db)
+        info["resolved_driver"] = driver.payroll_name if driver else None
+        blocks += build_home_view_blocks(driver, db)
+        info["sections"].append("driver")
+
+    return blocks, info
 
 
 @router.get("/debug-publish-home")
@@ -396,23 +419,8 @@ async def debug_publish_home(slack_user_id: str, db: Session = Depends(get_db)) 
         return result
 
     try:
-        if is_dispatch_staff(slack_user_id, db):
-            from api.src.routes.slack_dispatch_home import build_dispatch_home_view_blocks
-            result["branch"] = "dispatch_staff"
-            blocks = build_dispatch_home_view_blocks(db)
-        elif is_hr_staff(slack_user_id, db):
-            from api.src.routes.slack_hr_home import build_hr_home_view_blocks
-            result["branch"] = "hr_staff"
-            blocks = build_hr_home_view_blocks(db)
-        elif not _DM_ACTIVE:
-            result["branch"] = "dm_inactive"
-            blocks = _INACTIVE_BLOCKS
-        else:
-            result["branch"] = "driver"
-            driver = _resolve_driver(slack_user_id, db)
-            result["resolved_driver"] = driver.payroll_name if driver else None
-            blocks = build_home_view_blocks(driver, db)
-
+        blocks, info = _build_combined_home_blocks(slack_user_id, db)
+        result.update(info)
         result["block_count"] = len(blocks)
         resp = client.views_publish(user_id=slack_user_id, view={"type": "home", "blocks": blocks})
         result["status"] = "published"

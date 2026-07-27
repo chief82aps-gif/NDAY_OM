@@ -460,6 +460,115 @@ def _alert_mgt_on_serious_flags(req: "EodSubmitRequest", driver_name: str, surve
         logger.warning("EOD serious-flag mgt alert failed: %s", exc)
 
 
+FLEET_CHANNEL = os.getenv("SLACK_FLEET_CHANNEL", "C0BJ8J5LGAU")   # #nday-fleet
+EOD_CATEGORY_DIGEST_ACTIVE = os.getenv("EOD_CATEGORY_DIGEST_ACTIVE", "false").lower() == "true"
+_EOD_DIGEST_KEY = "eod_category_digest"
+
+
+def send_daily_eod_category_digests(db: Session, force: bool = False) -> dict:
+    """Once daily (~22:15 Pacific, after the survey's own 22:00 cutoff):
+    posts three SEPARATE summarized digests for that day's responses —
+    van issues to #nday-fleet, injury/management-contact flags to #nday-hr,
+    everything else flagged (crash/incident/route issues/missing equipment)
+    to #nday-mgt. Per explicit user direction: rolled up once a day, not an
+    individual post per driver/submission.
+
+    This is additive to _alert_mgt_on_serious_flags(), not a replacement —
+    that fires immediately per-submission for crash/injury/incident as a
+    safety measure (added 2026-07-22) and stays as-is; this digest exists
+    so fleet/HR/management each get one end-of-day rollup relevant to
+    their own follow-up, without every category flooding #nday-mgt
+    individually all day."""
+    if not EOD_CATEGORY_DIGEST_ACTIVE:
+        return {"status": "inactive"}
+
+    import zoneinfo
+    tz = zoneinfo.ZoneInfo("America/Los_Angeles")
+    now = datetime.now(tz)
+    today = now.date()
+
+    if not force:
+        state = get_reminder_state(db, _EOD_DIGEST_KEY)
+        if state.get("last_sent_date") == today.isoformat():
+            return {"status": "already_sent", "date": today.isoformat()}
+        if now.hour < 22 or (now.hour == 22 and now.minute < 15):
+            return {"status": "outside_window"}
+
+    rows = db.query(EodSurveyResponse).filter_by(survey_date=today).all()
+    date_str = today.strftime("%A, %B %-d")
+    try:
+        client = _slack()
+    except Exception:
+        client = None
+
+    fleet_lines = [
+        f"• *{r.driver_name}*" + (f" (Van {r.van_number})" if r.van_number else "")
+        + f": {r.van_issue_description or 'see survey'}"
+        for r in rows if r.van_issues
+    ]
+    hr_lines = []
+    for r in rows:
+        if r.injury_occurred:
+            hr_lines.append(f"• *{r.driver_name}* — injury reported")
+        if r.needs_management_contact:
+            hr_lines.append(f"• *{r.driver_name}* — requested management contact")
+    mgt_lines = []
+    for r in rows:
+        if r.crash_occurred:
+            mgt_lines.append(f"• *{r.driver_name}* — crash reported")
+        if r.incident_occurred:
+            mgt_lines.append(f"• *{r.driver_name}* — incident: {r.incident_description or 'see survey'}")
+        if r.route_issues:
+            mgt_lines.append(f"• *{r.driver_name}* — route issue: {r.route_issue_description or 'see survey'}")
+        if not r.all_equipment_present:
+            mgt_lines.append(f"• *{r.driver_name}* — missing equipment: {r.missing_equipment or 'see survey'}")
+
+    sent_any = False
+    if client:
+        if fleet_lines and FLEET_CHANNEL:
+            try:
+                client.chat_postMessage(
+                    channel=FLEET_CHANNEL,
+                    text=f"🔧 *Van Issues — {date_str}* ({len(fleet_lines)})\n" + "\n".join(fleet_lines),
+                )
+                sent_any = True
+            except Exception as exc:
+                logger.warning("EOD fleet digest post failed: %s", exc)
+        if hr_lines:
+            from api.src.routes.document_routing import get_role_slack_ids
+            for sid in get_role_slack_ids(db, "hr"):
+                try:
+                    client.chat_postMessage(
+                        channel=sid,
+                        text=f"👔 *EOD Flags for HR — {date_str}* ({len(hr_lines)})\n" + "\n".join(hr_lines),
+                    )
+                    sent_any = True
+                except Exception as exc:
+                    logger.warning("EOD HR digest post failed: %s", exc)
+        if mgt_lines:
+            try:
+                client.chat_postMessage(
+                    channel=MGT_CHANNEL,
+                    text=f"⚠️ *EOD Operational Flags — {date_str}* ({len(mgt_lines)})\n" + "\n".join(mgt_lines),
+                )
+                sent_any = True
+            except Exception as exc:
+                logger.warning("EOD mgt digest post failed: %s", exc)
+
+    set_reminder_state(db, _EOD_DIGEST_KEY, {"last_sent_date": today.isoformat()})
+    return {
+        "status": "sent" if sent_any else "no_flags",
+        "date": today.isoformat(),
+        "fleet": len(fleet_lines), "hr": len(hr_lines), "mgt": len(mgt_lines),
+    }
+
+
+@router.post("/trigger-category-digest")
+def trigger_category_digest(force: bool = True, db: Session = Depends(get_db)):
+    """Manual trigger for testing/recovery."""
+    return send_daily_eod_category_digests(db, force=force)
+
+
 @router.get("/responses")
 def list_responses(survey_date: Optional[str] = None, db: Session = Depends(get_db)):
     """Admin: list all responses for a date (defaults to today)."""

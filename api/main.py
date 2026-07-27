@@ -120,6 +120,25 @@ async def _sentiment_survey_report_loop():
         await asyncio.sleep(60)
 
 
+async def _eod_category_digest_loop():
+    """Every 60 s — delegates to eod_survey.send_daily_eod_category_digests(),
+    which no-ops outside the 22:15+ Pacific window and respects an
+    "already sent today" guard. Gated by EOD_CATEGORY_DIGEST_ACTIVE
+    (default false)."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(eod_survey.send_daily_eod_category_digests, db)
+            except Exception as exc:
+                logger.warning("EOD category digest loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("EOD category digest loop outer error: %s", exc)
+        await asyncio.sleep(60)
+
+
 async def _weekly_slack_relink_loop():
     """Every 60 s — delegates to drivers.run_weekly_slack_relink(), which
     no-ops on any day but Monday and respects an "already ran today"
@@ -536,6 +555,7 @@ async def startup():
     asyncio.create_task(_rescue_payroll_hr_report_loop())
     asyncio.create_task(_sentiment_survey_report_loop())
     asyncio.create_task(_weekly_slack_relink_loop())
+    asyncio.create_task(_eod_category_digest_loop())
 
 cors_origins_env = os.getenv("CORS_ORIGINS", "").strip()
 if cors_origins_env:

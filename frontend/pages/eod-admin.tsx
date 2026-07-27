@@ -204,8 +204,6 @@ export default function EodAdminPage() {
                               ['Gas level', r.gas_level || '—'],
                               ['Route issues', yn(r.route_issues, 'Yes ⚠️', 'No')],
                               r.route_issues ? ['Route issue', r.route_issue_description || '—'] : null,
-                              ['Sweep', yn(r.performed_sweep)],
-                              r.performed_sweep ? ['Sweep details', r.sweep_details || '—'] : null,
                               ['Lunch break', yn(r.took_lunch)],
                               r.took_lunch ? ['Lunch out/in', `${r.lunch_clock_out || '?'} → ${r.lunch_clock_in || '?'}`] : null,
                               ['Clock out', r.clock_out_time || '—'],

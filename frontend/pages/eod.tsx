@@ -104,8 +104,6 @@ export default function EodPage() {
   const [gasLevel, setGasLevel] = useState('');
   const [routeIssues, setRouteIssues] = useState<boolean | null>(null);
   const [routeDesc, setRouteDesc] = useState('');
-  const [sweep, setSweep] = useState<boolean | null>(null);
-  const [sweepDetails, setSweepDetails] = useState('');
   const [tookLunch, setTookLunch] = useState<boolean | null>(null);
   const [lunchOut, setLunchOut] = useState('');
   const [lunchIn, setLunchIn] = useState('');
@@ -253,7 +251,6 @@ export default function EodPage() {
     postDvic !== null &&
     gasLevel !== '' &&
     routeIssues !== null &&
-    sweep !== null &&
     tookLunch !== null &&
     pockets !== null &&
     mgmt !== null &&
@@ -291,8 +288,6 @@ export default function EodPage() {
         gas_level: gasLevel,
         route_issues: routeIssues,
         route_issue_description: routeIssues ? routeDesc : null,
-        performed_sweep: sweep,
-        sweep_details: sweep ? sweepDetails : null,
         took_lunch: tookLunch,
         lunch_clock_out: tookLunch ? lunchOut : null,
         lunch_clock_in: tookLunch ? lunchIn : null,
@@ -580,18 +575,6 @@ export default function EodPage() {
             <>
               <label style={s.label}>Briefly describe the issue</label>
               <input style={s.input} placeholder="What happened?" value={routeDesc} onChange={e => setRouteDesc(e.target.value)} />
-            </>
-          )}
-        </div>
-
-        {/* 9. Sweep */}
-        <div style={s.section}>
-          <label style={s.label}>Did you perform a sweep today?</label>
-          <YN value={sweep} onChange={setSweep} />
-          {sweep && (
-            <>
-              <label style={s.label}>Who did you sweep and how many packages?</label>
-              <input style={s.input} placeholder="Driver name · X packages" value={sweepDetails} onChange={e => setSweepDetails(e.target.value)} />
             </>
           )}
         </div>

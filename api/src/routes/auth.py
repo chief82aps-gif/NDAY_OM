@@ -429,6 +429,35 @@ async def create_user_endpoint(request: CreateUserRequest, db: Session = Depends
     return {"message": "User created successfully", "username": new_username, "name": new_username.capitalize()}
 
 
+class LinkSlackRequest(BaseModel):
+    username: str
+    slack_user_id: str
+    admin_username: str
+    admin_password: str
+
+
+@router.post("/link-slack")
+async def link_slack_endpoint(request: LinkSlackRequest, db: Session = Depends(get_db)):
+    """Attach a Slack user ID to an existing website account so Sign in
+    with Slack works for it — added 2026-07-27 after discovering accounts
+    created before this feature existed (e.g. the original seeded 'chief'/
+    'admin' accounts) have no slack_user_id on file, so the OAuth callback
+    correctly refuses them as "not linked" rather than guessing. Requires
+    valid admin credentials, same gate as /create-user."""
+    admin_username = request.admin_username.lower().strip()
+    if not _verify_admin_password(db, admin_username, request.admin_password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin credentials")
+
+    target_username = request.username.lower().strip()
+    user = get_user_by_username(db, target_username)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    user.slack_user_id = request.slack_user_id.strip()
+    db.commit()
+    return {"status": "linked", "username": user.username, "slack_user_id": user.slack_user_id}
+
+
 @router.post("/list-users")
 async def list_users(request: LoginRequest, db: Session = Depends(get_db)):
     """List all users. Requires valid admin credentials."""

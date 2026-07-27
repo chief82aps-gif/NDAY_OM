@@ -917,7 +917,7 @@ def _all_in_posted_today(db: Session) -> bool:
     if not token:
         return False
     try:
-        midnight_pt = datetime.combine(today, datetime.min.time(), tzinfo=tz)
+        midnight_pt = datetime.combine(today, datetime.min.time(), tzinfo=PACIFIC)
         since_ts = str(midnight_pt.timestamp())
         client = _slack()
         resp = client.conversations_history(channel=MGT_CHANNEL, oldest=since_ts, limit=100)

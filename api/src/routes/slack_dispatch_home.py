@@ -260,6 +260,51 @@ def build_dispatch_home_view_blocks(db: Session) -> list:
             "type": "actions",
             "elements": [_ingest_alerts_button(db)],
         },
+        {"type": "divider"},
+
+        # ── HR — grouped together at the bottom, per explicit user request
+        # (2026-07-27). Dispatch staff who are also HR-channel members (e.g.
+        # Jayson) never see the separate HR Home tab, since
+        # slack_home.py's _publish_home() checks is_dispatch_staff first —
+        # these give that same access from the tab they actually see.
+        # "Invite to Website" reuses the exact hr_home_invite_user_button
+        # action_id/handler unchanged; is_hr_staff() is checked independently
+        # inside that handler regardless of which Home tab it's clicked from.
+        {"type": "section", "text": {"type": "mrkdwn", "text": "👔 *HR*"}},
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": "hr_home_open_eod_admin",
+                    "text": {"type": "plain_text", "text": "📋 EOD Responses", "emoji": True},
+                    "url": f"{FRONTEND_URL}/eod-admin",
+                },
+                {
+                    "type": "button",
+                    "action_id": "hr_home_open_sentiment_admin",
+                    "text": {"type": "plain_text", "text": "💬 Sentiment Survey", "emoji": True},
+                    "url": f"{FRONTEND_URL}/sentiment-survey-admin",
+                },
+                {
+                    "type": "button",
+                    "action_id": "hr_home_open_discipline_tracker",
+                    "text": {"type": "plain_text", "text": "📝 Write-Ups", "emoji": True},
+                    "url": f"{FRONTEND_URL}/discipline-tracker",
+                },
+            ],
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": "hr_home_invite_user_button",
+                    "text": {"type": "plain_text", "text": "➕ Invite to Website", "emoji": True},
+                    "style": "primary",
+                },
+            ],
+        },
         {
             "type": "context",
             "elements": [{"type": "mrkdwn", "text": "New Day Logistics · Dispatch tools"}],

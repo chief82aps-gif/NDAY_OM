@@ -34,7 +34,7 @@ export default function Login() {
 
   useEffect(() => {
     if (!router.isReady) return;
-    const { slack_token: slackToken, username: slackUsername, name: slackName, role: slackRole, slack_error: slackError } = router.query;
+    const { slack_token: slackToken, username: slackUsername, name: slackName, role: slackRole, slack_error: slackError, slack_user_id: slackErrorUserId } = router.query;
 
     if (typeof slackToken === 'string') {
       loginWithSlackToken(
@@ -48,7 +48,9 @@ export default function Login() {
     }
 
     if (typeof slackError === 'string') {
-      setError(SLACK_ERROR_MESSAGES[slackError] || 'Slack sign-in failed — please try again.');
+      const base = SLACK_ERROR_MESSAGES[slackError] || 'Slack sign-in failed — please try again.';
+      const idSuffix = typeof slackErrorUserId === 'string' ? ` (Slack ID: ${slackErrorUserId})` : '';
+      setError(base + idSuffix);
       setShowPasswordForm(true);   // surface the fallback immediately — Slack just failed
       router.replace('/login', undefined, { shallow: true });
     }

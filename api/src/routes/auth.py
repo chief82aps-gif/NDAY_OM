@@ -354,8 +354,8 @@ async def slack_callback(
     linked to an existing User row (via /auth/invite or the dispatch "Add
     New Hire" modal) can complete login, so no workspace member gets
     dashboard access just by existing in Slack."""
-    def _fail(reason: str) -> RedirectResponse:
-        return RedirectResponse(f"{APP_URL}/login?slack_error={reason}")
+    def _fail(reason: str, **extra) -> RedirectResponse:
+        return RedirectResponse(f"{APP_URL}/login?slack_error={reason}&{urlencode(extra)}")
 
     if error or not code or not state:
         return _fail("denied")
@@ -407,7 +407,7 @@ async def slack_callback(
 
     user = db.query(User).filter(User.slack_user_id == slack_user_id).first()
     if not user:
-        return _fail("not_linked")
+        return _fail("not_linked", slack_user_id=slack_user_id)
     if not user.is_active:
         return _fail("inactive")
 

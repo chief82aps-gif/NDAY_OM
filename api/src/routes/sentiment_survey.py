@@ -16,6 +16,11 @@ A daily job (gated by SENTIMENT_SURVEY_ACTIVE, default false) sends each
 day's free-text responses to Claude for analysis, then posts a summary —
 never including driver names — to owner/hr only. Follow-up on a specific
 flagged item goes through the admin-report endpoint, not the daily summary.
+
+HR can also trigger the survey directly (send_sentiment_survey(), added
+2026-07-27) — to specific drivers, or everyone active/linked at once —
+from the HR Home tab in Slack. See that function's docstring for why the
+DM copy can never vary by who was targeted.
 """
 from __future__ import annotations
 
@@ -24,6 +29,7 @@ import os
 import time
 from datetime import datetime, date
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException
@@ -41,6 +47,15 @@ router = APIRouter(prefix="/sentiment-survey", tags=["sentiment-survey"])
 
 SENTIMENT_SURVEY_ACTIVE = os.getenv("SENTIMENT_SURVEY_ACTIVE", "false").lower() == "true"
 _DAILY_REPORT_KEY = "sentiment_survey_daily_report"
+APP_URL = os.getenv("APP_URL", "https://nday-om.vercel.app")
+PACIFIC = ZoneInfo("America/Los_Angeles")
+
+
+def _pacific_today() -> date:
+    """Same Pacific-anchored-date fix as eod_survey.py's _pacific_today() —
+    naive date.today() on Render's UTC server clock drifts a calendar day
+    ahead of the real business day for roughly a third of every day."""
+    return datetime.now(PACIFIC).date()
 
 
 def _issue_sentiment_token(roster_id: int, driver_name: str, survey_date: date) -> str:
@@ -64,6 +79,111 @@ def _verify_sentiment_token(token: str) -> Optional[dict]:
     if payload.get("purpose") != "sentiment_survey":
         return None
     return payload
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Outbound send — added 2026-07-27. Until now the only way a driver ever saw
+# this survey was as a soft follow-up offer right after submitting their EOD
+# (eod_survey.py's submit endpoint). This adds a standalone send HR can
+# trigger any time, for one/several specific drivers or everyone at once.
+#
+# The DM copy below must never give a driver reason to think they were
+# personally singled out — that would undercut the "appears anonymous"
+# promise this whole module is built around, even though the *submission*
+# itself was always identity-blind regardless of who initiated the send.
+# Explicit direction (2026-07-27): the message reads exactly the same
+# whether HR sent it to one driver or all of them — generic, routine framing,
+# no "you were selected" language, no reference to who requested it.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _dm(user_id: str, text: str, button_url: str, button_text: str = "Check In") -> None:
+    try:
+        from slack_sdk import WebClient
+        client = WebClient(token=os.environ["SLACK_BOT_TOKEN"])
+        client.chat_postMessage(
+            channel=user_id,
+            text=text,
+            blocks=[
+                {"type": "section", "text": {"type": "mrkdwn", "text": text}},
+                {
+                    "type": "actions",
+                    "elements": [{
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": button_text, "emoji": True},
+                        "style": "primary",
+                        "url": button_url,
+                        "action_id": "sentiment_survey_open",
+                    }],
+                },
+            ],
+        )
+    except Exception as exc:
+        logger.warning("Sentiment survey DM failed to %s: %s", user_id, exc)
+
+
+def send_sentiment_survey(roster_ids: Optional[list[int]], send_to_all: bool, db: Session) -> dict:
+    """Core send logic, shared by the REST endpoint and the Slack HR Home
+    tab modal (which calls this directly, no HTTP round-trip). Skips anyone
+    without a Slack link and anyone who already checked in today — same
+    dedup as the daily follow-up offer, so a driver never gets asked twice
+    in one day regardless of how many times/ways they were reached."""
+    today = _pacific_today()
+
+    if send_to_all:
+        candidates = (
+            db.query(DriverRosterEntry)
+            .filter(DriverRosterEntry.is_active == True, DriverRosterEntry.slack_member_id.isnot(None))  # noqa: E712
+            .all()
+        )
+    else:
+        candidates = (
+            db.query(DriverRosterEntry)
+            .filter(DriverRosterEntry.id.in_(roster_ids or []))
+            .all()
+        )
+
+    sent = already_submitted = no_slack = 0
+    # Same generic wording every time — see module note above on why this
+    # can never vary by who was selected or how many were sent to.
+    msg = (
+        "🗣️ Quick, anonymous daily check-in — how's everything going? "
+        "Your response isn't tied to your name. Takes under a minute."
+    )
+
+    for entry in candidates:
+        if not entry.slack_member_id:
+            no_slack += 1
+            continue
+        existing = db.query(SentimentSurveyResponse).filter_by(roster_id=entry.id, survey_date=today).first()
+        if existing:
+            already_submitted += 1
+            continue
+
+        token = _issue_sentiment_token(entry.id, entry.payroll_name, today)
+        url = f"{APP_URL}/sentiment-survey?token={token}"
+        _dm(entry.slack_member_id, msg, url)
+        sent += 1
+
+    return {
+        "sent": sent, "already_submitted": already_submitted, "no_slack_id": no_slack,
+        "total_candidates": len(candidates),
+    }
+
+
+class SendSentimentSurveyRequest(BaseModel):
+    roster_ids: Optional[list[int]] = None
+    send_to_all: bool = False
+
+
+@router.post("/send")
+def send_sentiment_survey_endpoint(
+    payload: SendSentimentSurveyRequest,
+    db: Session = Depends(get_db),
+    caller_role: str = Depends(require_any_role("owner", "hr")),
+):
+    if not payload.send_to_all and not payload.roster_ids:
+        raise HTTPException(status_code=400, detail="Provide roster_ids or set send_to_all=true")
+    return send_sentiment_survey(payload.roster_ids, payload.send_to_all, db)
 
 
 @router.get("/status-by-token")

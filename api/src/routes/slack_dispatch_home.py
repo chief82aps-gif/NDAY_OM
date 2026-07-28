@@ -310,6 +310,11 @@ def build_dispatch_home_view_blocks(db: Session) -> list:
                     "text": {"type": "plain_text", "text": "➕ Invite to Website", "emoji": True},
                     "style": "primary",
                 },
+                {
+                    "type": "button",
+                    "action_id": "hr_home_send_sentiment_survey_button",
+                    "text": {"type": "plain_text", "text": "🗣️ Send Sentiment Survey", "emoji": True},
+                },
             ],
         },
         {

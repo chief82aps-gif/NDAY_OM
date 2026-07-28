@@ -41,6 +41,8 @@ def _slack_login_url(redirect_path: str) -> str:
 HR_INVITE_CALLBACK_ID = "hr_home_invite_user_submit"
 HR_INVITE_ROLE_OPTIONS = ["admin", "manager", "dispatcher", "driver"]
 
+SEND_SENTIMENT_SURVEY_CALLBACK_ID = "hr_home_send_sentiment_survey_submit"
+
 
 def build_hr_home_view_blocks(db: Session) -> list:
     """Pure builder — no Slack API calls, unit-testable against fixture data."""
@@ -74,6 +76,11 @@ def build_hr_home_view_blocks(db: Session) -> list:
                     "action_id": "hr_home_invite_user_button",
                     "text": {"type": "plain_text", "text": "➕ Invite to Website", "emoji": True},
                     "style": "primary",
+                },
+                {
+                    "type": "button",
+                    "action_id": "hr_home_send_sentiment_survey_button",
+                    "text": {"type": "plain_text", "text": "🗣️ Send Sentiment Survey", "emoji": True},
                 },
             ],
         },
@@ -288,5 +295,126 @@ def _handle_hr_home_invite_user_submit(payload: dict, db: Session) -> dict:
                 )
         except Exception as exc:
             logger.warning("HR invite audit log post failed: %s", exc)
+
+    return {"response_action": "clear"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Send Sentiment Survey — select specific drivers and/or send to everyone.
+# The driver-facing copy stays identical either way (see sentiment_survey.py's
+# send_sentiment_survey() docstring) — this modal is purely an HR-side
+# targeting tool, it doesn't change what the driver sees or is told.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _send_sentiment_survey_modal(db: Session) -> dict:
+    from api.src.database import DriverRosterEntry
+
+    drivers = (
+        db.query(DriverRosterEntry)
+        .filter(DriverRosterEntry.is_active == True, DriverRosterEntry.slack_member_id.isnot(None))  # noqa: E712
+        .order_by(DriverRosterEntry.payroll_name)
+        .all()
+    )
+    options = [
+        {"text": {"type": "plain_text", "text": d.payroll_name[:75]}, "value": str(d.id)}
+        for d in drivers[:100]  # static_select's practical option-count ceiling
+    ]
+
+    blocks: list = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "Check *Send to all* below, or select specific drivers instead. "
+                        "Anyone who already checked in today is skipped automatically — "
+                        "the message is the same either way, so nobody can tell they were "
+                        "individually targeted.",
+            },
+        },
+        {
+            "type": "input",
+            "block_id": "send_to_all_block",
+            "optional": True,
+            "label": {"type": "plain_text", "text": "Send to all"},
+            "element": {
+                "type": "checkboxes",
+                "action_id": "send_to_all",
+                "options": [{"text": {"type": "plain_text", "text": "Send to every active, linked driver"}, "value": "all"}],
+            },
+        },
+    ]
+    if options:
+        blocks.append({
+            "type": "input",
+            "block_id": "drivers_block",
+            "optional": True,
+            "label": {"type": "plain_text", "text": "Or select specific drivers"},
+            "element": {"type": "multi_static_select", "action_id": "drivers", "options": options},
+        })
+
+    return {
+        "type": "modal",
+        "callback_id": SEND_SENTIMENT_SURVEY_CALLBACK_ID,
+        "title": {"type": "plain_text", "text": "Send Sentiment Survey"},
+        "submit": {"type": "plain_text", "text": "Send"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": blocks,
+    }
+
+
+def _handle_hr_home_send_sentiment_survey_button(payload: dict, db: Session) -> None:
+    from api.src.routes.slack_home import _client
+
+    user_id = payload.get("user", {}).get("id", "")
+    if not is_hr_staff(user_id, db):
+        logger.warning("Non-HR user %s attempted hr_home_send_sentiment_survey_button", user_id)
+        return
+    trigger_id = payload.get("trigger_id")
+    client = _client()
+    if not client or not trigger_id:
+        return
+    try:
+        client.views_open(trigger_id=trigger_id, view=_send_sentiment_survey_modal(db))
+    except Exception as exc:
+        logger.warning("views_open failed for send-sentiment-survey modal: %s", exc)
+
+
+def _handle_hr_home_send_sentiment_survey_submit(payload: dict, db: Session) -> dict:
+    from api.src.routes.slack_home import _client, _dm_driver
+    from api.src.routes.sentiment_survey import send_sentiment_survey
+
+    clicker_id = payload.get("user", {}).get("id", "")
+    if not is_hr_staff(clicker_id, db):
+        logger.warning("Non-HR user %s attempted hr_home_send_sentiment_survey_submit", clicker_id)
+        return {"response_action": "clear"}
+
+    values = payload.get("view", {}).get("state", {}).get("values", {})
+    send_to_all = bool(values.get("send_to_all_block", {}).get("send_to_all", {}).get("selected_options"))
+    selected = values.get("drivers_block", {}).get("drivers", {}).get("selected_options") or []
+    roster_ids = [int(opt["value"]) for opt in selected]
+
+    if not send_to_all and not roster_ids:
+        return {"response_action": "errors", "errors": {"send_to_all_block": "Check 'Send to all' or select at least one driver."}}
+
+    result = send_sentiment_survey(roster_ids, send_to_all, db)
+
+    summary = (
+        f"🗣️ *Sentiment survey sent* — {result['sent']} sent"
+        f", {result['already_submitted']} already checked in today"
+        f", {result['no_slack_id']} skipped (no Slack link)"
+        f" (of {result['total_candidates']} considered)"
+    )
+    client = _client()
+    if client:
+        try:
+            _dm_driver(client, clicker_id, summary)
+        except Exception as exc:
+            logger.warning("Sentiment survey send confirmation DM failed: %s", exc)
+        try:
+            hr_channel_ids = get_role_slack_ids(db, "hr")
+            if hr_channel_ids:
+                client.chat_postMessage(channel=hr_channel_ids[0], text=summary)
+        except Exception as exc:
+            logger.warning("Sentiment survey send audit log post failed: %s", exc)
 
     return {"response_action": "clear"}

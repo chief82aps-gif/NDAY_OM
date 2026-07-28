@@ -299,6 +299,12 @@ def build_dispatch_home_view_blocks(db: Session) -> list:
                     "text": {"type": "plain_text", "text": "🏆 Mentoring Dashboard", "emoji": True},
                     "url": _slack_login_url("/driver-quality"),
                 },
+                {
+                    "type": "button",
+                    "action_id": "dispatch_open_dvic_trend",
+                    "text": {"type": "plain_text", "text": "📉 DVIC Trend", "emoji": True},
+                    "url": _slack_login_url("/dvic-trend"),
+                },
             ],
         },
         {

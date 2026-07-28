@@ -671,6 +671,56 @@ def list_weeks(db: Session = Depends(get_db)):
     ]
 
 
+@router.get("/trend")
+def get_trend(db: Session = Depends(get_db)):
+    """Week-over-week DVIC trend for the ops dashboard — added 2026-07-28.
+    Each Amazon export is a rolling 7-day window re-uploaded daily, so a
+    single ISO week can have several DvicSnapshot rows; this collapses each
+    week down to its single most-recently-imported snapshot (the "final"
+    count for that week) rather than double-counting every daily re-upload.
+    Also returns the latest snapshot's own day-by-day breakdown, since a
+    within-week daily trend is useful context alongside the week-over-week
+    one (see the day-by-day caveat below)."""
+    snaps = db.query(DvicSnapshot).order_by(DvicSnapshot.week.asc(), DvicSnapshot.imported_at.desc()).all()
+
+    latest_per_week: dict = {}
+    for s in snaps:
+        if s.week not in latest_per_week:  # first hit per week is the latest, given the ORDER BY above
+            latest_per_week[s.week] = s
+
+    weekly = []
+    for week in sorted(latest_per_week.keys()):
+        s = latest_per_week[week]
+        per_driver = round(s.total_violations / s.unique_drivers, 2) if s.unique_drivers else None
+        weekly.append({
+            "week": week,
+            "total_violations": s.total_violations,
+            "unique_drivers": s.unique_drivers,
+            "violations_per_driver": per_driver,
+            "date_range_start": str(s.date_range_start) if s.date_range_start else None,
+            "date_range_end": str(s.date_range_end) if s.date_range_end else None,
+            "imported_at": s.imported_at.isoformat() if s.imported_at else None,
+            "source_file": s.source_file,
+        })
+
+    daily_breakdown = []
+    if snaps:
+        latest_snap = max(snaps, key=lambda s: (s.imported_at or datetime.min))
+        by_date: dict = defaultdict(int)
+        for v in db.query(DvicViolation).filter(DvicViolation.snapshot_id == latest_snap.id).all():
+            if v.start_date:
+                by_date[str(v.start_date)] += 1
+        daily_breakdown = [{"date": d, "count": c} for d, c in sorted(by_date.items())]
+
+    return {
+        "weekly": weekly,
+        "latest_week_daily_breakdown": daily_breakdown,
+        "note": "Each week is its single latest rolling-7-day snapshot, not a sum of every daily re-upload. "
+                "The last 1-2 days of any snapshot are typically undercounted since Amazon's export hasn't "
+                "fully synced yet -- don't over-read a sharp drop right at the tail.",
+    }
+
+
 @router.get("/violations")
 def get_violations(week: Optional[str] = None, db: Session = Depends(get_db)):
     """Return violations grouped by driver for a given week (default: the

@@ -2,12 +2,14 @@
 End of Day Survey module.
 
 Flow:
-  1. Daily 3 PM Pacific: DM every scheduled driver their personal, signed
-     survey link → /eod?token=XXXX (or just /eod, generic/no-auth-token path).
+  1. Daily 7 PM Pacific: one mass DM to every driver scheduled today who
+     hasn't already submitted — their personal, signed survey link →
+     /eod?token=XXXX. Simplified 2026-07-27 from an earlier per-driver
+     ETA-anchored/escalating-ping design that proved too complicated to
+     reason about day to day — see run_eod_survey_check()'s docstring.
   2. Driver taps link — the token alone authenticates them (see
      _issue_eod_token()'s docstring for the trust model) — no PIN needed.
   3. Answers ~14 questions, submits.
-  4. 7:30 PM Pacific: gentle DM reminder to any scheduled driver who hasn't submitted.
 
 Admin view: /eod-admin — daily response grid with flags for outstanding items.
 """
@@ -16,7 +18,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from datetime import datetime, date, timedelta, timezone
+from datetime import datetime, date
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -650,11 +652,12 @@ def trigger_reminders(force: bool = False):
 
 
 @router.post("/trigger-check")
-def trigger_check(db: Session = Depends(get_db)):
-    """Manual, safe-to-call-anytime trigger for the real (2026-07-24+)
-    per-driver ETA-driven check — same function the 60s loop calls. Useful
-    for testing/recovery without waiting for the next tick."""
-    return run_eod_survey_check(db)
+def trigger_check(force: bool = False, db: Session = Depends(get_db)):
+    """Manual, safe-to-call-anytime trigger for the mass-send check — same
+    function the 60s loop calls. force=True bypasses the 1900-hour gate and
+    the already-sent guard, for an ad-hoc "DM everyone who hasn't submitted
+    yet" send at any time of day."""
+    return run_eod_survey_check(db, force=force)
 
 
 @router.get("/missing")
@@ -874,31 +877,24 @@ def send_eod_reminders(force: bool = False) -> dict:
         db.close()
 
 
-# ─── Per-driver ETA-driven timing (replaces the flat 3PM/7:30PM schedule) ────
+# ─── Mass send at 1900 Pacific ────────────────────────────────────────────────
 #
-# Added 2026-07-24 per explicit direction: the old fixed schedule sent every
-# driver the same DM at 3 PM regardless of their actual wave/route — a driver
-# with a 6:30-7:30 PM ETA got asked about "clock-out"/"van condition at end
-# of day" hours before they were actually done, which is a very plausible
-# contributor to the near-zero completion rate found the same day. This
-# anchors each driver's timing to their own live Cortex-pace ETA instead
-# (rostering.get_driver_expected_return_dt() — the same number the Wave
-# Status board shows as "Return"):
-#   - normal drivers: send 1 hour BEFORE their ETA
-#   - drivers pulled onto a rescue today: a rescue means they're back LATER
-#     than planned, not earlier, so send 1 hour AFTER their ORIGINAL
-#     (pre-rescue, static wave+route_duration) expected return instead —
-#     rostering.get_driver_original_return_dt(), which does not shift once
-#     they're pulled off-route.
-# Once the anchor time (the actual ETA/original-return, not the -1h/+1h send
-# time) has passed and they still haven't submitted, repeat "ping" reminders
-# fire every 30 min — until either they submit, dispatch posts an "All In"
-# message in #nday-mgt for the day, or it's past 22:00 Pacific, whichever
-# comes first. No feature flag: this fully replaces the old unconditional
-# loop, same as it was (never gated), just smarter about timing.
-_PING_INTERVAL_MINUTES = 30
+# Added 2026-07-24, simplified 2026-07-27 per explicit direction: the
+# original fixed 3 PM schedule sent every driver the same DM regardless of
+# their actual wave/route (a driver with a 6:30-7:30 PM ETA got asked about
+# "clock-out"/"van condition at end of day" hours early — a plausible
+# contributor to the near-zero completion rate found the same day). That
+# was replaced with per-driver ETA-anchored timing plus escalating pings,
+# which then proved too complicated to reason about day to day. Now: one
+# flat mass send at 1900 Pacific to every driver scheduled today who hasn't
+# already submitted. No per-driver anchor math, no rescue-specific offset,
+# no repeat pings — a driver who misses the window just doesn't get a
+# second nudge today. Still skips the send entirely if dispatch has already
+# posted an "All In" message to #nday-mgt for the day, since that's a
+# single cheap global check, not per-driver complexity. No feature flag —
+# always on, same as before.
 _ALL_IN_KEY_PREFIX = "eod_all_in_"
-_DRIVER_DM_KEY_PREFIX = "eod_dm_"
+_MASS_SEND_KEY_PREFIX = "eod_mass_send_"
 
 
 def _all_in_posted_today(db: Session) -> bool:
@@ -930,30 +926,35 @@ def _all_in_posted_today(db: Session) -> bool:
     return False
 
 
-def run_eod_survey_check(db: Session) -> dict:
+def run_eod_survey_check(db: Session, force: bool = False) -> dict:
     """Called every 60s from main.py's _eod_survey_loop — see module note
-    above. Per scheduled driver: send the initial survey DM once their
-    anchor time arrives, then escalate with a repeat ping every
-    _PING_INTERVAL_MINUTES once the real ETA/original-return has passed,
-    until they submit, an 'All In' post is seen, or it's past 22:00 PT."""
-    from api.src.database import RescueEvent
-    from api.src.routes.rostering import get_driver_expected_return_dt, get_driver_original_return_dt
+    above. Fires exactly once, at 1900 Pacific: mass-DMs the survey link to
+    every driver scheduled today who hasn't already submitted. Dedup'd via
+    ReminderThrottleState so repeat ticks within the 1900 hour don't resend.
+    force=True (manual /trigger-check only) bypasses both the hour gate and
+    the already-sent-today guard, for an ad-hoc "catch up the stragglers
+    right now" send at any time of day."""
     from api.src.driver_identity import resolve_roster_entry
 
-    import zoneinfo
-    tz = zoneinfo.ZoneInfo("America/Los_Angeles")
-    now_pt = datetime.now(tz)
+    now_pt = datetime.now(PACIFIC)
     today = now_pt.date()
     now_utc_naive = datetime.utcnow()
 
-    all_in = _all_in_posted_today(db)
-    cutoff = now_pt.hour >= 22
+    if not force and now_pt.hour != 19:
+        return {"status": "not_send_hour", "date": today.isoformat()}
+
+    if not force and _all_in_posted_today(db):
+        return {"status": "all_in_posted", "date": today.isoformat()}
+
+    state_key = f"{_MASS_SEND_KEY_PREFIX}{today.isoformat()}"
+    if not force and get_reminder_state(db, state_key).get("sent_at"):
+        return {"status": "already_sent", "date": today.isoformat()}
 
     scheduled = db.query(DailyRouteAssignment).filter_by(assignment_date=today).all()
     if not scheduled:
         return {"status": "no_schedule", "date": today.isoformat()}
 
-    sent = pinged = already_submitted = no_slack = no_eta = 0
+    sent = already_submitted = no_slack = 0
 
     for a in scheduled:
         roster_entry: Optional[DriverRosterEntry] = None
@@ -972,118 +973,35 @@ def run_eod_survey_check(db: Session) -> dict:
             no_slack += 1
             continue
 
-        rescued_today = db.query(RescueEvent).filter(
-            RescueEvent.event_date == today,
-            RescueEvent.rescuing_driver_name == a.driver_name,
-        ).first() is not None
-
-        # 1900 Pacific is now a hard, guaranteed send time regardless of
-        # whether Cortex/pace data ever loads — confirmed live 2026-07-25
-        # that CortexSnapshot (the live-pace ETA source) is only populated
-        # by a separate, manual "upload every ~2 hours" endpoint
-        # (cortex_tracking.py's POST /cortex-tracking/snapshot), not by the
-        # daily morning Cortex file check_and_notify() processes, so on a
-        # day nobody feeds that endpoint, no driver would ever get a live
-        # ETA and this redesign would silently never fire. Per explicit
-        # direction: fire at 1900 no matter what; the only reason to send
-        # earlier is real data (live Cortex pace, or the static
-        # wave+route_duration estimate) suggesting an earlier time.
-        today_1900_pt = now_pt.replace(hour=19, minute=0, second=0, microsecond=0)
-        today_1900_utc_naive = today_1900_pt.astimezone(timezone.utc).replace(tzinfo=None)
-
-        if rescued_today:
-            # Rescued drivers keep their own dedicated exception — they're
-            # legitimately expected out later than a normal return, so they
-            # are NOT capped at 1900 the way everyone else is.
-            anchor = get_driver_original_return_dt(a.driver_name, today, db)
-            send_at = anchor + timedelta(hours=1) if anchor else None
-            if anchor is None or send_at is None:
-                no_eta += 1
-                continue
-        else:
-            anchor = (
-                get_driver_expected_return_dt(a.driver_name, today, db)
-                or get_driver_original_return_dt(a.driver_name, today, db)
-            )
-            if anchor is not None:
-                # Real data (live or static) exists — cap only the send
-                # time at 1900, not the anchor itself. The anchor still
-                # drives when ping escalation starts, and it shouldn't be
-                # dragged earlier than a driver's actual expected return
-                # just because of the 1900 send-time ceiling.
-                send_at = min(anchor - timedelta(hours=1), today_1900_utc_naive)
-            else:
-                # No data at all — 1900 is the only thing we have.
-                anchor = today_1900_utc_naive
-                send_at = today_1900_utc_naive
-
-        state_key = f"{_DRIVER_DM_KEY_PREFIX}{today.isoformat()}_{roster_entry.id}"
-        state = get_reminder_state(db, state_key)
-
         eod_token = _issue_eod_token(roster_entry.id, roster_entry.position_id, roster_entry.payroll_name)
         url = f"{APP_URL}/eod?token={eod_token}"
         first_name = a.driver_name.split()[0] if a.driver_name else "there"
+        msg = (
+            f"🏁 Hi {first_name}! Time to complete your *End of Day Survey*.\n"
+            f"It only takes 2 minutes."
+        )
+        _dm(roster_entry.slack_member_id, msg, button_url=url, button_text="📋 Complete Survey")
+        sent += 1
 
-        if not state.get("initial_sent_at"):
-            # The initial send is NEVER blocked by all_in/cutoff — every
-            # driver gets at least one real attempt no matter how late in
-            # the day the loop gets a chance to run (confirmed live
-            # 2026-07-25: a delayed redeploy landing after 22:00 meant this
-            # check, applied blanket at the top of the loop before this
-            # fix, silently suppressed every driver's first-ever send for
-            # the rest of the day). all_in/cutoff only suppress the repeat
-            # ping below, which is what they were actually meant to stop.
-            if now_utc_naive >= send_at:
-                verb = "you're needed for a rescue before it," if rescued_today else "before you head out"
-                msg = (
-                    f"🏁 Hi {first_name}! Time to complete your *End of Day Survey* — "
-                    f"{'once your rescue wraps up' if rescued_today else verb}.\n"
-                    f"It only takes 2 minutes."
-                )
-                _dm(roster_entry.slack_member_id, msg, button_url=url, button_text="📋 Complete Survey")
-                set_reminder_state(db, state_key, {"initial_sent_at": now_utc_naive.isoformat(), "last_ping_at": None})
-                sent += 1
-            continue
-
-        if all_in or cutoff:
-            continue
-
-        if now_utc_naive >= anchor:
-            last_ping = state.get("last_ping_at")
-            last_ping_dt = datetime.fromisoformat(last_ping) if last_ping else None
-            if not last_ping_dt or (now_utc_naive - last_ping_dt) >= timedelta(minutes=_PING_INTERVAL_MINUTES):
-                msg = (
-                    f"🏁 Hi {first_name} — still need your *End of Day Survey* for today. "
-                    f"Takes 2 minutes, please complete it now."
-                )
-                _dm(roster_entry.slack_member_id, msg, button_url=url, button_text="📋 Complete Survey")
-                set_reminder_state(db, state_key, {**state, "last_ping_at": now_utc_naive.isoformat()})
-                pinged += 1
-
+    set_reminder_state(db, state_key, {"sent_at": now_utc_naive.isoformat(), "sent": sent})
     return {
-        "status": "checked", "date": today.isoformat(),
-        "sent": sent, "pinged": pinged, "already_submitted": already_submitted,
-        "no_slack_id": no_slack, "no_eta_yet": no_eta,
-        "all_in": all_in, "past_2200": cutoff,
+        "status": "sent", "date": today.isoformat(),
+        "sent": sent, "already_submitted": already_submitted, "no_slack_id": no_slack,
     }
 
 
 @router.get("/debug-today")
 def debug_today(db: Session = Depends(get_db)) -> dict:
     """Read-only — per-driver view of exactly what run_eod_survey_check()
-    sees right now (anchor/send_at, whether the initial DM already fired,
-    last ping time). Added 2026-07-27 to answer "did this actually send or
-    not" without guessing from the aggregate counters, which don't
-    distinguish "already sent, just not due for a re-ping yet" from
-    "never sent". Never sends anything itself."""
-    from api.src.routes.rostering import get_driver_expected_return_dt, get_driver_original_return_dt
+    sees right now (already submitted? has a Slack ID? has the 1900 mass
+    send already gone out today?). Never sends anything itself."""
     from api.src.driver_identity import resolve_roster_entry
-    from api.src.database import RescueEvent
 
     now_pt = datetime.now(PACIFIC)
     today = now_pt.date()
     now_utc_naive = datetime.utcnow()
-    today_1900_utc_naive = now_pt.replace(hour=19, minute=0, second=0, microsecond=0).astimezone(timezone.utc).replace(tzinfo=None)
+
+    mass_send_state = get_reminder_state(db, f"{_MASS_SEND_KEY_PREFIX}{today.isoformat()}")
 
     scheduled = db.query(DailyRouteAssignment).filter_by(assignment_date=today).all()
     out = []
@@ -1098,30 +1016,11 @@ def debug_today(db: Session = Depends(get_db)) -> dict:
         submitted = roster_entry and db.query(EodSurveyResponse).filter_by(roster_id=roster_entry.id, survey_date=today).first()
         row["already_submitted"] = bool(submitted)
         row["has_slack_id"] = bool(roster_entry and roster_entry.slack_member_id)
-        if not roster_entry or not roster_entry.slack_member_id or submitted:
-            out.append(row)
-            continue
-
-        rescued_today = db.query(RescueEvent).filter(
-            RescueEvent.event_date == today, RescueEvent.rescuing_driver_name == a.driver_name,
-        ).first() is not None
-        row["rescued_today"] = rescued_today
-
-        if rescued_today:
-            anchor = get_driver_original_return_dt(a.driver_name, today, db)
-            send_at = anchor + timedelta(hours=1) if anchor else None
-        else:
-            anchor = get_driver_expected_return_dt(a.driver_name, today, db) or get_driver_original_return_dt(a.driver_name, today, db)
-            send_at = min(anchor - timedelta(hours=1), today_1900_utc_naive) if anchor else today_1900_utc_naive
-
-        row["anchor_utc"] = anchor.isoformat() if anchor else None
-        row["send_at_utc"] = send_at.isoformat() if send_at else None
-        row["now_utc"] = now_utc_naive.isoformat()
-        row["send_at_has_passed"] = bool(send_at and now_utc_naive >= send_at)
-
-        state = get_reminder_state(db, f"{_DRIVER_DM_KEY_PREFIX}{today.isoformat()}_{roster_entry.id}")
-        row["initial_sent_at"] = state.get("initial_sent_at")
-        row["last_ping_at"] = state.get("last_ping_at")
         out.append(row)
 
-    return {"date": today.isoformat(), "now_utc": now_utc_naive.isoformat(), "drivers": out}
+    return {
+        "date": today.isoformat(), "now_utc": now_utc_naive.isoformat(),
+        "mass_send_hour": 19, "mass_send_sent_at": mass_send_state.get("sent_at"),
+        "all_in_posted": _all_in_posted_today(db),
+        "drivers": out,
+    }

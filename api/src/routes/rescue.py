@@ -42,7 +42,7 @@ class Stage1Request(BaseModel):
     reason_code: str
     reason_notes: Optional[str] = None
     pad_sweep_package_count: Optional[int] = None
-    expected_packages: Optional[int] = None   # Full Pull and Full Pull Assist only
+    expected_packages: Optional[int] = None   # Full Pull, Full Pull Assist, and Rescue
     meeting_address: Optional[str] = None     # Address for GPS link in Slack DMs
     opened_by: str                             # dispatcher username from frontend JWT
 
@@ -434,7 +434,7 @@ def open_rescue(payload: Stage1Request, db: Session = Depends(get_db)):
         reason_code=payload.reason_code,
         reason_notes=payload.reason_notes,
         pad_sweep_package_count=payload.pad_sweep_package_count if payload.event_type == PAD_SWEEP_TYPE else None,
-        expected_packages=payload.expected_packages if payload.event_type in ("Full Pull", "Full Pull Assist") else None,
+        expected_packages=payload.expected_packages if payload.event_type in ("Full Pull", "Full Pull Assist", "Rescue") else None,
         meeting_address=payload.meeting_address or None,
         rescued_driver_phone=rescued_info.get("phone", ""),
         rescuing_driver_phone=rescuing_info.get("phone", ""),
@@ -465,6 +465,8 @@ def open_rescue(payload: Stage1Request, db: Session = Depends(get_db)):
             "Rescue":           "This is a *Rescue* — take the packages as directed by dispatch.",
         }
         instruction = type_instructions.get(payload.event_type, "")
+        if payload.expected_packages:
+            instruction += f"\n📦 *Dispatch wants you to take {payload.expected_packages} packages* from {rescued_info['driver_name'] or 'the rescued driver'}."
 
         def _first_name(full_name: str) -> str:
             """Extract first name from 'Last, First' or return full name."""
@@ -480,6 +482,7 @@ def open_rescue(payload: Stage1Request, db: Session = Depends(get_db)):
             f"🚨 *Rescue Opened* — Route {payload.rescued_route_id} | {payload.event_type}\n"
             f"Rescued: {rescued_info['driver_name']} | Rescuing: {rescuing_info['driver_name']}\n"
             f"Reason: {payload.reason_code}"
+            + (f" | Expected packages: {payload.expected_packages}" if payload.expected_packages else "")
             + (f" | Address: {address}" if address else "")
             + f"\nEvent ID: `{event_id}` | <{stage2_url}|Log packages>"
         )

@@ -65,10 +65,9 @@ async def _dvic_reminder_loop():
 
 
 async def _eod_survey_loop():
-    """Every 60 s — per-driver ETA-driven EOD survey send + escalating
-    pings (see run_eod_survey_check()'s docstring in eod_survey.py for the
-    full timing rules, added 2026-07-24 to replace the old flat 3 PM /
-    7:30 PM schedule)."""
+    """Every 60 s — checks whether it's the 1900 Pacific mass-send hour and
+    fires the EOD survey to every not-yet-submitted scheduled driver if so
+    (see run_eod_survey_check()'s docstring in eod_survey.py)."""
     while True:
         try:
             db = SessionLocal()

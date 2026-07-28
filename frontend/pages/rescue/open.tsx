@@ -111,7 +111,7 @@ export default function OpenRescue() {
   const [result, setResult] = useState<{ event_id: string; stage2_url: string } | null>(null);
 
   const isPadSweep = form.event_type === 'Pad Sweep';
-  const needsExpected = form.event_type === 'Full Pull' || form.event_type === 'Full Pull Assist';
+  const needsExpected = form.event_type === 'Full Pull' || form.event_type === 'Full Pull Assist' || form.event_type === 'Rescue';
 
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -282,7 +282,7 @@ export default function OpenRescue() {
                 />
               )}
 
-              {/* Expected packages — Full Pull and Full Pull Assist */}
+              {/* Expected packages — Full Pull, Full Pull Assist, and Rescue */}
               {needsExpected && (
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1">
@@ -300,6 +300,8 @@ export default function OpenRescue() {
                   <p className="text-xs text-slate-400 mt-1">
                     {form.event_type === 'Full Pull'
                       ? 'Total packages remaining on the rescued route.'
+                      : form.event_type === 'Rescue'
+                      ? 'Packages dispatch wants the rescuer to take from the rescued driver.'
                       : 'Packages dispatch is sending this driver to pick up.'}
                   </p>
                 </div>

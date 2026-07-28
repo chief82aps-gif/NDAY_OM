@@ -125,6 +125,33 @@ class AsanaClient:
                 return section
         return None
 
+    def get_custom_field_settings(self, project_gid: str) -> List[Dict]:
+        """The project's full custom field schema (name, type, enum options) —
+        distinct from a single task's custom_fields values, which only show
+        fields that happen to have a value set on that task."""
+        try:
+            url = f"{self.base_url}/projects/{project_gid}/custom_field_settings"
+            params = {"opt_fields": "custom_field.name,custom_field.type,custom_field.enum_options.name"}
+            response = requests.get(url, headers=self.headers, params=params)
+            response.raise_for_status()
+            return response.json()["data"]
+        except Exception as e:
+            raise Exception(f"Failed to get custom field settings: {str(e)}")
+
+    def get_tasks_in_section(self, section_gid: str) -> List[Dict]:
+        """Tasks in one section specifically — get_tasks_in_project's own
+        section_name filter doesn't actually work (the API never returns a
+        section_name field on a task), so this is the real way to scope by
+        section rather than fetching the whole project and filtering wrong."""
+        try:
+            url = f"{self.base_url}/sections/{section_gid}/tasks"
+            params = {"opt_fields": "gid,name,custom_fields,assignee.name,completed,due_on,notes"}
+            response = requests.get(url, headers=self.headers, params=params)
+            response.raise_for_status()
+            return response.json()["data"]
+        except Exception as e:
+            raise Exception(f"Failed to get section tasks: {str(e)}")
+
     def find_task_by_gid(self, task_gid: str) -> Optional[Dict]:
         """Fetch a task by gid, returning None instead of raising if it's gone."""
         try:

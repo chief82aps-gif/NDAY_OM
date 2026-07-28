@@ -275,3 +275,52 @@ def sync_candidate(
         "google_contact_resource_name": candidate.google_contact_resource_name,
         "avg_tenure_months": candidate.avg_tenure_months,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TEMPORARY — read-only Asana process inspection for the SRD requested
+# 2026-07-28. Dumps the real "New Day Hiring" board structure (sections,
+# custom field schema, and every task per section) so the SRD can be written
+# from ground truth instead of guessing. Query-param key (not the header the
+# extension uses) so it can be opened directly in a browser. Delete this
+# endpoint once the SRD is written — it's not meant to be a permanent part
+# of the API surface.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/debug-asana-structure")
+def debug_asana_structure(key: str, project_name: Optional[str] = None):
+    expected = os.getenv("CANDIDATE_SYNC_KEY")
+    if not expected or key != expected:
+        raise HTTPException(status_code=401, detail="Invalid or missing key")
+
+    client = AsanaClient()
+    name = project_name or ASANA_PROJECT_NAME
+    project = {"gid": ASANA_PROJECT_GID} if ASANA_PROJECT_GID else client.get_project_by_name(name)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Asana project '{name}' not found")
+
+    sections = client.get_sections_in_project(project["gid"])
+    try:
+        custom_field_settings = client.get_custom_field_settings(project["gid"])
+    except Exception as exc:
+        custom_field_settings = [{"error": str(exc)}]
+
+    section_dump = []
+    for section in sections:
+        try:
+            tasks = client.get_tasks_in_section(section["gid"])
+        except Exception as exc:
+            tasks = [{"error": str(exc)}]
+        section_dump.append({
+            "section_name": section["name"],
+            "section_gid": section["gid"],
+            "task_count": len(tasks) if tasks and "error" not in tasks[0] else 0,
+            "tasks": tasks,
+        })
+
+    return {
+        "project_name": name,
+        "project_gid": project["gid"],
+        "custom_field_schema": custom_field_settings,
+        "sections": section_dump,
+    }

@@ -150,6 +150,12 @@ Raised directly by the user: since NDL doesn't control how many routes Amazon as
 
 So a driver "spilling over" from their nominal Wave 2 into Wave 3 because that's where Amazon's real volume put them that day is **normal and expected** — they correctly reach Wave 3's lead that day (operational), while their team average score/mentoring/discipline attribution stays with their standing Wave 2 team (competition) regardless. Fixed 2026-07-29: `check_roster_discrepancies()` no longer flags this spillover as a `wave_mismatch` discrepancy — it isn't an error, so dispatch shouldn't be nagged about it. `generate_wave_roster_suggestion()` stays as built — standing team + blended rank, filtered to who's scheduled that night — since a headcount cross-check was never actually necessary for this to work correctly.
 
+## 5.0.2. Dynamic wave channels — "PTT-lite" via Slack's native voice clips (added 2026-07-29)
+
+User wanted push-to-talk voice communication layered on the wave/team structure. Researched Zello Work's API directly (real, documented — `channel/add`, `user/addto`/`removefrom`, channel roles) but it's paid-tier only and ruled out on cost. True live PTT would need a separate native app (see the pre-existing `Governance/02_NDL_Android_PTT_Messaging_App.md`, which already concluded Slack has no embeddable PTT SDK at all) — a genuinely bigger, separate project, logged to `project_ptt_future_options.md` rather than built now.
+
+**What shipped instead ("Option A")**: Slack's own client already has native voice-clip recording — no new app or SDK needed for the audio itself. `sync_wave_channels()` auto-creates one Slack channel per wave (`wave-1-team` … `wave-5-4x4-truck`) and keeps membership synced to whoever's **actually working that wave today** (operational, via `wave_number_for_assignment()` on real `DailyRouteAssignment` rows — same operational/standing split as §5.0.1), plus that wave's lead(s). A driver just opens their current wave's channel and records a voice clip like normal Slack usage — it reaches exactly the right group automatically, no extra step. Gated by `WAVE_PTT_CHANNELS_ACTIVE` (default false); syncs every 60s from 6-11 AM Pacific once enabled (idempotent, safe to re-run repeatedly as rosters get finalized through the morning).
+
 ## 5.1. Follow-up found during build (not yet fixed)
 
 `rostering.py` has **two separate driver-facing DM flows**, and only one was wave-aware even after this build's fix:

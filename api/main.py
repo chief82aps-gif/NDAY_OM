@@ -119,6 +119,29 @@ async def _wave_competition_standings_loop():
         await asyncio.sleep(60)
 
 
+async def _wave_channel_sync_loop():
+    """Every 60 s, active 6-11 AM Pacific — delegates to
+    wave_lead.sync_wave_channels(), which no-ops outside that window and
+    outside WAVE_PTT_CHANNELS_ACTIVE (default false). Safe to re-run
+    repeatedly (idempotent membership sync, not a one-shot message send),
+    so this just keeps correcting drift through the morning as rosters
+    get finalized, rather than a strict single daily fire."""
+    while True:
+        try:
+            now_pt = datetime.now(PACIFIC)
+            if 6 <= now_pt.hour < 11:
+                db = SessionLocal()
+                try:
+                    await asyncio.to_thread(wave_lead.sync_wave_channels, db)
+                except Exception as exc:
+                    logger.warning("Wave channel sync loop error: %s", exc)
+                finally:
+                    db.close()
+        except Exception as exc:
+            logger.warning("Wave channel sync loop outer error: %s", exc)
+        await asyncio.sleep(60)
+
+
 async def _sentiment_survey_report_loop():
     """Every 60 s — delegates to sentiment_survey.send_daily_sentiment_report(),
     which no-ops outside the 21:00+ Pacific window and respects an
@@ -604,6 +627,7 @@ async def startup():
     asyncio.create_task(manager_accountability.manager_accountability_loop())
     asyncio.create_task(_callout_queue_loop())
     asyncio.create_task(_wave_competition_standings_loop())
+    asyncio.create_task(_wave_channel_sync_loop())
     ensure_driver_shift_dm_checklist_columns()
     asyncio.create_task(_nightly_roster_reminder_loop())
     asyncio.create_task(_grounded_van_watcher_loop())

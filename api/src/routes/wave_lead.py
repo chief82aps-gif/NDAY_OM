@@ -56,6 +56,18 @@ WAVE_COMPETITION_ACTIVE = os.getenv("WAVE_COMPETITION_ACTIVE", "false").lower() 
 _COMPETITION_MESSAGE_KEY = "wave_competition_daily_message"
 _COMPETITION_SEND_HOUR = 7  # 7 AM Pacific
 
+# Dynamic wave channels — "Option A" PTT-lite, added 2026-07-29: Slack's own
+# client already has native voice-clip recording/sending built in, so no new
+# app or paid PTT SDK (Zello Work, Agora, etc. -- see
+# project_ptt_future_options.md) is needed for a driver to record a voice
+# message that reaches exactly their current wave's group. This just
+# auto-creates one Slack channel per wave (1-5) and keeps membership synced
+# to whoever's ACTUALLY working that wave today (operational, not standing
+# team -- same distinction as _resolve_wave_lead_for_driver() in
+# rostering.py), including that wave's lead(s).
+WAVE_PTT_CHANNELS_ACTIVE = os.getenv("WAVE_PTT_CHANNELS_ACTIVE", "false").lower() == "true"
+_WAVE_CHANNEL_SYNC_KEY_PREFIX = "wave_ptt_channel_"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Seeding — the 8 teams are static reference data, created once
@@ -668,3 +680,144 @@ def resolve_discrepancy(
     row.resolved_at = datetime.utcnow()
     db.commit()
     return {"status": "resolved", "id": discrepancy_id}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dynamic wave channels (PTT-lite via Slack's native voice clips)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _slack_client():
+    token = os.getenv("SLACK_BOT_TOKEN")
+    if not token:
+        return None
+    from slack_sdk import WebClient
+    return WebClient(token=token)
+
+
+_WAVE_CHANNEL_NAMES = {
+    1: "wave-1-team", 2: "wave-2-team", 3: "wave-3-team", 4: "wave-4-team",
+    WAVE_5: "wave-5-4x4-truck",
+}
+
+
+def _get_or_create_wave_channel(client, wave_number: int, db: Session) -> Optional[str]:
+    """Idempotent — returns the Slack channel ID for a wave's dynamic
+    channel, creating it via conversations_create() the first time and
+    caching the ID afterward (ReminderThrottleState) so we don't re-create
+    or re-list on every sync."""
+    state_key = f"{_WAVE_CHANNEL_SYNC_KEY_PREFIX}{wave_number}"
+    cached = get_reminder_state(db, state_key)
+    if cached.get("channel_id"):
+        return cached["channel_id"]
+
+    name = _WAVE_CHANNEL_NAMES[wave_number]
+    try:
+        resp = client.conversations_create(name=name, is_private=False)
+        channel_id = resp["channel"]["id"]
+    except Exception as exc:
+        # name_taken means it already exists (e.g. created manually before
+        # this ran) -- look it up by name instead of failing.
+        if "name_taken" in str(exc):
+            try:
+                cursor = None
+                channel_id = None
+                while True:
+                    listing = client.conversations_list(types="public_channel", limit=200, cursor=cursor)
+                    channel_id = next((c["id"] for c in listing["channels"] if c["name"] == name), None)
+                    if channel_id or not listing.get("response_metadata", {}).get("next_cursor"):
+                        break
+                    cursor = listing["response_metadata"]["next_cursor"]
+                if not channel_id:
+                    logger.warning("Wave channel '%s' reported name_taken but not found in listing", name)
+                    return None
+            except Exception as exc2:
+                logger.warning("Wave channel lookup-by-name failed for '%s': %s", name, exc2)
+                return None
+        else:
+            logger.warning("Wave channel create failed for wave %s: %s", wave_number, exc)
+            return None
+
+    set_reminder_state(db, state_key, {"channel_id": channel_id})
+    return channel_id
+
+
+def sync_wave_channels(db: Session) -> dict:
+    """Daily sync — makes each wave's Slack channel membership match
+    exactly who's actually working that wave today (operational, via
+    wave_number_for_assignment() on real DailyRouteAssignment rows), plus
+    that wave's standing lead(s). Gated by WAVE_PTT_CHANNELS_ACTIVE."""
+    if not WAVE_PTT_CHANNELS_ACTIVE:
+        return {"status": "inactive", "note": "Set WAVE_PTT_CHANNELS_ACTIVE=true on Render to enable"}
+
+    client = _slack_client()
+    if not client:
+        return {"status": "no_slack_client"}
+
+    try:
+        bot_user_id = client.auth_test()["user_id"]
+    except Exception as exc:
+        logger.warning("Wave channel sync: auth_test failed: %s", exc)
+        bot_user_id = None
+
+    today = datetime.now(PACIFIC).date()
+    assignments = db.query(DailyRouteAssignment).filter(DailyRouteAssignment.assignment_date == today).all()
+
+    desired: dict[int, set[str]] = {n: set() for n in (*WAVE_NUMBERS, WAVE_5)}
+    for a in assignments:
+        if not a.roster_id:
+            continue
+        entry = db.query(DriverRosterEntry).filter(DriverRosterEntry.id == a.roster_id).first()
+        if not entry or not entry.slack_member_id or not entry.slack_verified:
+            continue
+        wave_number = wave_number_for_assignment(a.wave, getattr(a, "service_type", None))
+        desired[wave_number].add(entry.slack_member_id)
+
+    for wave_number in (*WAVE_NUMBERS, WAVE_5):
+        for lead_entry in get_active_wave_leads(wave_number, db):
+            if lead_entry.slack_member_id and lead_entry.slack_verified:
+                desired[wave_number].add(lead_entry.slack_member_id)
+
+    results = {}
+    for wave_number, desired_members in desired.items():
+        channel_id = _get_or_create_wave_channel(client, wave_number, db)
+        if not channel_id:
+            results[wave_number] = {"status": "no_channel"}
+            continue
+
+        try:
+            current = set(client.conversations_members(channel=channel_id)["members"])
+        except Exception as exc:
+            logger.warning("Failed to list members for wave %s channel: %s", wave_number, exc)
+            results[wave_number] = {"status": "list_failed"}
+            continue
+
+        keep = set(desired_members)
+        if bot_user_id:
+            keep.add(bot_user_id)  # never kick the bot itself
+
+        added = removed = 0
+        for uid in (desired_members - current):
+            try:
+                client.conversations_invite(channel=channel_id, users=uid)
+                added += 1
+            except Exception as exc:
+                logger.info("Wave %s channel invite skipped for %s: %s", wave_number, uid, exc)
+        for uid in (current - keep):
+            try:
+                client.conversations_kick(channel=channel_id, user=uid)
+                removed += 1
+            except Exception as exc:
+                logger.info("Wave %s channel kick skipped for %s: %s", wave_number, uid, exc)
+
+        results[wave_number] = {"channel_id": channel_id, "added": added, "removed": removed, "target_size": len(desired_members)}
+
+    return {"status": "synced", "date": today.isoformat(), "waves": results}
+
+
+@router.post("/sync-channels")
+def trigger_sync_wave_channels(
+    db: Session = Depends(get_db),
+    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager")),
+):
+    """Manual trigger for testing/recovery — same function the daily loop calls."""
+    return sync_wave_channels(db)

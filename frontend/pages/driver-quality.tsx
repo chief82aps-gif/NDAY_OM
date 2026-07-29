@@ -42,6 +42,9 @@ const TIER_LABEL: Record<string, string> = {
   gold:     'Gold',
   silver:   'Silver',
   bronze:   'Bronze',
+  tin:      'Tin',
+  lead:     'Lead',
+  sawdust:  'Sawdust',
   gray:     'No Data',
 };
 
@@ -50,6 +53,9 @@ const TIER_COLOR: Record<string, string> = {
   gold:     '#f59e0b',
   silver:   '#94a3b8',
   bronze:   '#b45309',
+  tin:      '#9ca3af',
+  lead:     '#52525b',
+  sawdust:  '#a8763e',
   gray:     '#555',
 };
 
@@ -58,6 +64,9 @@ const TIER_BG: Record<string, string> = {
   gold:     '#3d2e00',
   silver:   '#1e293b',
   bronze:   '#2c1a00',
+  tin:      '#26282c',
+  lead:     '#1c1c1f',
+  sawdust:  '#2b1d0f',
   gray:     '#1a1a1a',
 };
 
@@ -66,6 +75,9 @@ const TIER_ICON: Record<string, string> = {
   gold:     '⭐',
   silver:   '✨',
   bronze:   '🔶',
+  tin:      '🥫',
+  lead:     '🪨',
+  sawdust:  '🪵',
   gray:     '⚪',
 };
 
@@ -284,6 +296,9 @@ export default function DriverQualityPage() {
             <option value="gold">Gold</option>
             <option value="silver">Silver</option>
             <option value="bronze">Bronze</option>
+            <option value="tin">Tin</option>
+            <option value="lead">Lead</option>
+            <option value="sawdust">Sawdust</option>
           </select>
           <input
             type="number"
@@ -298,7 +313,7 @@ export default function DriverQualityPage() {
         {/* Tier summary chips */}
         {data && (
           <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
-            {(['platinum', 'gold', 'silver', 'bronze'] as const).map(t => (
+            {(['platinum', 'gold', 'silver', 'bronze', 'tin', 'lead', 'sawdust'] as const).map(t => (
               <div
                 key={t}
                 style={{ background: TIER_BG[t], border: `1px solid ${TIER_COLOR[t]}`, borderRadius: 8, padding: '6px 16px', cursor: 'pointer', opacity: tierFilter !== 'all' && tierFilter !== t ? 0.4 : 1 }}

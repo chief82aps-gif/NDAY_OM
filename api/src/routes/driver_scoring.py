@@ -32,7 +32,7 @@ the 30-route trailing-6-week floor.
 
 Tier cutoffs (TIER_THRESHOLDS) were recalibrated 2026-07-29 for this
 20/40/40 blend, per explicit direction: Platinum >99, Gold 98-99,
-Silver 97-98, Bronze <=97.
+Silver 97-98, Bronze 92-97, Tin 91-92, Lead 90-91, Sawdust <=90.
 
   Note: Amazon's own scoring page also lists a Safe Driving Metric
   (FICO) row, currently weighted 0% -- intentionally excluded here since
@@ -49,11 +49,13 @@ Eligibility (ranking + high-performer bonus) requires BOTH:
 A driver failing either still gets a score shown (useful for coaching),
 just flagged ineligible rather than silently hidden.
 
-Tier thresholds (tier_for()) mirror Amazon's own Platinum/Gold/Silver/
-Bronze cutoffs (screenshot, 2026-07-22: Platinum >99.48, Gold >94,
-Silver >92, Bronze <=92) -- applied here to OUR custom-blended overall
-score, not Amazon's own overall_score, per explicit 2026-07-22 decision.
-high_performer_eligible deliberately keeps the exact same 92.0 floor the
+Tier thresholds (tier_for()) originally mirrored Amazon's own Platinum/
+Gold/Silver/Bronze cutoffs (screenshot, 2026-07-22), then were replaced
+entirely by NDAY's own bands (see TIER_THRESHOLDS above) once the 20/40/40
+blend and the Tin/Lead/Sawdust tiers were added -- applied here to OUR
+custom-blended overall score, not Amazon's own overall_score, per
+explicit 2026-07-22 decision. high_performer_eligible deliberately keeps
+the exact same 92.0 floor the
 old green/yellow/red system used (i.e. any named tier, not just
 Platinum) -- switching what counts as "high performer" would be a real
 bonus-eligibility policy change nobody asked for here, so it's
@@ -102,12 +104,18 @@ ROUTE_ELIGIBILITY_WEEKS = 6
 # Recalibrated 2026-07-29 for the 20/40/40 blend (explicit request) --
 # these no longer mirror Amazon's own DA Performance page cutoffs, they're
 # NDAY's own bands for the blended overall score: Platinum >99, Gold
-# 98-99, Silver 97-98, Bronze <=97. Each tier's threshold is its own upper
-# bound (you must exceed a tier's listed number to reach the tier above it).
+# 98-99, Silver 97-98, Bronze 92-97, Tin 91-92, Lead 90-91, Sawdust <=90.
+# Each tier's threshold is its own upper bound (you must exceed a tier's
+# listed number to reach the tier above it). Bronze through Sawdust added
+# same day per explicit request, extending below what used to be a single
+# catch-all "Bronze" floor.
 TIER_THRESHOLDS = [
     ("platinum", 99.0),
     ("gold", 98.0),
     ("silver", 97.0),
+    ("bronze", 92.0),
+    ("tin", 91.0),
+    ("lead", 90.0),
 ]
 HIGH_PERFORMER_THRESHOLD = 92.0   # unchanged floor -- see module docstring
 
@@ -134,17 +142,16 @@ def _attendance_score(driver_name: str, db: Session) -> float:
 
 
 def tier_for(score: Optional[float]) -> str:
-    """Platinum/Gold/Silver/Bronze per Amazon's current cutoffs (see
-    TIER_THRESHOLDS above), applied to our own blended overall/category
-    scores. "gray" for a score we couldn't compute at all (missing data),
-    "bronze" for anything at or below the Silver cutoff -- Amazon's own
-    UI doesn't define a tier below Bronze."""
+    """Platinum down through Sawdust per TIER_THRESHOLDS above, applied to
+    our own blended overall/category scores. "gray" for a score we
+    couldn't compute at all (missing data); "sawdust" is the bottom
+    catch-all for anything at or below the Lead cutoff."""
     if score is None:
         return "gray"
     for tier_name, cutoff in TIER_THRESHOLDS:
         if score > cutoff:
             return tier_name
-    return "bronze"
+    return "sawdust"
 
 
 def compute_driver_scores(db: Session) -> list[dict]:

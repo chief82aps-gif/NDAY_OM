@@ -305,6 +305,12 @@ def build_dispatch_home_view_blocks(db: Session) -> list:
                     "text": {"type": "plain_text", "text": "📉 DVIC Trend", "emoji": True},
                     "url": _slack_login_url("/dvic-trend"),
                 },
+                {
+                    "type": "button",
+                    "action_id": "dispatch_open_wave_lead_admin",
+                    "text": {"type": "plain_text", "text": "🌊 Wave Lead Admin", "emoji": True},
+                    "url": _slack_login_url("/wave-lead-admin"),
+                },
             ],
         },
         {

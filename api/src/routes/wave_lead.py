@@ -23,8 +23,10 @@ system of record for rostering; see WaveRosterSuggestion/WaveRosterDiscrepancy.
 from __future__ import annotations
 
 import logging
+import os
 from datetime import date, datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -34,15 +36,25 @@ from api.src.database import (
     get_db, DriverRosterEntry,
     WaveLeadRole, WaveTeam, WaveTeamMembership,
     WaveRosterSuggestion, WaveRosterDiscrepancy,
+    get_reminder_state, set_reminder_state,
 )
 from api.src.authorization import require_any_role
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/wave-lead", tags=["wave-lead"])
 
+PACIFIC = ZoneInfo("America/Los_Angeles")
+MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
+
 WAVE_NUMBERS = (1, 2, 3, 4)          # standard waves, each with one standing lead + a team per half
 WAVE_5 = 5                            # the 4x4 truck -- two leads, no team
 HALVES = ("front", "back")            # Front Half: Sun-Wed: Back Half: Wed-Sun (Wednesday is a real overlap day)
+
+# Feature gate — same pattern as every other new automated send this
+# session: off until confirmed working, then flipped on deliberately.
+WAVE_COMPETITION_ACTIVE = os.getenv("WAVE_COMPETITION_ACTIVE", "false").lower() == "true"
+_COMPETITION_MESSAGE_KEY = "wave_competition_daily_message"
+_COMPETITION_SEND_HOUR = 7  # 7 AM Pacific
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -329,3 +341,69 @@ def deactivate_wave_lead(
     role.active = False
     db.commit()
     return {"status": "deactivated", "role_id": role_id}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Morning competition standings message — friendly inter-team competition,
+# per explicit request. Posts once a day to #nday-mgt naming the leading
+# team(s). Awards/bonuses tied to this are a stated future idea, not built.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _standings_message_text(standings: list[dict]) -> str:
+    scored = [t for t in standings if t["avg_score"] is not None]
+    if not scored:
+        return "🏁 *Wave Team Standings* — no scored teams yet (need drivers assigned + quality data ingested)."
+
+    lines = ["🏁 *Wave Team Standings* — friendly competition, updated daily!", ""]
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+    for t in standings:
+        if t["avg_score"] is None:
+            continue
+        medal = medals.get(t["rank"], f"{t['rank']}.")
+        lines.append(
+            f"{medal} *{t['team_label']}* — {t['avg_score']} avg score "
+            f"({t['scored_member_count']}/{t['member_count']} drivers scored)"
+        )
+    leader = scored[0]
+    lines.append("")
+    lines.append(f"👑 *{leader['team_label']}* is leading today. Keep it up!")
+    return "\n".join(lines)
+
+
+def send_wave_competition_standings(db: Session, force: bool = False) -> dict:
+    """Once per day: post the team standings to #nday-mgt. force=True
+    bypasses the hour gate and already-sent guard for manual testing/
+    an ad-hoc re-send."""
+    if not WAVE_COMPETITION_ACTIVE:
+        return {"status": "inactive", "note": "Set WAVE_COMPETITION_ACTIVE=true on Render to enable"}
+
+    now_pt = datetime.now(PACIFIC)
+    today = now_pt.date()
+
+    if not force and now_pt.hour != _COMPETITION_SEND_HOUR:
+        return {"status": "not_send_hour", "date": today.isoformat()}
+
+    state_key = f"{_COMPETITION_MESSAGE_KEY}_{today.isoformat()}"
+    if not force and get_reminder_state(db, state_key).get("sent_at"):
+        return {"status": "already_sent", "date": today.isoformat()}
+
+    standings = get_team_standings(db)
+    text = _standings_message_text(standings)
+
+    try:
+        token = os.getenv("SLACK_BOT_TOKEN")
+        if token:
+            from slack_sdk import WebClient
+            WebClient(token=token).chat_postMessage(channel=MGT_CHANNEL, text=text)
+    except Exception as exc:
+        logger.warning("Wave competition standings post failed: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+    set_reminder_state(db, state_key, {"sent_at": datetime.utcnow().isoformat()})
+    return {"status": "sent", "date": today.isoformat(), "standings": standings}
+
+
+@router.post("/trigger-standings")
+def trigger_standings(force: bool = True, db: Session = Depends(get_db)):
+    """Manual trigger for testing/recovery — same function the morning loop calls."""
+    return send_wave_competition_standings(db, force=force)

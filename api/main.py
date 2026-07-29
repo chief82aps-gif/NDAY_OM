@@ -100,6 +100,25 @@ async def _rescue_payroll_hr_report_loop():
         await asyncio.sleep(60)
 
 
+async def _wave_competition_standings_loop():
+    """Every 60 s — delegates to wave_lead.send_wave_competition_standings(),
+    which no-ops outside the 7 AM Pacific send hour and respects an
+    "already sent today" guard. Gated by WAVE_COMPETITION_ACTIVE (default
+    false)."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(wave_lead.send_wave_competition_standings, db)
+            except Exception as exc:
+                logger.warning("Wave competition standings loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("Wave competition standings loop outer error: %s", exc)
+        await asyncio.sleep(60)
+
+
 async def _sentiment_survey_report_loop():
     """Every 60 s — delegates to sentiment_survey.send_daily_sentiment_report(),
     which no-ops outside the 21:00+ Pacific window and respects an
@@ -584,6 +603,7 @@ async def startup():
     asyncio.create_task(_eod_survey_loop())
     asyncio.create_task(manager_accountability.manager_accountability_loop())
     asyncio.create_task(_callout_queue_loop())
+    asyncio.create_task(_wave_competition_standings_loop())
     ensure_driver_shift_dm_checklist_columns()
     asyncio.create_task(_nightly_roster_reminder_loop())
     asyncio.create_task(_grounded_van_watcher_loop())

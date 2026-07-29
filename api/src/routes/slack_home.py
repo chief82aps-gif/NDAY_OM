@@ -64,6 +64,9 @@ router = APIRouter(prefix="/slack", tags=["slack"])
 # same as the others.
 _DM_ACTIVE = os.getenv("DRIVER_DM_ACTIVE", "false").lower() == "true"
 
+MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
+_SLACK_TEAM_ID = os.getenv("SLACK_TEAM_ID")
+
 _INACTIVE_BLOCKS = [
     {"type": "header", "text": {"type": "plain_text", "text": "🚧 Coming Soon", "emoji": True}},
     {
@@ -234,6 +237,53 @@ def _bonus_ledger_block(driver: DriverRosterEntry, db: Session) -> Optional[list
             }],
         },
     ]
+
+
+def _communication_buttons_block(driver: DriverRosterEntry, db: Session) -> Optional[dict]:
+    """Quick-access row added 2026-07-29: a deep link to the driver's
+    *actual* wave-of-the-day PTT-lite channel (see wave_lead.py's
+    sync_wave_channels()) and a deep link straight to #nday-mgt so a
+    driver can message dispatch without hunting for the channel. Slack
+    has no API to trigger the native voice-clip recorder itself — these
+    are `slack://channel` deep links (same scheme already used for the
+    Home tab link in slack_interactions.py), not a custom PTT control.
+    Either button is simply omitted if we don't have what we need to
+    build its link (no team ID configured, or today's wave channel
+    hasn't been created yet)."""
+    if not _SLACK_TEAM_ID:
+        return None
+
+    elements = []
+
+    from api.src.database import DailyRouteAssignment
+    from api.src.routes.wave_lead import wave_number_for_assignment, get_wave_channel_id
+
+    today = date.today()
+    assignment = (
+        db.query(DailyRouteAssignment)
+        .filter(DailyRouteAssignment.assignment_date == today, DailyRouteAssignment.roster_id == driver.id)
+        .first()
+    )
+    if assignment:
+        wave_number = wave_number_for_assignment(assignment.wave, getattr(assignment, "service_type", None))
+        channel_id = get_wave_channel_id(wave_number, db)
+        if channel_id:
+            elements.append({
+                "type": "button",
+                "action_id": "home_talk_to_wave_team",
+                "text": {"type": "plain_text", "text": "🎙️ Talk to My Wave Team", "emoji": True},
+                "style": "primary",
+                "url": f"slack://channel?team={_SLACK_TEAM_ID}&id={channel_id}",
+            })
+
+    elements.append({
+        "type": "button",
+        "action_id": "home_message_dispatch",
+        "text": {"type": "plain_text", "text": "💬 Message Dispatch", "emoji": True},
+        "url": f"slack://channel?team={_SLACK_TEAM_ID}&id={MGT_CHANNEL}",
+    })
+
+    return {"type": "actions", "elements": elements} if elements else None
 
 
 def _redeem_bonus_modal(banked_amount: int) -> dict:
@@ -409,6 +459,10 @@ def build_home_view_blocks(driver: Optional[DriverRosterEntry], db: Session) -> 
             "type": "section",
             "text": {"type": "mrkdwn", "text": f"⏱️ *Est. Return In:* {countdown}"},
         })
+
+    comms_block = _communication_buttons_block(driver, db)
+    if comms_block:
+        blocks.append(comms_block)
 
     blocks.append({"type": "divider"})
 

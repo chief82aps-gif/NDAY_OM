@@ -113,6 +113,15 @@ def get_team_for_driver(roster_id: int, db: Session) -> Optional[WaveTeam]:
     return db.query(WaveTeam).filter(WaveTeam.id == membership.team_id).first()
 
 
+def get_wave_channel_id(wave_number: int, db: Session) -> Optional[str]:
+    """Read-only lookup of a wave's Slack channel ID (for the Home tab's
+    quick-link button) — never creates it. Returns None if the channel
+    hasn't been created yet (WAVE_PTT_CHANNELS_ACTIVE off, or sync hasn't
+    run) -- callers should just omit the button/link in that case."""
+    state = get_reminder_state(db, f"{_WAVE_CHANNEL_SYNC_KEY_PREFIX}{wave_number}")
+    return state.get("channel_id")
+
+
 def team_label(team: WaveTeam) -> str:
     return f"Wave {team.wave_number} {team.half.capitalize()}"
 

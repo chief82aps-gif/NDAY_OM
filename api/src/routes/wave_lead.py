@@ -116,8 +116,15 @@ def wave_number_for_assignment(wave_time: Optional[str], service_type: Optional[
     12pm=4) -- duplicated here as a small standalone function rather than
     reaching into that class method, since this is now the canonical
     version for anything lead-resolution-related."""
-    if service_type and "amflex" in service_type.lower():
-        return WAVE_5
+    if service_type:
+        st = service_type.lower()
+        # "amflex" is the normalized Fleet-side name (normalization.py);
+        # "4wd"/"p31" catch the raw Amazon string ("4WD P31 Delivery
+        # Truck") before/without normalization -- confirmed live
+        # 2026-07-29 that the raw form is what actually shows up in at
+        # least one real data view, so both must be checked.
+        if "amflex" in st or "4wd" in st or "p31" in st:
+            return WAVE_5
 
     if not wave_time:
         return 1

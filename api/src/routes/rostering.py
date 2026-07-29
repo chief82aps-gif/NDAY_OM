@@ -1923,15 +1923,22 @@ def _calc_return_time(wave_str: str, duration_minutes: Optional[int]) -> Optiona
 
 def _resolve_wave_lead_for_driver(a: DailyRouteAssignment, shift_date: date, db: Session) -> tuple[str, Optional[str]]:
     """Per-driver wave-lead resolution — added 2026-07-29 for the Wave Lead
-    module (Governance/05_NDL_Wave_Lead_Module_SRD.md). Replaces the old
-    single-global-lead-for-everyone lookup: each driver's own wave (bucketed
-    from their assignment's wave time / vehicle service type) gets its own
-    lead. Still gated by LEAD_ROUTING_ACTIVE, same as before."""
+    module (Governance/05_NDL_Wave_Lead_Module_SRD.md). Each driver's own
+    wave (bucketed from their assignment's wave time / vehicle service
+    type) resolves to Wave 5's lead directly, or (waves 1-4) to the Senior
+    Wave Lead for the driver's standing half (front/back) -- corrected
+    2026-07-29 from an earlier per-individual-wave "Standing Wave Lead"
+    model that was never a real feature. Still gated by
+    LEAD_ROUTING_ACTIVE, same as before."""
     from api.src.routes.driver_lead_schedule import get_current_wave_lead, LEAD_ROUTING_ACTIVE
-    from api.src.routes.wave_lead import wave_number_for_assignment
+    from api.src.routes.wave_lead import wave_number_for_assignment, get_team_for_driver
 
     wave_number = wave_number_for_assignment(a.wave, getattr(a, "service_type", None))
-    wave_lead_name, wave_lead_slack_id, _source = get_current_wave_lead(shift_date, wave_number, db)
+    half = None
+    if wave_number != 5 and a.roster_id:
+        team = get_team_for_driver(a.roster_id, db)
+        half = team.half if team else None
+    wave_lead_name, wave_lead_slack_id, _source = get_current_wave_lead(shift_date, wave_number, half, db)
     if not LEAD_ROUTING_ACTIVE:
         wave_lead_slack_id = None  # keep the legacy Zello-text DM until the flag is flipped on
     return wave_lead_name, wave_lead_slack_id
@@ -2037,11 +2044,17 @@ def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str
     # Static "TBD" placeholder is intentional, not a bug.
     fields.append({"type": "mrkdwn", "text": "*ACE Eligibility:*\nTBD"})
 
-    from api.src.routes.wave_lead import wave_number_for_assignment
+    from api.src.routes.wave_lead import wave_number_for_assignment, get_team_for_driver
+    _wave_number_for_dm = wave_number_for_assignment(a.wave, getattr(a, "service_type", None))
+    _half_for_dm = None
+    if _wave_number_for_dm != 5 and a.roster_id and db is not None:
+        _team_for_dm = get_team_for_driver(a.roster_id, db)
+        _half_for_dm = _team_for_dm.half if _team_for_dm else None
     arrival_value = json.dumps({
         "shift_date": a.assignment_date.isoformat(),
         "driver_name": a.driver_name,
-        "wave_number": wave_number_for_assignment(a.wave, getattr(a, "service_type", None)),
+        "wave_number": _wave_number_for_dm,
+        "half": _half_for_dm,
     })
 
     # Same one-click treatment as _build_shift_dm()'s "Can't Make It" —

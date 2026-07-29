@@ -95,27 +95,61 @@ def get_current_lead(shift_date: date, db: Session) -> tuple[str, Optional[str],
     return name, slack_id, "default_rotation"
 
 
-def get_current_wave_lead(shift_date: date, wave_number: int, db: Session) -> tuple[str, Optional[str], str]:
-    """Resolve the lead for a specific wave (1-5) on a given date — added
-    2026-07-29 for the Wave Lead module (Governance/05_NDL_Wave_Lead_Module_SRD.md).
-    Priority:
-      1. A date-specific manual override for this exact wave
-         (DailyLeadAssignment, scope_type='wave', scope_key='Wave N') --
-         the scope_type/scope_key columns were reserved for exactly this
-         since Phase 1, per this module's original SRD.
-      2. The standing WaveLeadRole assignment for this wave (wave_lead.py) --
-         the normal case once wave leads are configured.
+def get_current_wave5_lead(shift_date: date, db: Session) -> tuple[str, Optional[str], str]:
+    """Resolve Wave 5's (4x4 truck) lead for a given date. Priority:
+      1. A date-specific manual override (DailyLeadAssignment,
+         scope_type='wave', scope_key='Wave 5').
+      2. The standing WaveLeadRole assignment for wave_number=5
+         (wave_lead.py) -- the normal case once configured.
       3. Falls back to the legacy single global lead (get_current_lead) if
-         neither is set yet, so nothing breaks for a wave not yet configured.
-    Wave 5 (the 4x4 truck) can have two active WaveLeadRole rows; this
-    returns the first one found for single-recipient DM routing -- use
+         neither is set yet.
+    Wave 5 can have two active WaveLeadRole rows; this returns the first
+    one found for single-recipient DM routing -- use
     wave_lead.get_active_wave_leads() directly if both are needed."""
-    scope_key = f"Wave {wave_number}"
     row = (
         db.query(DailyLeadAssignment)
         .filter(
             DailyLeadAssignment.schedule_date == shift_date,
             DailyLeadAssignment.scope_type == "wave",
+            DailyLeadAssignment.scope_key == "Wave 5",
+        )
+        .order_by(DailyLeadAssignment.created_at.desc())
+        .first()
+    )
+    if row:
+        return row.driver_name, _resolve_slack_id(row.driver_name, db), row.source
+
+    from api.src.routes.wave_lead import get_active_wave_leads, WAVE_5
+    leads = get_active_wave_leads(WAVE_5, db)
+    if leads:
+        entry = leads[0]
+        slack_id = entry.slack_member_id if (entry.slack_verified and entry.slack_member_id) else None
+        return entry.payroll_name, slack_id, "wave_lead_role"
+
+    return get_current_lead(shift_date, db)
+
+
+def get_current_senior_wave_lead(shift_date: date, half: Optional[str], db: Session) -> tuple[str, Optional[str], str]:
+    """Resolve the Senior Wave Lead for a half ("front"/"back") on a given
+    date -- roves across ALL of waves 1-4, replacing the removed
+    per-individual-wave "Standing Wave Lead" model (corrected 2026-07-29;
+    that was never a real feature). Priority:
+      1. A date-specific manual override for this half (DailyLeadAssignment,
+         scope_type='half', scope_key='Front Half'/'Back Half').
+      2. The standing Senior Wave Lead for this half (wave_lead.py) --
+         Spencer=front, Gallo=back, normally.
+      3. Falls back to the legacy single global lead (get_current_lead) if
+         neither is set, or if half couldn't be resolved for this driver
+         (no standing team assignment yet)."""
+    if not half:
+        return get_current_lead(shift_date, db)
+
+    scope_key = f"{half.capitalize()} Half"
+    row = (
+        db.query(DailyLeadAssignment)
+        .filter(
+            DailyLeadAssignment.schedule_date == shift_date,
+            DailyLeadAssignment.scope_type == "half",
             DailyLeadAssignment.scope_key == scope_key,
         )
         .order_by(DailyLeadAssignment.created_at.desc())
@@ -124,14 +158,24 @@ def get_current_wave_lead(shift_date: date, wave_number: int, db: Session) -> tu
     if row:
         return row.driver_name, _resolve_slack_id(row.driver_name, db), row.source
 
-    from api.src.routes.wave_lead import get_active_wave_leads
-    leads = get_active_wave_leads(wave_number, db)
-    if leads:
-        entry = leads[0]
+    from api.src.routes.wave_lead import get_senior_wave_lead
+    entry = get_senior_wave_lead(half, db)
+    if entry:
         slack_id = entry.slack_member_id if (entry.slack_verified and entry.slack_member_id) else None
-        return entry.payroll_name, slack_id, "wave_lead_role"
+        return entry.payroll_name, slack_id, "senior_wave_lead"
 
     return get_current_lead(shift_date, db)
+
+
+def get_current_wave_lead(shift_date: date, wave_number: int, half: Optional[str], db: Session) -> tuple[str, Optional[str], str]:
+    """Thin dispatcher for callers that resolve a driver's lead from their
+    bucketed wave_number (1-5) — Wave 5 uses get_current_wave5_lead(),
+    waves 1-4 resolve via get_current_senior_wave_lead() using the
+    driver's half (see rostering.py's _resolve_wave_lead_for_driver(),
+    which looks up half from the driver's standing WaveTeamMembership)."""
+    if wave_number == 5:
+        return get_current_wave5_lead(shift_date, db)
+    return get_current_senior_wave_lead(shift_date, half, db)
 
 
 class SetLeadRequest(BaseModel):
@@ -187,17 +231,28 @@ class SetWaveLeadRequest(BaseModel):
     created_by: Optional[str] = None
 
 
+def _require_wave5(wave_number: int) -> None:
+    if wave_number != 5:
+        raise HTTPException(
+            status_code=400,
+            detail="Only Wave 5 (the 4x4 truck) has a per-wave override. Waves 1-4 use "
+                   "the half-scoped Senior Wave Lead — see /driver-lead-schedule/{date}/half/{half}.",
+        )
+
+
 @router.get("/{shift_date}/wave/{wave_number}")
 def get_wave_lead(shift_date: date, wave_number: int, db: Session = Depends(get_db)):
-    name, slack_id, source = get_current_wave_lead(shift_date, wave_number, db)
+    _require_wave5(wave_number)
+    name, slack_id, source = get_current_wave5_lead(shift_date, db)
     return {"date": shift_date.isoformat(), "wave_number": wave_number, "driver_name": name, "slack_user_id": slack_id, "source": source}
 
 
 @router.post("/{shift_date}/wave/{wave_number}")
 def set_wave_lead_override(shift_date: date, wave_number: int, body: SetWaveLeadRequest, db: Session = Depends(get_db)):
-    """One-off date-specific override for a single wave's lead — separate
-    from the standing WaveLeadRole assignment in wave_lead.py, same
+    """One-off date-specific override for Wave 5's lead — separate from
+    the standing WaveLeadRole assignment in wave_lead.py, same
     manual-override-always-wins pattern as the legacy global endpoint above."""
+    _require_wave5(wave_number)
     name = body.driver_name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="driver_name is required")
@@ -216,12 +271,70 @@ def set_wave_lead_override(shift_date: date, wave_number: int, body: SetWaveLead
 
 @router.delete("/{shift_date}/wave/{wave_number}")
 def clear_wave_lead_override(shift_date: date, wave_number: int, db: Session = Depends(get_db)):
+    _require_wave5(wave_number)
     deleted = (
         db.query(DailyLeadAssignment)
         .filter(
             DailyLeadAssignment.schedule_date == shift_date,
             DailyLeadAssignment.scope_type == "wave",
             DailyLeadAssignment.scope_key == f"Wave {wave_number}",
+            DailyLeadAssignment.source == "manual_override",
+        )
+        .delete()
+    )
+    db.commit()
+    return {"status": "ok", "cleared": deleted}
+
+
+class SetHalfLeadRequest(BaseModel):
+    driver_name: str
+    created_by: Optional[str] = None
+
+
+@router.get("/{shift_date}/half/{half}")
+def get_half_lead(shift_date: date, half: str, db: Session = Depends(get_db)):
+    if half not in ("front", "back"):
+        raise HTTPException(status_code=400, detail="half must be 'front' or 'back'")
+    name, slack_id, source = get_current_senior_wave_lead(shift_date, half, db)
+    return {"date": shift_date.isoformat(), "half": half, "driver_name": name, "slack_user_id": slack_id, "source": source}
+
+
+@router.post("/{shift_date}/half/{half}")
+def set_half_lead_override(shift_date: date, half: str, body: SetHalfLeadRequest, db: Session = Depends(get_db)):
+    """One-off date-specific override for a half's Senior Wave Lead —
+    separate from the standing WaveLeadRole assignment in wave_lead.py,
+    same manual-override-always-wins pattern as the legacy global endpoint
+    above."""
+    if half not in ("front", "back"):
+        raise HTTPException(status_code=400, detail="half must be 'front' or 'back'")
+    name = body.driver_name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="driver_name is required")
+    scope_key = f"{half.capitalize()} Half"
+    db.add(DailyLeadAssignment(
+        schedule_date=shift_date,
+        scope_type="half",
+        scope_key=scope_key,
+        driver_name=name,
+        source="manual_override",
+        created_by=body.created_by or "dispatch_console",
+    ))
+    db.commit()
+    logger.info("Half lead override set: %s %s -> %s (by %s)", shift_date.isoformat(), scope_key, name, body.created_by or "dispatch_console")
+    return {"status": "ok", "date": shift_date.isoformat(), "half": half, "driver_name": name}
+
+
+@router.delete("/{shift_date}/half/{half}")
+def clear_half_lead_override(shift_date: date, half: str, db: Session = Depends(get_db)):
+    if half not in ("front", "back"):
+        raise HTTPException(status_code=400, detail="half must be 'front' or 'back'")
+    scope_key = f"{half.capitalize()} Half"
+    deleted = (
+        db.query(DailyLeadAssignment)
+        .filter(
+            DailyLeadAssignment.schedule_date == shift_date,
+            DailyLeadAssignment.scope_type == "half",
+            DailyLeadAssignment.scope_key == scope_key,
             DailyLeadAssignment.source == "manual_override",
         )
         .delete()

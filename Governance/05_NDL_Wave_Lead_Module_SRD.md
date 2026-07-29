@@ -15,9 +15,9 @@
 
 **8 teams** = Waves 1–4 × {Front Half (Sun–Wed), Back Half (Wed–Sun)}. **Wednesday is a real, deliberate overlap day** — both halves are active on it, confirmed explicitly. A driver's Front/Back-Half team is a **stable, standing assignment** (set/changed deliberately by dispatch/HR, not recomputed nightly) — a driver whose actual schedule doesn't cleanly match their team's nominal days still competes as part of that team.
 
-**Wave leads**: one per wave (1–4), shared across both that wave's Front and Back Half teams — **4 total**, not 8. They are rostered onto a route **last**, after all regular team members, taking whatever's left (the "extras"/sweeper framing).
+**CORRECTED 2026-07-29:** an earlier pass of this design built a "Standing Wave Lead" — one lead per individual wave (1–4), shared across both that wave's Front/Back Half teams. **That was never a real feature and has been removed.** There is no per-wave lead. What NDL actually runs is a single **Senior Wave Lead** role, described next.
 
-**Senior wave leads** — Spencer and Gallo, specifically — are **independent and roving**, not attached to any wave or team, and **not part of the team competition**. They move from fully-dispatched to on-road dispatching and become the default daily sweep/cleanup crew (tow straps, etc., likely needing an equipped company vehicle — noted as a fleet/ops follow-up, not something this module builds).
+**Senior Wave Lead** — exactly one per half (Front/Back), **roving across ALL of Waves 1–4 for that half**, not tied to any individual wave number. **Spencer = Front Half, Gallo = Back Half.** Independent/roving (on-road dispatching, default daily sweep/cleanup crew — tow straps, etc., likely needing an equipped company vehicle, a fleet/ops follow-up, not something this module builds) and **not part of the team competition**. Not rostered into any wave's roster suggestion (no "lead slot" concept anymore — see `wave_lead.py::generate_wave_roster_suggestion()`).
 
 **Competition**: each morning, a summary message reports which of the 8 teams is "leading," ranked by **team average of the existing 20/40/40 blended overall score** (`driver_scoring.py`) across that team's standing membership. Awards/bonuses tied to this are a stated future idea, not scoped for build yet.
 

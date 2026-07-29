@@ -6,14 +6,16 @@ Owns: WaveLeadRole, WaveTeam, WaveTeamMembership, WaveRosterSuggestion,
 WaveRosterDiscrepancy (all in api/src/database.py).
 
 Model, in short:
-  - Waves 1-4 each get exactly one standing lead (WaveLeadRole), shared
-    across both Front/Back Half teams. Wave 5 (the 4x4 truck) gets exactly
-    two, and has no team concept at all.
+  - Senior Wave Lead: one per half ("front"/"back"), roving across ALL of
+    waves 1-4 for that half -- Spencer=front, Gallo=back. Corrected
+    2026-07-29 from an earlier, incorrect "one standing lead per
+    individual wave 1-4" model, which was never a real feature and has
+    been removed (see get_senior_wave_lead()).
+  - Wave 5 (the 4x4 truck) gets exactly two independent leads (WaveLeadRole,
+    wave_number=5) and has no team/half concept at all.
   - 8 fixed teams = Waves 1-4 x {Front Half, Back Half} (WaveTeam, seeded
     once via seed_wave_teams()). A driver's team (WaveTeamMembership) is a
     standing assignment, not recomputed nightly.
-  - Senior wave leads (Spencer/Gallo) are deliberately NOT modeled here --
-    they're independent/roving, not wave-scoped, per explicit decision.
   - Competition standings (get_team_standings()) rank teams by average of
     driver_scoring.py's blended overall score across standing membership.
 
@@ -94,7 +96,10 @@ def seed_wave_teams(db: Session) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_active_wave_leads(wave_number: int, db: Session) -> list[DriverRosterEntry]:
-    """All active leads for a wave — normally 1 (waves 1-4) or 2 (wave 5)."""
+    """All active leads for a wave_number-scoped role — only Wave 5 (the
+    4x4 truck) uses this now; normally returns 2 (its two dedicated
+    leads). Waves 1-4 no longer have a per-wave lead — see
+    get_senior_wave_lead() for the half-scoped Senior Wave Lead."""
     roles = (
         db.query(WaveLeadRole)
         .filter(WaveLeadRole.wave_number == wave_number, WaveLeadRole.active == True)  # noqa: E712
@@ -104,6 +109,20 @@ def get_active_wave_leads(wave_number: int, db: Session) -> list[DriverRosterEnt
     if not roster_ids:
         return []
     return db.query(DriverRosterEntry).filter(DriverRosterEntry.id.in_(roster_ids)).all()
+
+
+def get_senior_wave_lead(half: str, db: Session) -> Optional[DriverRosterEntry]:
+    """The standing Senior Wave Lead for a half ("front"/"back") -- roves
+    across ALL of waves 1-4, not tied to any individual wave number.
+    Exactly one active row per half (Spencer=front, Gallo=back)."""
+    role = (
+        db.query(WaveLeadRole)
+        .filter(WaveLeadRole.half == half, WaveLeadRole.active == True)  # noqa: E712
+        .first()
+    )
+    if not role:
+        return None
+    return db.query(DriverRosterEntry).filter(DriverRosterEntry.id == role.roster_id).first()
 
 
 def get_team_for_driver(roster_id: int, db: Session) -> Optional[WaveTeam]:
@@ -334,7 +353,7 @@ def list_team_members(team_id: int, db: Session = Depends(get_db)):
 
 @router.get("/roles")
 def list_wave_lead_roles(db: Session = Depends(get_db)):
-    roles = db.query(WaveLeadRole).filter(WaveLeadRole.active == True).order_by(WaveLeadRole.wave_number).all()  # noqa: E712
+    roles = db.query(WaveLeadRole).filter(WaveLeadRole.active == True).order_by(WaveLeadRole.wave_number, WaveLeadRole.half).all()  # noqa: E712
     roster_ids = [r.roster_id for r in roles]
     entries = {
         e.id: e for e in db.query(DriverRosterEntry).filter(DriverRosterEntry.id.in_(roster_ids)).all()
@@ -344,6 +363,7 @@ def list_wave_lead_roles(db: Session = Depends(get_db)):
             {
                 "id": r.id,
                 "wave_number": r.wave_number,
+                "half": r.half,
                 "roster_id": r.roster_id,
                 "payroll_name": entries[r.roster_id].payroll_name if r.roster_id in entries else "Unknown",
                 "assigned_at": r.assigned_at.isoformat() if r.assigned_at else None,
@@ -418,23 +438,21 @@ def assign_wave_lead(
     db: Session = Depends(get_db),
     caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager")),
 ):
-    if payload.wave_number not in (*WAVE_NUMBERS, WAVE_5):
-        raise HTTPException(400, "wave_number must be 1-5")
+    """Wave 5 (the 4x4 truck) only — its two independent leads. Waves 1-4
+    no longer have a per-wave standing lead (removed 2026-07-29, never a
+    real feature); use POST /wave-lead/senior/assign for the Senior Wave
+    Lead instead."""
+    if payload.wave_number != WAVE_5:
+        raise HTTPException(
+            400,
+            "Standing per-wave leads only apply to Wave 5 (the 4x4 truck). "
+            "Waves 1-4 use the Senior Wave Lead — see POST /wave-lead/senior/assign.",
+        )
     entry = db.query(DriverRosterEntry).filter(DriverRosterEntry.id == payload.roster_id).first()
     if not entry:
         raise HTTPException(404, f"Driver {payload.roster_id} not found")
 
-    # Waves 1-4 get exactly one active lead; deactivate any existing one.
     # Wave 5 allows two concurrent active leads (the two 4x4 truck leads).
-    if payload.wave_number != WAVE_5:
-        existing = (
-            db.query(WaveLeadRole)
-            .filter(WaveLeadRole.wave_number == payload.wave_number, WaveLeadRole.active == True)  # noqa: E712
-            .all()
-        )
-        for role in existing:
-            role.active = False
-
     role = WaveLeadRole(
         wave_number=payload.wave_number, roster_id=payload.roster_id, assigned_by=payload.assigned_by,
     )
@@ -442,6 +460,44 @@ def assign_wave_lead(
     db.commit()
     db.refresh(role)
     return {"status": "assigned", "role_id": role.id, "wave_number": payload.wave_number, "roster_id": payload.roster_id}
+
+
+class AssignSeniorWaveLeadRequest(BaseModel):
+    half: str   # "front" | "back"
+    roster_id: int
+    assigned_by: Optional[str] = None
+
+
+@router.post("/senior/assign")
+def assign_senior_wave_lead(
+    payload: AssignSeniorWaveLeadRequest,
+    db: Session = Depends(get_db),
+    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager")),
+):
+    """Senior Wave Lead — one per half, roving across ALL of waves 1-4
+    (Spencer=front, Gallo=back). Replaces the removed per-wave 'Standing
+    Wave Lead' concept."""
+    if payload.half not in HALVES:
+        raise HTTPException(400, "half must be 'front' or 'back'")
+    entry = db.query(DriverRosterEntry).filter(DriverRosterEntry.id == payload.roster_id).first()
+    if not entry:
+        raise HTTPException(404, f"Driver {payload.roster_id} not found")
+
+    existing = (
+        db.query(WaveLeadRole)
+        .filter(WaveLeadRole.half == payload.half, WaveLeadRole.active == True)  # noqa: E712
+        .all()
+    )
+    for role in existing:
+        role.active = False
+
+    role = WaveLeadRole(
+        half=payload.half, wave_number=None, roster_id=payload.roster_id, assigned_by=payload.assigned_by,
+    )
+    db.add(role)
+    db.commit()
+    db.refresh(role)
+    return {"status": "assigned", "role_id": role.id, "half": payload.half, "roster_id": payload.roster_id}
 
 
 @router.delete("/roles/{role_id}")
@@ -564,32 +620,23 @@ def generate_wave_roster_suggestion(roster_date: date, db: Session) -> dict:
         member_roster_ids = [
             m.roster_id for m in db.query(WaveTeamMembership).filter(WaveTeamMembership.team_id.in_(team_ids)).all()
         ] if team_ids else []
-        candidates = [rid for rid in member_roster_ids if rid in scheduled_roster_ids]
-
-        leads = get_active_wave_leads(wave_number, db)
-        lead_ids = {l.id for l in leads}
-        regular = sorted(
-            (rid for rid in candidates if rid not in lead_ids),
+        candidates = sorted(
+            (rid for rid in member_roster_ids if rid in scheduled_roster_ids),
             key=lambda rid: score_by_roster_id.get(rid, -1),
             reverse=True,
         )
 
+        # No per-wave lead slot anymore (removed 2026-07-29) -- the Senior
+        # Wave Lead roves across all waves for their half, not tied to a
+        # specific wave's roster order.
         position = 1
-        for rid in regular:
+        for rid in candidates:
             db.add(WaveRosterSuggestion(
                 roster_date=roster_date, roster_id=rid, suggested_wave=wave_number,
                 suggested_rank_position=position, is_wave_lead_slot=False,
             ))
             position += 1
             created += 1
-        for lead_entry in leads:
-            if lead_entry.id in scheduled_roster_ids:
-                db.add(WaveRosterSuggestion(
-                    roster_date=roster_date, roster_id=lead_entry.id, suggested_wave=wave_number,
-                    suggested_rank_position=position, is_wave_lead_slot=True,
-                ))
-                position += 1
-                created += 1
 
     db.commit()
     return {"roster_date": roster_date.isoformat(), "suggestions_created": created}
@@ -636,16 +683,9 @@ def check_roster_discrepancies(roster_date: date, db: Session) -> dict:
         # A driver landing in a different wave than suggested is normal
         # spillover (see docstring above) -- not flagged as a discrepancy.
 
-    for wave_number in WAVE_NUMBERS:
-        lead_suggestion = next(
-            (s for s in suggestions if s.suggested_wave == wave_number and s.is_wave_lead_slot), None
-        )
-        if lead_suggestion and lead_suggestion.roster_id not in actual_by_roster_id:
-            db.add(WaveRosterDiscrepancy(
-                roster_date=roster_date, roster_id=lead_suggestion.roster_id, discrepancy_type="lead_slot_unfilled",
-                detail=f"Wave {wave_number}'s lead was not found in today's actual roster.",
-            ))
-            created += 1
+    # No more per-wave lead_slot_unfilled check (removed 2026-07-29) --
+    # there's no per-wave lead slot anymore; the Senior Wave Lead isn't
+    # part of any wave's roster suggestion at all.
 
     db.commit()
     return {"roster_date": roster_date.isoformat(), "discrepancies_created": created}
@@ -868,10 +908,20 @@ def sync_wave_channels(db: Session) -> dict:
         wave_number = wave_number_for_assignment(a.wave, getattr(a, "service_type", None))
         desired[wave_number].add(entry.slack_member_id)
 
-    for wave_number in (*WAVE_NUMBERS, WAVE_5):
-        for lead_entry in get_active_wave_leads(wave_number, db):
+    # Wave 5 keeps its own two independent leads. Waves 1-4 no longer have
+    # a per-wave lead -- both Senior Wave Leads (front & back) get added to
+    # every wave 1-4 channel instead, since either half's driver could be
+    # present in any of waves 1-4 on a given day (and both can be, on the
+    # Wednesday overlap) -- simpler and safer than trying to filter by
+    # which half is actually represented in that specific wave today.
+    senior_leads = [entry for half in HALVES if (entry := get_senior_wave_lead(half, db))]
+    for wave_number in WAVE_NUMBERS:
+        for lead_entry in senior_leads:
             if lead_entry.slack_member_id and lead_entry.slack_verified:
                 desired[wave_number].add(lead_entry.slack_member_id)
+    for lead_entry in get_active_wave_leads(WAVE_5, db):
+        if lead_entry.slack_member_id and lead_entry.slack_verified:
+            desired[WAVE_5].add(lead_entry.slack_member_id)
 
     results = {}
     for wave_number, desired_members in desired.items():

@@ -1517,21 +1517,25 @@ class DailyLeadAssignment(Base):
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Wave Lead Module — added 2026-07-29 (Governance/05_NDL_Wave_Lead_Module_SRD.md).
-# Waves 1-4 each get one standing lead shared across both Front/Back Half
-# teams; Wave 5 (the 4x4 truck) gets two, with no team concept at all.
-# Senior wave leads are NOT modeled here -- they're independent/roving,
-# not wave-scoped, per explicit design decision.
+# Two kinds of standing lead, corrected 2026-07-29 (an earlier build had
+# waves 1-4 each getting their own standing lead -- that was never a real
+# feature and has been removed):
+#   - Senior Wave Lead: one per half ("front"/"back"), roving across ALL
+#     waves 1-4 for that half (Spencer=front, Gallo=back). wave_number is
+#     NULL on these rows.
+#   - Wave 5 (4x4 truck) lead: wave_number=5, exactly two active rows, no
+#     half/team concept (independent).
 # ─────────────────────────────────────────────────────────────────────────────
 
 class WaveLeadRole(Base):
-    """Standing wave-lead assignment. Waves 1-4: exactly one active row
-    each. Wave 5: exactly two (the two 4x4 truck leads). Separate from
-    DailyLeadAssignment, which still handles one-off date-specific
-    overrides on top of this standing assignment."""
+    """Standing lead assignment -- see the two kinds described above.
+    Separate from DailyLeadAssignment, which still handles one-off
+    date-specific overrides on top of this standing assignment."""
     __tablename__ = "wave_lead_roles"
 
     id = Column(Integer, primary_key=True)
-    wave_number = Column(Integer, nullable=False)   # 1-4, or 5 for the 4x4 truck
+    wave_number = Column(Integer, nullable=True)    # 5 for the 4x4 truck rows; NULL for Senior Wave Lead rows
+    half = Column(String(10), nullable=True)        # "front" | "back" for Senior Wave Lead rows; NULL for wave 5
     roster_id = Column(Integer, ForeignKey("driver_roster.id"), nullable=False)
     active = Column(Boolean, default=True)
     assigned_at = Column(DateTime, default=datetime.utcnow)
@@ -1539,6 +1543,7 @@ class WaveLeadRole(Base):
 
     __table_args__ = (
         Index('idx_wave_lead_wave_active', 'wave_number', 'active'),
+        Index('idx_wave_lead_half_active', 'half', 'active'),
     )
 
 
@@ -1599,7 +1604,7 @@ class WaveRosterDiscrepancy(Base):
     id = Column(Integer, primary_key=True)
     roster_date = Column(Date, nullable=False, index=True)
     roster_id = Column(Integer, ForeignKey("driver_roster.id"), nullable=False)
-    discrepancy_type = Column(String(30))   # wave_mismatch | missing | unexpected | lead_slot_unfilled
+    discrepancy_type = Column(String(30))   # missing (wave_mismatch/unexpected/lead_slot_unfilled not flagged -- see check_roster_discrepancies() docstring)
     detail = Column(Text)
     resolved = Column(Boolean, default=False)
     resolved_by = Column(String(100))
@@ -3506,6 +3511,29 @@ def ensure_rescue_bonus_ledger_columns():
                 conn.execute(text("ALTER TABLE rescue_contributions ADD COLUMN IF NOT EXISTS bonus_credited_to_ledger BOOLEAN DEFAULT FALSE"))
     except Exception:
         pass  # Column already exists
+
+
+def ensure_wave_lead_role_half_column():
+    """Add half + relax wave_number to nullable on wave_lead_roles --
+    2026-07-29 correction: the earlier "one standing lead per wave 1-4"
+    model was never a real feature and has been replaced by a Senior Wave
+    Lead scoped by half (front/back), roving across all of waves 1-4.
+    Wave 5's two 4x4-truck leads are unaffected (still wave_number=5,
+    half=NULL)."""
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE wave_lead_roles ADD COLUMN half VARCHAR(10)"))
+            else:
+                conn.execute(text("ALTER TABLE wave_lead_roles ADD COLUMN IF NOT EXISTS half VARCHAR(10)"))
+    except Exception:
+        pass  # Column already exists
+    try:
+        with engine.begin() as conn:
+            if not DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE wave_lead_roles ALTER COLUMN wave_number DROP NOT NULL"))
+    except Exception:
+        pass  # Already nullable, or table doesn't exist yet
 
 
 # ============================================================================

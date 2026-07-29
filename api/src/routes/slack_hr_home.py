@@ -17,6 +17,7 @@ import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
 
 from api.src.database import EodSurveyResponse, SentimentSurveyResponse
@@ -379,10 +380,50 @@ def _handle_hr_home_send_sentiment_survey_button(payload: dict, db: Session) -> 
         logger.warning("views_open failed for send-sentiment-survey modal: %s", exc)
 
 
-def _handle_hr_home_send_sentiment_survey_submit(payload: dict, db: Session) -> dict:
-    from api.src.routes.slack_home import _client, _dm_driver
+def _send_sentiment_survey_background(roster_ids: list[int], send_to_all: bool) -> None:
+    """The actual bulk send (up to 100+ individual chat_postMessage calls)
+    happens here, off the Slack view_submission request/response cycle --
+    that loop was blowing well past Slack's ~3s ack window, causing Slack's
+    client to show a "trouble connecting" error even though the backend
+    request kept running to completion in the background (confirmed
+    2026-07-29: a "104 sent" DM still arrived after the on-screen error).
+    Same BackgroundTasks pattern as slack_dispatch_home.py's
+    _run_rerun_and_report -- opens its own SessionLocal() since the
+    request-scoped db session is gone by the time this runs.
+
+    Only posts to #nday-hr -- no DM to the clicker -- per explicit
+    direction (2026-07-29) to keep this send's confirmation out of every
+    other channel/DM it was reaching."""
+    from api.src.database import SessionLocal
+    from api.src.routes.slack_home import _client
     from api.src.routes.sentiment_survey import send_sentiment_survey
 
+    db = SessionLocal()
+    hr_channel_ids: list[str] = []
+    try:
+        hr_channel_ids = get_role_slack_ids(db, "hr")
+        result = send_sentiment_survey(roster_ids, send_to_all, db)
+        summary = (
+            f"🗣️ *Sentiment survey sent* — {result['sent']} sent"
+            f", {result['already_submitted']} already checked in today"
+            f", {result['no_slack_id']} skipped (no Slack link)"
+            f" (of {result['total_candidates']} considered)"
+        )
+    except Exception as exc:
+        logger.exception("Sentiment survey background send failed")
+        summary = f":x: Sentiment survey send failed: {exc}"
+    finally:
+        db.close()
+
+    client = _client()
+    if client and hr_channel_ids:
+        try:
+            client.chat_postMessage(channel=hr_channel_ids[0], text=summary)
+        except Exception as exc:
+            logger.warning("Sentiment survey send audit log post failed: %s", exc)
+
+
+def _handle_hr_home_send_sentiment_survey_submit(payload: dict, db: Session, background_tasks: BackgroundTasks) -> dict:
     clicker_id = payload.get("user", {}).get("id", "")
     if not is_hr_staff(clicker_id, db):
         logger.warning("Non-HR user %s attempted hr_home_send_sentiment_survey_submit", clicker_id)
@@ -396,25 +437,5 @@ def _handle_hr_home_send_sentiment_survey_submit(payload: dict, db: Session) -> 
     if not send_to_all and not roster_ids:
         return {"response_action": "errors", "errors": {"send_to_all_block": "Check 'Send to all' or select at least one driver."}}
 
-    result = send_sentiment_survey(roster_ids, send_to_all, db)
-
-    summary = (
-        f"🗣️ *Sentiment survey sent* — {result['sent']} sent"
-        f", {result['already_submitted']} already checked in today"
-        f", {result['no_slack_id']} skipped (no Slack link)"
-        f" (of {result['total_candidates']} considered)"
-    )
-    client = _client()
-    if client:
-        try:
-            _dm_driver(client, clicker_id, summary)
-        except Exception as exc:
-            logger.warning("Sentiment survey send confirmation DM failed: %s", exc)
-        try:
-            hr_channel_ids = get_role_slack_ids(db, "hr")
-            if hr_channel_ids:
-                client.chat_postMessage(channel=hr_channel_ids[0], text=summary)
-        except Exception as exc:
-            logger.warning("Sentiment survey send audit log post failed: %s", exc)
-
+    background_tasks.add_task(_send_sentiment_survey_background, roster_ids, send_to_all)
     return {"response_action": "clear"}

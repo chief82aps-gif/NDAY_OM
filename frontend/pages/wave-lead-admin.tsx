@@ -20,7 +20,8 @@ interface TeamMember {
 
 interface WaveLeadRole {
   id: number;
-  wave_number: number;
+  wave_number: number | null;
+  half: string | null;
   roster_id: number;
   payroll_name: string;
   assigned_at: string | null;
@@ -69,10 +70,11 @@ export default function WaveLeadAdminPage() {
   const [drivers, setDrivers] = useState<RosterDriver[]>([]);
   const [teams, setTeams] = useState<TeamStanding[]>([]);
   const [members, setMembers] = useState<Record<number, TeamMember[]>>({});
-  const [leads, setLeads] = useState<WaveLeadRole[]>([]);
   const [wave5Leads, setWave5Leads] = useState<{ id: number; roster_id: number; payroll_name: string }[]>([]);
+  const [seniorLeads, setSeniorLeads] = useState<WaveLeadRole[]>([]);
   const [selectedDriver, setSelectedDriver] = useState<Record<number, string>>({});
   const [leadDriver, setLeadDriver] = useState<Record<number, string>>({});
+  const [seniorLeadDriver, setSeniorLeadDriver] = useState<Record<string, string>>({});
   const [status, setStatus] = useState('');
   const [suggestions, setSuggestions] = useState<TeamSuggestion[] | null>(null);
   const [showMatching, setShowMatching] = useState(false);
@@ -90,8 +92,8 @@ export default function WaveLeadAdminPage() {
 
       setDrivers(driversData.drivers ?? []);
       setTeams(teamsData.teams ?? []);
-      setLeads((rolesData.roles ?? []).filter((r: WaveLeadRole) => r.wave_number !== 5));
       setWave5Leads((rolesData.roles ?? []).filter((r: WaveLeadRole) => r.wave_number === 5));
+      setSeniorLeads((rolesData.roles ?? []).filter((r: WaveLeadRole) => !!r.half));
 
       const memberEntries = await Promise.all(
         (teamsData.teams ?? []).map((t: TeamStanding) =>
@@ -143,6 +145,20 @@ export default function WaveLeadAdminPage() {
         body: JSON.stringify({ wave_number: waveNumber, roster_id: parseInt(rosterId, 10), assigned_by: user?.username ?? 'dispatch' }),
       });
       if (res.ok) { setStatus('Lead assigned.'); await loadAll(); } else { setStatus('Failed to assign lead.'); }
+    } catch { setStatus('Network error.'); }
+  };
+
+  const assignSeniorLead = async (half: 'front' | 'back') => {
+    const rosterId = seniorLeadDriver[half];
+    if (!rosterId) return;
+    setStatus('Saving...');
+    try {
+      const res = await fetch(`${api}/wave-lead/senior/assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ half, roster_id: parseInt(rosterId, 10), assigned_by: user?.username ?? 'dispatch' }),
+      });
+      if (res.ok) { setStatus('Senior Wave Lead assigned.'); await loadAll(); } else { setStatus('Failed to assign lead.'); }
     } catch { setStatus('Network error.'); }
   };
 
@@ -246,6 +262,42 @@ export default function WaveLeadAdminPage() {
             )}
           </div>
 
+          {/* Senior Wave Lead — one per half, roving across ALL of waves 1-4 */}
+          <div style={s.card}>
+            <h2 style={{ fontSize: 15, margin: '0 0 4px' }}>👑 Senior Wave Lead</h2>
+            <p style={{ color: '#94a3b8', fontSize: 12, margin: '0 0 12px' }}>
+              One per half, independent/roving across all of Waves 1-4 — not tied to any single wave.
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+              {(['front', 'back'] as const).map(half => {
+                const lead = seniorLeads.find(l => l.half === half);
+                return (
+                  <div key={half}>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>{half === 'front' ? 'Front Half' : 'Back Half'}</div>
+                    {lead ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span>{lead.payroll_name}</span>
+                        <button style={s.btnDanger} onClick={() => deactivateLead(lead.id)}>Remove</button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <select
+                          style={{ ...s.select, flex: 1 }}
+                          value={seniorLeadDriver[half] ?? ''}
+                          onChange={e => setSeniorLeadDriver(p => ({ ...p, [half]: e.target.value }))}
+                        >
+                          <option value="">— select driver —</option>
+                          {drivers.map(d => <option key={d.id} value={d.id}>{d.payroll_name}</option>)}
+                        </select>
+                        <button style={s.btn} onClick={() => assignSeniorLead(half)}>Assign</button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Wave 5 — 4x4 truck */}
           <div style={s.card}>
             <h2 style={{ fontSize: 15, margin: '0 0 10px' }}>🚚 Wave 5 — 4x4 Truck (independent, no team)</h2>
@@ -266,28 +318,9 @@ export default function WaveLeadAdminPage() {
 
           {/* Waves 1-4 */}
           {[1, 2, 3, 4].map(waveNumber => {
-            const lead = leads.find(l => l.wave_number === waveNumber);
             return (
               <div key={waveNumber} style={s.card}>
                 <h2 style={{ fontSize: 16, margin: '0 0 10px' }}>Wave {waveNumber}</h2>
-
-                <div style={{ marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid #334155' }}>
-                  <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 6 }}>Standing Wave Lead (shared across Front &amp; Back Half)</div>
-                  {lead ? (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span style={{ fontWeight: 600 }}>{lead.payroll_name}</span>
-                      <button style={s.btnDanger} onClick={() => deactivateLead(lead.id)}>Remove</button>
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <select style={s.select} value={leadDriver[waveNumber] ?? ''} onChange={e => setLeadDriver(p => ({ ...p, [waveNumber]: e.target.value }))}>
-                        <option value="">— select driver —</option>
-                        {drivers.map(d => <option key={d.id} value={d.id}>{d.payroll_name}</option>)}
-                      </select>
-                      <button style={s.btn} onClick={() => assignLead(waveNumber)}>Assign Lead</button>
-                    </div>
-                  )}
-                </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                   {(teamsByWave[waveNumber] ?? []).map(team => (

@@ -467,7 +467,7 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
             return _handle_hr_home_invite_user_submit(payload, db)
         if callback_id == "hr_home_send_sentiment_survey_submit":
             from api.src.routes.slack_hr_home import _handle_hr_home_send_sentiment_survey_submit
-            return _handle_hr_home_send_sentiment_survey_submit(payload, db)
+            return _handle_hr_home_send_sentiment_survey_submit(payload, db, background_tasks)
         return {"ok": True}
 
     action_id = (payload.get("actions") or [{}])[0].get("action_id", "")
@@ -899,12 +899,13 @@ def _handle_talk_to_lead(payload: dict, db: Session) -> None:
         shift_date_str = value.get("shift_date", "")
         driver_name = value.get("driver_name", "")
         wave_number = value.get("wave_number")
+        half = value.get("half")
         channel_id = payload.get("channel", {}).get("id", "")
 
         shift_date = date.fromisoformat(shift_date_str)
         if wave_number:
             from api.src.routes.driver_lead_schedule import get_current_wave_lead
-            lead_name, lead_slack_id, _source = get_current_wave_lead(shift_date, wave_number, db)
+            lead_name, lead_slack_id, _source = get_current_wave_lead(shift_date, wave_number, half, db)
         else:
             from api.src.routes.driver_lead_schedule import get_current_lead
             lead_name, lead_slack_id, _source = get_current_lead(shift_date, db)

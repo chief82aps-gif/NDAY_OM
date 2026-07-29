@@ -30,10 +30,9 @@ NOT part of the weighted score at all -- it's a pass/fail eligibility
 gate (the Tenured Workforce report's own "Tenure Status" field), same as
 the 30-route trailing-6-week floor.
 
-NOTE: the tier cutoffs below (TIER_THRESHOLDS) were calibrated against
-the prior 50/50/5 blend and have not yet been re-checked against the new
-20/40/40 weighting -- revisit once real score data is available under
-the new blend.
+Tier cutoffs (TIER_THRESHOLDS) were recalibrated 2026-07-29 for this
+20/40/40 blend, per explicit direction: Platinum >99, Gold 98-99,
+Silver 97-98, Bronze <=97.
 
   Note: Amazon's own scoring page also lists a Safe Driving Metric
   (FICO) row, currently weighted 0% -- intentionally excluded here since
@@ -100,14 +99,15 @@ CATEGORY_WEIGHTS = {
 ROUTE_ELIGIBILITY_THRESHOLD = 30
 ROUTE_ELIGIBILITY_WEEKS = 6
 
-# Amazon's current DA Performance tier cutoffs (screenshot, 2026-07-22).
-# Each tier's threshold is its own upper bound per Amazon's UI ("Gold
-# threshold represents the upper bound for Platinum") -- i.e. you need to
-# exceed a tier's own listed number to reach the tier above it.
+# Recalibrated 2026-07-29 for the 20/40/40 blend (explicit request) --
+# these no longer mirror Amazon's own DA Performance page cutoffs, they're
+# NDAY's own bands for the blended overall score: Platinum >99, Gold
+# 98-99, Silver 97-98, Bronze <=97. Each tier's threshold is its own upper
+# bound (you must exceed a tier's listed number to reach the tier above it).
 TIER_THRESHOLDS = [
-    ("platinum", 99.48),
-    ("gold", 94.0),
-    ("silver", 92.0),
+    ("platinum", 99.0),
+    ("gold", 98.0),
+    ("silver", 97.0),
 ]
 HIGH_PERFORMER_THRESHOLD = 92.0   # unchanged floor -- see module docstring
 

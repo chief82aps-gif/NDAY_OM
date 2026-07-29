@@ -490,10 +490,23 @@ def generate_wave_roster_suggestion(roster_date: date, db: Session) -> dict:
 def check_roster_discrepancies(roster_date: date, db: Session) -> dict:
     """Compare the suggestion against dispatch's actual roster
     (DailyRouteAssignment) for roster_date. Idempotent — clears prior
-    discrepancy rows for this date first. v1 deliberately does not flag
-    'unexpected' (driver rostered but not suggested at all) — that would
-    conflate a driver simply not yet assigned a standing team with a real
-    misrostering, which needs a cleaner signal than v1 has."""
+    discrepancy rows for this date first.
+
+    Deliberately does NOT flag a driver landing in a different wave than
+    their standing team's nominal wave ("wave_mismatch") — confirmed
+    2026-07-29 this is normal, expected spillover (NDL doesn't control
+    Amazon's real per-wave route volume day to day), not an error. The
+    standing team/wave a driver belongs to is for competition/mentoring/
+    discipline attribution only; their actual day-of wave (and therefore
+    which lead they reach on Zello/Slack) is resolved fresh from the real
+    schedule regardless of team, via _resolve_wave_lead_for_driver() in
+    rostering.py. The two are intentionally decoupled — see
+    Governance/05_NDL_Wave_Lead_Module_SRD.md.
+
+    v1 also deliberately does not flag 'unexpected' (driver rostered but
+    not suggested at all) — that would conflate a driver simply not yet
+    assigned a standing team with a real misrostering, which needs a
+    cleaner signal than v1 has."""
     db.query(WaveRosterDiscrepancy).filter(WaveRosterDiscrepancy.roster_date == roster_date).delete()
 
     suggestions = db.query(WaveRosterSuggestion).filter(WaveRosterSuggestion.roster_date == roster_date).all()
@@ -512,13 +525,8 @@ def check_roster_discrepancies(roster_date: date, db: Session) -> dict:
             ))
             created += 1
             continue
-        actual_wave = wave_number_for_assignment(a.wave, getattr(a, "service_type", None))
-        if actual_wave != suggestion.suggested_wave:
-            db.add(WaveRosterDiscrepancy(
-                roster_date=roster_date, roster_id=roster_id, discrepancy_type="wave_mismatch",
-                detail=f"Suggested Wave {suggestion.suggested_wave}, actually rostered Wave {actual_wave}.",
-            ))
-            created += 1
+        # A driver landing in a different wave than suggested is normal
+        # spillover (see docstring above) -- not flagged as a discrepancy.
 
     for wave_number in WAVE_NUMBERS:
         lead_suggestion = next(

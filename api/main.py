@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.src.routes import uploads, auth, audit, enhanced_audit, weekly_audit, weekly_audit_upload, rescue
 from api.src.routes import daily_notify, quality, attendance, attendance_reports, ops_ingest, dvic, dsp_scorecard_weekly, eod_survey, route_assignment, slack_interactions, slack_home, manager_accountability
-from api.src.routes import rostering, cortex_tracking, adp, rts, mgt_reminders, document_routing, crash_report, drivers, candidates, safety_events, okami_capacity, driver_scoring, route_bands, driver_lead_schedule, injury_report, sentiment_survey
+from api.src.routes import rostering, cortex_tracking, adp, rts, mgt_reminders, document_routing, crash_report, drivers, candidates, safety_events, okami_capacity, driver_scoring, route_bands, driver_lead_schedule, injury_report, sentiment_survey, wave_lead
 from api.src.routes.daily_notify import check_and_notify, check_ecp_and_prompt
 from api.src.routes.rostering import send_nightly_roster_reminder, send_wave_lead_pre_wave_dm, send_missing_drivers_summary
 from api.src.schedule_config import SCHEDULE_GAP_CHECK_HOUR
@@ -567,10 +567,12 @@ async def startup():
     ensure_user_auth_columns()
     ensure_rescue_bonus_ledger_columns()
     from api.src.routes.auth import seed_default_users, ensure_owner_slack_link
+    from api.src.routes.wave_lead import seed_wave_teams
     _seed_db = SessionLocal()
     try:
         seed_default_users(_seed_db)
         ensure_owner_slack_link(_seed_db)
+        seed_wave_teams(_seed_db)
     finally:
         _seed_db.close()
     asyncio.create_task(_daily_notify_loop())
@@ -660,6 +662,7 @@ app.include_router(driver_scoring.router)
 app.include_router(okami_capacity.router)
 app.include_router(route_bands.router)
 app.include_router(driver_lead_schedule.router)
+app.include_router(wave_lead.router)
 
 @app.get("/")
 def root():

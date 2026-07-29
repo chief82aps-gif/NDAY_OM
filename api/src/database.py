@@ -1515,6 +1515,98 @@ class DailyLeadAssignment(Base):
     )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Wave Lead Module — added 2026-07-29 (Governance/05_NDL_Wave_Lead_Module_SRD.md).
+# Waves 1-4 each get one standing lead shared across both Front/Back Half
+# teams; Wave 5 (the 4x4 truck) gets two, with no team concept at all.
+# Senior wave leads are NOT modeled here -- they're independent/roving,
+# not wave-scoped, per explicit design decision.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class WaveLeadRole(Base):
+    """Standing wave-lead assignment. Waves 1-4: exactly one active row
+    each. Wave 5: exactly two (the two 4x4 truck leads). Separate from
+    DailyLeadAssignment, which still handles one-off date-specific
+    overrides on top of this standing assignment."""
+    __tablename__ = "wave_lead_roles"
+
+    id = Column(Integer, primary_key=True)
+    wave_number = Column(Integer, nullable=False)   # 1-4, or 5 for the 4x4 truck
+    roster_id = Column(Integer, ForeignKey("driver_roster.id"), nullable=False)
+    active = Column(Boolean, default=True)
+    assigned_at = Column(DateTime, default=datetime.utcnow)
+    assigned_by = Column(String(100))
+
+    __table_args__ = (
+        Index('idx_wave_lead_wave_active', 'wave_number', 'active'),
+    )
+
+
+class WaveTeam(Base):
+    """The 8 fixed competition teams — seeded once, static reference data.
+    Wave 5 has no corresponding rows (no team concept there)."""
+    __tablename__ = "wave_teams"
+
+    id = Column(Integer, primary_key=True)
+    wave_number = Column(Integer, nullable=False)   # 1-4 only
+    half = Column(String(10), nullable=False)       # "front" | "back"
+
+    __table_args__ = (
+        UniqueConstraint('wave_number', 'half', name='uq_wave_team_wave_half'),
+    )
+
+
+class WaveTeamMembership(Base):
+    """Standing driver -> team assignment. One team per driver; changed
+    deliberately by dispatch/HR, never auto-recomputed from a night's
+    actual roster (a driver whose real schedule doesn't match their
+    team's nominal days still competes as part of that team)."""
+    __tablename__ = "wave_team_memberships"
+
+    id = Column(Integer, primary_key=True)
+    roster_id = Column(Integer, ForeignKey("driver_roster.id"), unique=True, nullable=False)
+    team_id = Column(Integer, ForeignKey("wave_teams.id"), nullable=False)
+    assigned_at = Column(DateTime, default=datetime.utcnow)
+    assigned_by = Column(String(100))
+
+
+class WaveRosterSuggestion(Base):
+    """The system's proposed wave + order for one date, generated after
+    that night's Rostered Work Blocks ingest lands. Wave lead slot is
+    always placed last within its wave."""
+    __tablename__ = "wave_roster_suggestions"
+
+    id = Column(Integer, primary_key=True)
+    roster_date = Column(Date, nullable=False, index=True)
+    roster_id = Column(Integer, ForeignKey("driver_roster.id"), nullable=False)
+    suggested_wave = Column(Integer)
+    suggested_rank_position = Column(Integer)   # order within the wave
+    is_wave_lead_slot = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint('roster_date', 'roster_id', name='uq_wave_suggestion_date_driver'),
+    )
+
+
+class WaveRosterDiscrepancy(Base):
+    """A flagged mismatch between the suggestion and dispatch's actual
+    roster (DailyRouteAssignment), surfaced each morning for dispatch to
+    confirm-as-is or fix. This module stays suggestion/validation-only in
+    v1 -- it never overwrites dispatch's actual roster itself."""
+    __tablename__ = "wave_roster_discrepancies"
+
+    id = Column(Integer, primary_key=True)
+    roster_date = Column(Date, nullable=False, index=True)
+    roster_id = Column(Integer, ForeignKey("driver_roster.id"), nullable=False)
+    discrepancy_type = Column(String(30))   # wave_mismatch | missing | unexpected | lead_slot_unfilled
+    detail = Column(Text)
+    resolved = Column(Boolean, default=False)
+    resolved_by = Column(String(100))
+    resolved_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class CalloutQueue(Base):
     """One row per submitted callout. Controls when #nday-mgt is notified.
 

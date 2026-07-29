@@ -16,6 +16,7 @@ interface DriverScore {
   high_performer_eligible: boolean;
   tenure_status: string;
   trailing_routes: number;
+  lifetime_routes: number | null;
 }
 
 interface ScoresResponse {
@@ -126,6 +127,7 @@ function DriverRow({ d, rank, banked }: { d: DriverScore; rank: number; banked: 
         </td>
         <td style={td}>{tierBadge(d.overall_tier)}</td>
         <td style={td}>{scoreBar(d.overall)}</td>
+        <td style={{ ...td, textAlign: 'right', color: '#e2e8f0', fontWeight: 600 }}>{d.lifetime_routes ?? '—'}</td>
         <td style={{ ...td, fontSize: 11, color: '#94a3b8' }}>{focus ? `Focus: ${focus}` : '—'}</td>
         <td style={{ ...td, textAlign: 'right', color: banked ? '#22c55e' : '#555', fontWeight: banked ? 700 : 400 }}>
           {banked ? `$${banked}` : '—'}
@@ -134,7 +136,7 @@ function DriverRow({ d, rank, banked }: { d: DriverScore; rank: number; banked: 
       </tr>
       {open && (
         <tr style={{ background: '#0a0f17' }}>
-          <td colSpan={7} style={{ padding: '12px 24px' }}>
+          <td colSpan={8} style={{ padding: '12px 24px' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
                 <tr>
@@ -186,12 +188,26 @@ function DriverRow({ d, rank, banked }: { d: DriverScore; rank: number; banked: 
   );
 }
 
+type SortKey = 'overall' | 'lifetime_routes';
+
 export default function DriverQualityPage() {
   const [data, setData] = useState<ScoresResponse | null>(null);
   const [ledger, setLedger] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
   const [tierFilter, setTierFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
+  const [minRoutes, setMinRoutes] = useState('');
+  const [sortKey, setSortKey] = useState<SortKey>('overall');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir(d => (d === 'desc' ? 'asc' : 'desc'));
+    } else {
+      setSortKey(key);
+      setSortDir('desc');
+    }
+  };
 
   const api = resolveApi();
 
@@ -222,8 +238,17 @@ export default function DriverQualityPage() {
   const filtered = (data?.drivers ?? []).filter(d => {
     if (tierFilter !== 'all' && d.overall_tier !== tierFilter) return false;
     if (search && !d.driver_name.toLowerCase().includes(search.toLowerCase())) return false;
+    if (minRoutes && (d.lifetime_routes ?? 0) < parseInt(minRoutes, 10)) return false;
     return true;
   });
+
+  const sorted = [...filtered].sort((a, b) => {
+    const av = sortKey === 'overall' ? (a.overall ?? -1) : (a.lifetime_routes ?? -1);
+    const bv = sortKey === 'overall' ? (b.overall ?? -1) : (b.lifetime_routes ?? -1);
+    return sortDir === 'desc' ? bv - av : av - bv;
+  });
+
+  const sortArrow = (key: SortKey) => (sortKey === key ? (sortDir === 'desc' ? ' ▼' : ' ▲') : '');
 
   const tier_counts = (data?.drivers ?? []).reduce<Record<string, number>>((acc, d) => {
     acc[d.overall_tier] = (acc[d.overall_tier] || 0) + 1;
@@ -260,6 +285,14 @@ export default function DriverQualityPage() {
             <option value="silver">Silver</option>
             <option value="bronze">Bronze</option>
           </select>
+          <input
+            type="number"
+            min="0"
+            placeholder="Min routes (e.g. 100)"
+            value={minRoutes}
+            onChange={e => setMinRoutes(e.target.value)}
+            style={{ background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155', borderRadius: 6, padding: '6px 12px', fontSize: 13, width: 160 }}
+          />
         </div>
 
         {/* Tier summary chips */}
@@ -294,7 +327,7 @@ export default function DriverQualityPage() {
         )}
 
         {/* Rankings table */}
-        {!loading && data && filtered.length > 0 && (
+        {!loading && data && sorted.length > 0 && (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
@@ -302,14 +335,19 @@ export default function DriverQualityPage() {
                   <th style={{ ...th, color: '#fff' }}>#</th>
                   <th style={{ ...th, color: '#fff', textAlign: 'left' }}>Driver</th>
                   <th style={{ ...th, color: '#fff' }}>Tier</th>
-                  <th style={{ ...th, color: '#fff' }}>Overall Score</th>
+                  <th style={{ ...th, color: '#fff', cursor: 'pointer' }} onClick={() => toggleSort('overall')}>
+                    Overall Score{sortArrow('overall')}
+                  </th>
+                  <th style={{ ...th, color: '#fff', cursor: 'pointer' }} onClick={() => toggleSort('lifetime_routes')}>
+                    Routes{sortArrow('lifetime_routes')}
+                  </th>
                   <th style={{ ...th, color: '#fff', textAlign: 'left' }}>Focus Area</th>
                   <th style={{ ...th, color: '#fff' }}>Banked Bonus</th>
                   <th style={{ ...th, color: '#fff' }}></th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((d, i) => (
+                {sorted.map((d, i) => (
                   <DriverRow key={d.transporter_id || d.driver_name} d={d} rank={i + 1} banked={ledger[d.driver_name] ?? null} />
                 ))}
               </tbody>
@@ -317,7 +355,7 @@ export default function DriverQualityPage() {
           </div>
         )}
 
-        {!loading && data && filtered.length === 0 && data.drivers.length > 0 && (
+        {!loading && data && sorted.length === 0 && data.drivers.length > 0 && (
           <div style={{ textAlign: 'center', padding: 32, color: '#94a3b8' }}>No drivers match the current filter.</div>
         )}
       </div>

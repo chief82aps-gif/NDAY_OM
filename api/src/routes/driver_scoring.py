@@ -206,6 +206,7 @@ def compute_driver_scores(db: Session) -> list[dict]:
             "high_performer_eligible": ranking_eligible and overall is not None and overall >= HIGH_PERFORMER_THRESHOLD,
             "tenure_status": tenure_rec.tenure_status if tenure_rec else "Unknown",
             "trailing_routes": trailing_routes,
+            "lifetime_routes": tenure_rec.lifetime_routes if tenure_rec else None,
         })
 
     results.sort(key=lambda r: (r["overall"] is None, -(r["overall"] or 0)))

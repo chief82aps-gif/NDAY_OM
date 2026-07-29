@@ -32,6 +32,19 @@ interface RosterDriver {
   has_pin: boolean;
 }
 
+interface TeamSuggestion {
+  roster_id: number;
+  payroll_name: string;
+  sample_size: number;
+  suggested_wave: number;
+  suggested_half: string;
+  suggested_team_id: number | null;
+  suggested_team_label: string | null;
+  current_team_id: number | null;
+  current_team_label: string | null;
+  matches_current: boolean;
+}
+
 function resolveApi(): string {
   if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
   if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
@@ -61,6 +74,8 @@ export default function WaveLeadAdminPage() {
   const [selectedDriver, setSelectedDriver] = useState<Record<number, string>>({});
   const [leadDriver, setLeadDriver] = useState<Record<number, string>>({});
   const [status, setStatus] = useState('');
+  const [suggestions, setSuggestions] = useState<TeamSuggestion[] | null>(null);
+  const [showMatching, setShowMatching] = useState(false);
 
   const loadAll = useCallback(async () => {
     try {
@@ -139,6 +154,33 @@ export default function WaveLeadAdminPage() {
     } catch { setStatus('Network error.'); }
   };
 
+  const loadSuggestions = async () => {
+    setStatus('Analyzing 6 weeks of schedule history...');
+    try {
+      const res = await fetch(`${api}/wave-lead/suggest-teams?weeks=6`);
+      const data = await res.json();
+      setSuggestions(data.suggestions ?? []);
+      setStatus('');
+    } catch { setStatus('Failed to load suggestions.'); }
+  };
+
+  const applySuggestion = async (s: TeamSuggestion) => {
+    if (!s.suggested_team_id) return;
+    setStatus('Applying...');
+    try {
+      const res = await fetch(`${api}/wave-lead/teams/assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roster_id: s.roster_id, team_id: s.suggested_team_id, assigned_by: user?.username ?? 'dispatch' }),
+      });
+      if (res.ok) {
+        setStatus('Applied.');
+        await loadAll();
+        setSuggestions(prev => prev ? prev.map(x => x.roster_id === s.roster_id ? { ...x, current_team_id: s.suggested_team_id, current_team_label: s.suggested_team_label, matches_current: true } : x) : prev);
+      } else { setStatus('Failed to apply.'); }
+    } catch { setStatus('Network error.'); }
+  };
+
   const teamsByWave: Record<number, TeamStanding[]> = {};
   for (const t of teams) {
     if (!teamsByWave[t.wave_number]) teamsByWave[t.wave_number] = [];
@@ -154,6 +196,55 @@ export default function WaveLeadAdminPage() {
             Assign standing wave leads and team membership. See Governance/05_NDL_Wave_Lead_Module_SRD.md for the full design.
           </p>
           {status && <p style={{ color: '#60a5fa', fontSize: 13 }}>{status}</p>}
+
+          {/* Team suggestions from real schedule history */}
+          <div style={s.card}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <h2 style={{ fontSize: 15, margin: 0 }}>🔎 Suggest Teams from Schedule History</h2>
+              <button style={s.btn} onClick={loadSuggestions}>{suggestions ? 'Refresh' : 'Analyze Last 6 Weeks'}</button>
+            </div>
+            {!suggestions && (
+              <p style={{ color: '#94a3b8', fontSize: 13, margin: 0 }}>
+                Looks at each driver's actual wave time and days worked over the last 6 weeks to suggest which team they belong on — a starting point to review, not an auto-apply.
+              </p>
+            )}
+            {suggestions && (
+              <>
+                <label style={{ fontSize: 12, color: '#94a3b8', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                  <input type="checkbox" checked={showMatching} onChange={e => setShowMatching(e.target.checked)} />
+                  Show drivers whose suggestion already matches their current team
+                </label>
+                <div style={{ maxHeight: 420, overflowY: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ color: '#94a3b8', textAlign: 'left' }}>
+                        <th style={{ padding: '4px 8px' }}>Driver</th>
+                        <th style={{ padding: '4px 8px' }}>Suggested</th>
+                        <th style={{ padding: '4px 8px' }}>Current</th>
+                        <th style={{ padding: '4px 8px' }}>Sample</th>
+                        <th style={{ padding: '4px 8px' }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {suggestions.filter(row => showMatching || !row.matches_current).map(row => (
+                        <tr key={row.roster_id} style={{ borderTop: '1px solid #334155' }}>
+                          <td style={{ padding: '6px 8px' }}>{row.payroll_name}</td>
+                          <td style={{ padding: '6px 8px', color: '#4ade80', fontWeight: 600 }}>{row.suggested_team_label ?? '—'}</td>
+                          <td style={{ padding: '6px 8px', color: '#94a3b8' }}>{row.current_team_label ?? 'unassigned'}</td>
+                          <td style={{ padding: '6px 8px', color: '#64748b' }}>{row.sample_size}</td>
+                          <td style={{ padding: '6px 8px' }}>
+                            {!row.matches_current && (
+                              <button style={{ ...s.btn, padding: '3px 10px', fontSize: 12 }} onClick={() => applySuggestion(row)}>Apply</button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
 
           {/* Wave 5 — 4x4 truck */}
           <div style={s.card}>

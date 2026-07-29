@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -111,6 +111,93 @@ def get_team_for_driver(roster_id: int, db: Session) -> Optional[WaveTeam]:
     if not membership:
         return None
     return db.query(WaveTeam).filter(WaveTeam.id == membership.team_id).first()
+
+
+def suggest_team_assignments(weeks: int, db: Session) -> list[dict]:
+    """Analyzes each active driver's real historical schedule (DriverScheduleEntry,
+    trailing `weeks` weeks) to suggest a standing team — added 2026-07-29
+    because there's no way for dispatch to know ~100 drivers' typical wave/
+    day pattern from memory. Doesn't touch anything; purely a read-only
+    suggestion for a human to review and apply via /wave-lead/teams/assign.
+
+    Wave: most common wave_number (1-4) across their entries -- Wave 5
+    occurrences are ignored for team purposes (Wave 5 has no team; a driver
+    who mostly runs the 4x4 truck is presumably one of its two dedicated
+    leads, not someone needing a Front/Back Half team).
+
+    Half: Sun/Mon/Tue count toward Front, Thu/Fri/Sat count toward Back,
+    Wednesday splits 0.5/0.5 both ways (it's a real overlap day per the
+    SRD) -- whichever side has the higher total wins."""
+    cutoff = date.today() - timedelta(weeks=weeks)
+    entries = (
+        db.query(DriverScheduleEntry)
+        .filter(DriverScheduleEntry.schedule_date >= cutoff, DriverScheduleEntry.roster_id.isnot(None))
+        .all()
+    )
+
+    by_driver: dict[int, list[DriverScheduleEntry]] = {}
+    for e in entries:
+        by_driver.setdefault(e.roster_id, []).append(e)
+
+    roster_ids = list(by_driver.keys())
+    active_entries = {
+        r.id: r for r in db.query(DriverRosterEntry).filter(
+            DriverRosterEntry.id.in_(roster_ids), DriverRosterEntry.is_active == True,  # noqa: E712
+        ).all()
+    }
+
+    results = []
+    for roster_id, driver_entries in by_driver.items():
+        roster_entry = active_entries.get(roster_id)
+        if not roster_entry:
+            continue  # inactive or not found -- skip, don't suggest a team for them
+
+        wave_counts: dict[int, int] = {}
+        front_score = back_score = 0.0
+        for e in driver_entries:
+            wn = wave_number_for_assignment(e.wave_time, e.service_type)
+            if wn != WAVE_5:
+                wave_counts[wn] = wave_counts.get(wn, 0) + 1
+            weekday = e.schedule_date.weekday()  # Mon=0 ... Sun=6
+            if weekday == 6:  # Sunday, Monday, Tuesday -> Front
+                front_score += 1
+            elif weekday in (0, 1):
+                front_score += 1
+            elif weekday == 2:  # Wednesday -- real overlap day, splits both ways
+                front_score += 0.5
+                back_score += 0.5
+            elif weekday in (3, 4, 5):  # Thursday, Friday, Saturday -> Back
+                back_score += 1
+
+        if not wave_counts:
+            continue  # only ever ran Wave 5 -- not a team candidate
+
+        suggested_wave = max(wave_counts, key=lambda w: wave_counts[w])
+        suggested_half = "front" if front_score >= back_score else "back"
+
+        team = db.query(WaveTeam).filter(WaveTeam.wave_number == suggested_wave, WaveTeam.half == suggested_half).first()
+        current_team = get_team_for_driver(roster_id, db)
+
+        results.append({
+            "roster_id": roster_id,
+            "payroll_name": roster_entry.payroll_name,
+            "sample_size": len(driver_entries),
+            "suggested_wave": suggested_wave,
+            "suggested_half": suggested_half,
+            "suggested_team_id": team.id if team else None,
+            "suggested_team_label": team_label(team) if team else None,
+            "current_team_id": current_team.id if current_team else None,
+            "current_team_label": team_label(current_team) if current_team else None,
+            "matches_current": bool(current_team and team and current_team.id == team.id),
+        })
+
+    results.sort(key=lambda r: r["payroll_name"])
+    return results
+
+
+@router.get("/suggest-teams")
+def get_suggest_teams(weeks: int = 6, db: Session = Depends(get_db)):
+    return {"suggestions": suggest_team_assignments(weeks, db)}
 
 
 def get_wave_channel_id(wave_number: int, db: Session) -> Optional[str]:

@@ -887,19 +887,27 @@ def _handle_driver_arrived(payload: dict, db: Session) -> None:
 
 def _handle_talk_to_lead(payload: dict, db: Session) -> None:
     """Driver tapped 'Talk to My Lead' in their day-of shift DM. Resolves
-    today's lead at press-time (never a cached contact), so a lead change
-    earlier the same day is always picked up. See
+    their specific wave's lead at press-time (never a cached contact), so
+    a lead change earlier the same day is always picked up. wave_number
+    was baked into the button's value at send-time (2026-07-29, Wave Lead
+    module) -- falls back to the legacy global lead if it's missing (an
+    older DM sent before this change). See
     Governance/SRD_DRIVER_SCHEDULE_PTT_MODULE.md §7."""
     try:
         action = (payload.get("actions") or [{}])[0]
         value = json.loads(action.get("value", "{}"))
         shift_date_str = value.get("shift_date", "")
         driver_name = value.get("driver_name", "")
+        wave_number = value.get("wave_number")
         channel_id = payload.get("channel", {}).get("id", "")
 
-        from api.src.routes.driver_lead_schedule import get_current_lead
         shift_date = date.fromisoformat(shift_date_str)
-        lead_name, lead_slack_id, _source = get_current_lead(shift_date, db)
+        if wave_number:
+            from api.src.routes.driver_lead_schedule import get_current_wave_lead
+            lead_name, lead_slack_id, _source = get_current_wave_lead(shift_date, wave_number, db)
+        else:
+            from api.src.routes.driver_lead_schedule import get_current_lead
+            lead_name, lead_slack_id, _source = get_current_lead(shift_date, db)
 
         token = os.getenv("SLACK_BOT_TOKEN")
         if not token:

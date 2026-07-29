@@ -93,6 +93,46 @@ def team_label(team: WaveTeam) -> str:
     return f"Wave {team.wave_number} {team.half.capitalize()}"
 
 
+def wave_number_for_assignment(wave_time: Optional[str], service_type: Optional[str]) -> int:
+    """Bucket a driver's daily assignment into a wave number (1-5) for lead
+    resolution. Wave 5 (the 4x4 truck) is vehicle-type driven, not
+    time-driven -- normalization.py maps the raw "4WD P31 Delivery Truck"
+    service type to "AmFlex Large Vehicle" (its Fleet-side name), so that's
+    what actually shows up on a real assignment row. Waves 1-4 are bucketed
+    by departure time, mirroring pdf_generator.py's display-only
+    _extract_wave_number() (before 8am=1, 8-10am=2, 10am-12pm=3, after
+    12pm=4) -- duplicated here as a small standalone function rather than
+    reaching into that class method, since this is now the canonical
+    version for anything lead-resolution-related."""
+    if service_type and "amflex" in service_type.lower():
+        return WAVE_5
+
+    if not wave_time:
+        return 1
+    try:
+        s = wave_time.strip().upper()
+        time_part = s.replace("AM", "").replace("PM", "").strip()
+        is_pm = "PM" in s
+        parts = time_part.split(":")
+        if len(parts) != 2:
+            return 1
+        hour = int(parts[0])
+        if is_pm and hour != 12:
+            hour += 12
+        elif not is_pm and hour == 12:
+            hour = 0
+        if hour < 8:
+            return 1
+        elif hour < 10:
+            return 2
+        elif hour < 12:
+            return 3
+        else:
+            return 4
+    except Exception:
+        return 1
+
+
 def get_team_standings(db: Session) -> list[dict]:
     """Rank the 8 teams by average of driver_scoring.py's blended overall
     score across each team's standing membership. A driver missing quality

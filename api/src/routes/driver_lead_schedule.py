@@ -95,6 +95,45 @@ def get_current_lead(shift_date: date, db: Session) -> tuple[str, Optional[str],
     return name, slack_id, "default_rotation"
 
 
+def get_current_wave_lead(shift_date: date, wave_number: int, db: Session) -> tuple[str, Optional[str], str]:
+    """Resolve the lead for a specific wave (1-5) on a given date — added
+    2026-07-29 for the Wave Lead module (Governance/05_NDL_Wave_Lead_Module_SRD.md).
+    Priority:
+      1. A date-specific manual override for this exact wave
+         (DailyLeadAssignment, scope_type='wave', scope_key='Wave N') --
+         the scope_type/scope_key columns were reserved for exactly this
+         since Phase 1, per this module's original SRD.
+      2. The standing WaveLeadRole assignment for this wave (wave_lead.py) --
+         the normal case once wave leads are configured.
+      3. Falls back to the legacy single global lead (get_current_lead) if
+         neither is set yet, so nothing breaks for a wave not yet configured.
+    Wave 5 (the 4x4 truck) can have two active WaveLeadRole rows; this
+    returns the first one found for single-recipient DM routing -- use
+    wave_lead.get_active_wave_leads() directly if both are needed."""
+    scope_key = f"Wave {wave_number}"
+    row = (
+        db.query(DailyLeadAssignment)
+        .filter(
+            DailyLeadAssignment.schedule_date == shift_date,
+            DailyLeadAssignment.scope_type == "wave",
+            DailyLeadAssignment.scope_key == scope_key,
+        )
+        .order_by(DailyLeadAssignment.created_at.desc())
+        .first()
+    )
+    if row:
+        return row.driver_name, _resolve_slack_id(row.driver_name, db), row.source
+
+    from api.src.routes.wave_lead import get_active_wave_leads
+    leads = get_active_wave_leads(wave_number, db)
+    if leads:
+        entry = leads[0]
+        slack_id = entry.slack_member_id if (entry.slack_verified and entry.slack_member_id) else None
+        return entry.payroll_name, slack_id, "wave_lead_role"
+
+    return get_current_lead(shift_date, db)
+
+
 class SetLeadRequest(BaseModel):
     driver_name: str
     created_by: Optional[str] = None
@@ -135,6 +174,54 @@ def clear_lead_override(shift_date: date, db: Session = Depends(get_db)):
         .filter(
             DailyLeadAssignment.schedule_date == shift_date,
             DailyLeadAssignment.scope_type == "global",
+            DailyLeadAssignment.source == "manual_override",
+        )
+        .delete()
+    )
+    db.commit()
+    return {"status": "ok", "cleared": deleted}
+
+
+class SetWaveLeadRequest(BaseModel):
+    driver_name: str
+    created_by: Optional[str] = None
+
+
+@router.get("/{shift_date}/wave/{wave_number}")
+def get_wave_lead(shift_date: date, wave_number: int, db: Session = Depends(get_db)):
+    name, slack_id, source = get_current_wave_lead(shift_date, wave_number, db)
+    return {"date": shift_date.isoformat(), "wave_number": wave_number, "driver_name": name, "slack_user_id": slack_id, "source": source}
+
+
+@router.post("/{shift_date}/wave/{wave_number}")
+def set_wave_lead_override(shift_date: date, wave_number: int, body: SetWaveLeadRequest, db: Session = Depends(get_db)):
+    """One-off date-specific override for a single wave's lead — separate
+    from the standing WaveLeadRole assignment in wave_lead.py, same
+    manual-override-always-wins pattern as the legacy global endpoint above."""
+    name = body.driver_name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="driver_name is required")
+    db.add(DailyLeadAssignment(
+        schedule_date=shift_date,
+        scope_type="wave",
+        scope_key=f"Wave {wave_number}",
+        driver_name=name,
+        source="manual_override",
+        created_by=body.created_by or "dispatch_console",
+    ))
+    db.commit()
+    logger.info("Wave lead override set: %s Wave %s -> %s (by %s)", shift_date.isoformat(), wave_number, name, body.created_by or "dispatch_console")
+    return {"status": "ok", "date": shift_date.isoformat(), "wave_number": wave_number, "driver_name": name}
+
+
+@router.delete("/{shift_date}/wave/{wave_number}")
+def clear_wave_lead_override(shift_date: date, wave_number: int, db: Session = Depends(get_db)):
+    deleted = (
+        db.query(DailyLeadAssignment)
+        .filter(
+            DailyLeadAssignment.schedule_date == shift_date,
+            DailyLeadAssignment.scope_type == "wave",
+            DailyLeadAssignment.scope_key == f"Wave {wave_number}",
             DailyLeadAssignment.source == "manual_override",
         )
         .delete()

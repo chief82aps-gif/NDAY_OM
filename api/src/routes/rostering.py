@@ -1921,6 +1921,22 @@ def _calc_return_time(wave_str: str, duration_minutes: Optional[int]) -> Optiona
     return (dt + timedelta(minutes=int(duration_minutes) - 30)).strftime("%-I:%M %p")
 
 
+def _resolve_wave_lead_for_driver(a: DailyRouteAssignment, shift_date: date, db: Session) -> tuple[str, Optional[str]]:
+    """Per-driver wave-lead resolution — added 2026-07-29 for the Wave Lead
+    module (Governance/05_NDL_Wave_Lead_Module_SRD.md). Replaces the old
+    single-global-lead-for-everyone lookup: each driver's own wave (bucketed
+    from their assignment's wave time / vehicle service type) gets its own
+    lead. Still gated by LEAD_ROUTING_ACTIVE, same as before."""
+    from api.src.routes.driver_lead_schedule import get_current_wave_lead, LEAD_ROUTING_ACTIVE
+    from api.src.routes.wave_lead import wave_number_for_assignment
+
+    wave_number = wave_number_for_assignment(a.wave, getattr(a, "service_type", None))
+    wave_lead_name, wave_lead_slack_id, _source = get_current_wave_lead(shift_date, wave_number, db)
+    if not LEAD_ROUTING_ACTIVE:
+        wave_lead_slack_id = None  # keep the legacy Zello-text DM until the flag is flipped on
+    return wave_lead_name, wave_lead_slack_id
+
+
 def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str, wave_lead_slack_id: Optional[str] = None, db: Optional[Session] = None) -> tuple[str, list]:
     """Build the (fallback_text, blocks) for one driver's day-of assignment
     DM. Shared by send_day_of_dms() (the real, gated send) and the
@@ -2021,9 +2037,11 @@ def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str
     # Static "TBD" placeholder is intentional, not a bug.
     fields.append({"type": "mrkdwn", "text": "*ACE Eligibility:*\nTBD"})
 
+    from api.src.routes.wave_lead import wave_number_for_assignment
     arrival_value = json.dumps({
         "shift_date": a.assignment_date.isoformat(),
         "driver_name": a.driver_name,
+        "wave_number": wave_number_for_assignment(a.wave, getattr(a, "service_type", None)),
     })
 
     # Same one-click treatment as _build_shift_dm()'s "Can't Make It" —
@@ -2155,10 +2173,6 @@ def send_day_of_dms(shift_date: date, db: Session, bypass_outstanding_items: boo
     if not assignments:
         return {"status": "no_assignments", "date": shift_date.isoformat()}
 
-    from api.src.routes.driver_lead_schedule import get_current_lead, LEAD_ROUTING_ACTIVE
-    wave_lead_name, wave_lead_slack_id, _lead_source = get_current_lead(shift_date, db)
-    if not LEAD_ROUTING_ACTIVE:
-        wave_lead_slack_id = None  # keep the legacy Zello-text DM until the flag is flipped on
     client = _slack_client()
     date_str = shift_date.strftime("%A, %B %-d")
 
@@ -2200,6 +2214,7 @@ def send_day_of_dms(shift_date: date, db: Session, bypass_outstanding_items: boo
                     logger.warning("Outstanding-items holding message failed for %s: %s", a.driver_name, exc)
             continue
 
+        wave_lead_name, wave_lead_slack_id = _resolve_wave_lead_for_driver(a, shift_date, db)
         fallback_text, blocks = _build_driver_dm(a, wave_lead_name, date_str, wave_lead_slack_id, db)
 
         dm_ts = None
@@ -2278,10 +2293,7 @@ def send_single_day_of_dm(assignment_id: int, db: Session) -> dict:
     if not client:
         return {"status": "no_slack_client"}
 
-    from api.src.routes.driver_lead_schedule import get_current_lead, LEAD_ROUTING_ACTIVE
-    wave_lead_name, wave_lead_slack_id, _lead_source = get_current_lead(a.assignment_date, db)
-    if not LEAD_ROUTING_ACTIVE:
-        wave_lead_slack_id = None
+    wave_lead_name, wave_lead_slack_id = _resolve_wave_lead_for_driver(a, a.assignment_date, db)
     date_str = a.assignment_date.strftime("%A, %B %-d")
     fallback_text, blocks = _build_driver_dm(a, wave_lead_name, date_str, wave_lead_slack_id, db)
 
@@ -2323,10 +2335,7 @@ def send_test_driver_dm(shift_date: date, sample_driver_name: str, target_slack_
     if not client:
         return {"status": "no_slack_token"}
 
-    from api.src.routes.driver_lead_schedule import get_current_lead, LEAD_ROUTING_ACTIVE
-    wave_lead_name, wave_lead_slack_id, _lead_source = get_current_lead(shift_date, db)
-    if not LEAD_ROUTING_ACTIVE:
-        wave_lead_slack_id = None
+    wave_lead_name, wave_lead_slack_id = _resolve_wave_lead_for_driver(a, shift_date, db)
     date_str = shift_date.strftime("%A, %B %-d")
     fallback_text, blocks = _build_driver_dm(a, wave_lead_name, date_str, wave_lead_slack_id, db)
 

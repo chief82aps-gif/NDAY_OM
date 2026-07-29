@@ -38,7 +38,7 @@ from sqlalchemy.orm import Session
 from api.src.database import (
     get_db, SessionLocal,
     Cortex, DOP, Vehicle, DriverRosterEntry, DailyRouteAssignment,
-    QualityMetricDriver, QualityMetricSnapshot, DriverCallout,
+    QualityMetricSnapshot, DriverCallout,
     RouteSheetEntry, get_latest_dop_rows, get_latest_cortex_rows,
     get_latest_route_sheet_rows,
 )
@@ -56,12 +56,6 @@ def _slack_client():
         return None
     from slack_sdk import WebClient
     return WebClient(token=token)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Standing rank (higher = better)
-# ─────────────────────────────────────────────────────────────────────────────
-
-_STANDING_RANK = {"Platinum": 4, "Gold": 3, "Silver": 2, "Bronze": 1}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Van service-type fallback chains
@@ -146,38 +140,35 @@ def _load_dop_map(target: date, db: Session) -> dict[str, DOP]:
             rows = get_latest_dop_rows(db, latest)
     return {r.route_code: r for r in rows}
 
+_TIER_DISPLAY = {"gray": "Unknown"}
+
+
 def _load_quality_map(db: Session) -> dict[str, dict]:
-    """Return {transporter_id: {rank, standing, score}} from the latest quality snapshot."""
-    latest_snap = (
-        db.query(QualityMetricSnapshot)
-        .order_by(QualityMetricSnapshot.week.desc())
-        .first()
-    )
-    if not latest_snap:
-        return {}
-    drivers = (
-        db.query(QualityMetricDriver)
-        .filter(QualityMetricDriver.snapshot_id == latest_snap.id)
-        .all()
-    )
-    # Sort: standing rank desc, then score desc → assign rank 1..N
-    sorted_drivers = sorted(
-        drivers,
-        key=lambda d: (
-            _STANDING_RANK.get(d.overall_standing or "", 0),
-            float(d.overall_score or 0),
-        ),
-        reverse=True,
-    )
+    """Return {transporter_id: {rank, standing, score, week}} sourced from
+    driver_scoring.py's blended 20/40/40 overall score.
+
+    Fixed 2026-07-29 (bundled into the Wave Lead module build, per
+    explicit decision): this used to query QualityMetricDriver directly
+    and rank via its own separate _STANDING_RANK off Amazon's raw
+    overall_standing/overall_score -- a real, pre-existing disagreement
+    with driver_scoring.py's blended score (the one the Mentoring
+    Dashboard and tiers use), documented as an architecture violation in
+    Governance/SRD_MODULE_ARCHITECTURE_v3.md. Route assignment now uses
+    the exact same ranking as everywhere else."""
+    from api.src.routes.driver_scoring import compute_driver_scores
+
+    scores = compute_driver_scores(db)  # already sorted desc by overall, nulls last
+    latest_week = db.query(func.max(QualityMetricSnapshot.week)).scalar()
+
     return {
-        d.transporter_id: {
+        s["transporter_id"]: {
             "rank": i + 1,
-            "standing": d.overall_standing or "Unknown",
-            "score": float(d.overall_score or 0),
-            "week": latest_snap.week,
+            "standing": _TIER_DISPLAY.get(s["overall_tier"], s["overall_tier"].capitalize()),
+            "score": s["overall"] if s["overall"] is not None else 0,
+            "week": latest_week,
         }
-        for i, d in enumerate(sorted_drivers)
-        if d.transporter_id
+        for i, s in enumerate(scores)
+        if s["transporter_id"]
     }
 
 def _load_van_affinity(target: date, db: Session) -> dict[str, str]:

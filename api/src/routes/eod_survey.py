@@ -225,6 +225,7 @@ class DriverLookupResponse(BaseModel):
     driver_name: str
     roster_id: int
     van_number: Optional[str]
+    vin: Optional[str]
     wave: Optional[str]
     role: str
     already_submitted: bool
@@ -337,6 +338,7 @@ def driver_lookup(
         driver_name=display_name,
         roster_id=entry.id,
         van_number=assignment.van_number if assignment else None,
+        vin=assignment.vin if assignment else None,
         wave=assignment.wave if assignment else None,
         role=role,
         already_submitted=existing is not None,

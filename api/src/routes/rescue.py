@@ -961,7 +961,11 @@ def missed_pulls_report(
 
 @router.get("/drivers")
 def get_drivers(db: Session = Depends(get_db)):
-    """Return active drivers for dropdown population."""
+    """Return active drivers for dropdown population -- normal
+    "000004-Driver" position_code drivers, plus the Senior Wave Leads
+    (Spencer/Gallo), who act as the daily sweep/cleanup crew and need to
+    be selectable as a rescuing driver even though their position_code
+    isn't "000004-Driver" (added 2026-07-29, per explicit request)."""
     drivers = (
         db.query(DriverRosterEntry)
         .filter(
@@ -971,6 +975,16 @@ def get_drivers(db: Session = Depends(get_db)):
         .order_by(DriverRosterEntry.payroll_name)
         .all()
     )
+
+    from api.src.routes.wave_lead import get_senior_wave_lead, HALVES
+    seen_ids = {d.id for d in drivers}
+    for half in HALVES:
+        entry = get_senior_wave_lead(half, db)
+        if entry and entry.is_active and entry.id not in seen_ids:
+            drivers.append(entry)
+            seen_ids.add(entry.id)
+
+    drivers.sort(key=lambda d: d.payroll_name)
     return [
         {"name": d.payroll_name, "position_id": d.position_id}
         for d in drivers

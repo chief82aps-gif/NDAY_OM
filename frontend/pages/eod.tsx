@@ -17,6 +17,7 @@ interface DriverInfo {
   driver_name: string;
   roster_id: number;
   van_number: string | null;
+  vin: string | null;
   wave: string | null;
   role: string;
   already_submitted: boolean;
@@ -433,6 +434,7 @@ export default function EodPage() {
         <div style={s.pre}>
           <strong style={{ color: '#f1f5f9' }}>{driverInfo?.driver_name}</strong>
           {vanNumber && <span style={{ color: '#64748b' }}> · Van {vanNumber}</span>}
+          {driverInfo?.vin && <span style={{ color: '#64748b' }}> · VIN {driverInfo.vin}</span>}
           {wave && <span style={{ color: '#64748b' }}> · Wave {wave}</span>}
           {role && <span style={{ color: '#64748b' }}> · {role}</span>}
         </div>

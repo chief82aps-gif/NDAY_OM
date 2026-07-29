@@ -33,7 +33,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from api.src.database import (
-    get_db, DriverRosterEntry,
+    get_db, DriverRosterEntry, DriverScheduleEntry, DailyRouteAssignment,
     WaveLeadRole, WaveTeam, WaveTeamMembership,
     WaveRosterSuggestion, WaveRosterDiscrepancy,
     get_reminder_state, set_reminder_state,
@@ -407,3 +407,249 @@ def send_wave_competition_standings(db: Session, force: bool = False) -> dict:
 def trigger_standings(force: bool = True, db: Session = Depends(get_db)):
     """Manual trigger for testing/recovery — same function the morning loop calls."""
     return send_wave_competition_standings(db, force=force)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Nightly roster suggestion + discrepancy checking — v1 suggestion/
+# validation-only pipeline. Manually triggered for now (not yet on its own
+# schedule tied to the Rostered Work Blocks ingest landing — see
+# Governance/05_NDL_Wave_Lead_Module_SRD.md open items).
+#
+# v1 simplification, explicit: suggests purely from each driver's standing
+# team (WaveTeamMembership) + blended rank, filtered to who's actually
+# scheduled that night. Does NOT yet cross-reference against a per-wave
+# headcount inferred from Work Blocks columns -- that needs the promised
+# screenshot to build correctly rather than guessing at a file format.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def generate_wave_roster_suggestion(roster_date: date, db: Session) -> dict:
+    """Suggest each driver's wave for roster_date. Idempotent — clears any
+    prior suggestion for this date first, safe to re-run as the night's
+    schedule data changes."""
+    from api.src.routes.driver_scoring import compute_driver_scores
+    from api.src.driver_identity import resolve_roster_entry
+
+    db.query(WaveRosterSuggestion).filter(WaveRosterSuggestion.roster_date == roster_date).delete()
+
+    scheduled = db.query(DriverScheduleEntry).filter(DriverScheduleEntry.schedule_date == roster_date).all()
+    scheduled_roster_ids = {e.roster_id for e in scheduled if e.roster_id}
+
+    scores = compute_driver_scores(db)
+    score_by_roster_id: dict[int, float] = {}
+    for s in scores:
+        if s["overall"] is None or not s["driver_name"]:
+            continue
+        entry = resolve_roster_entry(s["driver_name"], db)
+        if entry:
+            score_by_roster_id[entry.id] = s["overall"]
+
+    created = 0
+    for wave_number in WAVE_NUMBERS:
+        team_ids = [t.id for t in db.query(WaveTeam).filter(WaveTeam.wave_number == wave_number).all()]
+        member_roster_ids = [
+            m.roster_id for m in db.query(WaveTeamMembership).filter(WaveTeamMembership.team_id.in_(team_ids)).all()
+        ] if team_ids else []
+        candidates = [rid for rid in member_roster_ids if rid in scheduled_roster_ids]
+
+        leads = get_active_wave_leads(wave_number, db)
+        lead_ids = {l.id for l in leads}
+        regular = sorted(
+            (rid for rid in candidates if rid not in lead_ids),
+            key=lambda rid: score_by_roster_id.get(rid, -1),
+            reverse=True,
+        )
+
+        position = 1
+        for rid in regular:
+            db.add(WaveRosterSuggestion(
+                roster_date=roster_date, roster_id=rid, suggested_wave=wave_number,
+                suggested_rank_position=position, is_wave_lead_slot=False,
+            ))
+            position += 1
+            created += 1
+        for lead_entry in leads:
+            if lead_entry.id in scheduled_roster_ids:
+                db.add(WaveRosterSuggestion(
+                    roster_date=roster_date, roster_id=lead_entry.id, suggested_wave=wave_number,
+                    suggested_rank_position=position, is_wave_lead_slot=True,
+                ))
+                position += 1
+                created += 1
+
+    db.commit()
+    return {"roster_date": roster_date.isoformat(), "suggestions_created": created}
+
+
+def check_roster_discrepancies(roster_date: date, db: Session) -> dict:
+    """Compare the suggestion against dispatch's actual roster
+    (DailyRouteAssignment) for roster_date. Idempotent — clears prior
+    discrepancy rows for this date first. v1 deliberately does not flag
+    'unexpected' (driver rostered but not suggested at all) — that would
+    conflate a driver simply not yet assigned a standing team with a real
+    misrostering, which needs a cleaner signal than v1 has."""
+    db.query(WaveRosterDiscrepancy).filter(WaveRosterDiscrepancy.roster_date == roster_date).delete()
+
+    suggestions = db.query(WaveRosterSuggestion).filter(WaveRosterSuggestion.roster_date == roster_date).all()
+    suggested_by_roster_id = {s.roster_id: s for s in suggestions}
+
+    actual = db.query(DailyRouteAssignment).filter(DailyRouteAssignment.assignment_date == roster_date).all()
+    actual_by_roster_id: dict[int, DailyRouteAssignment] = {a.roster_id: a for a in actual if a.roster_id}
+
+    created = 0
+    for roster_id, suggestion in suggested_by_roster_id.items():
+        a = actual_by_roster_id.get(roster_id)
+        if not a:
+            db.add(WaveRosterDiscrepancy(
+                roster_date=roster_date, roster_id=roster_id, discrepancy_type="missing",
+                detail=f"Suggested for Wave {suggestion.suggested_wave} but not found in today's actual roster.",
+            ))
+            created += 1
+            continue
+        actual_wave = wave_number_for_assignment(a.wave, getattr(a, "service_type", None))
+        if actual_wave != suggestion.suggested_wave:
+            db.add(WaveRosterDiscrepancy(
+                roster_date=roster_date, roster_id=roster_id, discrepancy_type="wave_mismatch",
+                detail=f"Suggested Wave {suggestion.suggested_wave}, actually rostered Wave {actual_wave}.",
+            ))
+            created += 1
+
+    for wave_number in WAVE_NUMBERS:
+        lead_suggestion = next(
+            (s for s in suggestions if s.suggested_wave == wave_number and s.is_wave_lead_slot), None
+        )
+        if lead_suggestion and lead_suggestion.roster_id not in actual_by_roster_id:
+            db.add(WaveRosterDiscrepancy(
+                roster_date=roster_date, roster_id=lead_suggestion.roster_id, discrepancy_type="lead_slot_unfilled",
+                detail=f"Wave {wave_number}'s lead was not found in today's actual roster.",
+            ))
+            created += 1
+
+    db.commit()
+    return {"roster_date": roster_date.isoformat(), "discrepancies_created": created}
+
+
+def send_discrepancy_summary(roster_date: date, db: Session) -> dict:
+    """DMs #nday-mgt a summary of unresolved discrepancies for roster_date,
+    framed as confirm-as-is or fix — matches the "you missed these, leave
+    it or make corrections" framing from the original request."""
+    rows = (
+        db.query(WaveRosterDiscrepancy)
+        .filter(WaveRosterDiscrepancy.roster_date == roster_date, WaveRosterDiscrepancy.resolved == False)  # noqa: E712
+        .all()
+    )
+    if not rows:
+        return {"status": "no_discrepancies", "roster_date": roster_date.isoformat()}
+
+    roster_ids = [r.roster_id for r in rows]
+    entries = {
+        e.id: e for e in db.query(DriverRosterEntry).filter(DriverRosterEntry.id.in_(roster_ids)).all()
+    } if roster_ids else {}
+
+    lines = [
+        f"🔍 *Wave Roster Check — {roster_date.strftime('%A, %B %-d')}*",
+        f"{len(rows)} discrepancy(ies) found vs. the suggested roster:",
+        "",
+    ]
+    for r in rows:
+        name = entries[r.roster_id].payroll_name if r.roster_id in entries else f"driver #{r.roster_id}"
+        lines.append(f"• *{name}* — {r.detail}")
+    lines.append("")
+    lines.append("Leave it as-is, or make corrections in your usual rostering process.")
+
+    try:
+        token = os.getenv("SLACK_BOT_TOKEN")
+        if token:
+            from slack_sdk import WebClient
+            WebClient(token=token).chat_postMessage(channel=MGT_CHANNEL, text="\n".join(lines))
+    except Exception as exc:
+        logger.warning("Wave roster discrepancy summary post failed: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+    return {"status": "sent", "roster_date": roster_date.isoformat(), "discrepancy_count": len(rows)}
+
+
+@router.post("/generate-suggestion/{roster_date}")
+def trigger_generate_suggestion(
+    roster_date: date,
+    db: Session = Depends(get_db),
+    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager")),
+):
+    return generate_wave_roster_suggestion(roster_date, db)
+
+
+@router.get("/suggestion/{roster_date}")
+def get_suggestion(roster_date: date, db: Session = Depends(get_db)):
+    rows = (
+        db.query(WaveRosterSuggestion)
+        .filter(WaveRosterSuggestion.roster_date == roster_date)
+        .order_by(WaveRosterSuggestion.suggested_wave, WaveRosterSuggestion.suggested_rank_position)
+        .all()
+    )
+    roster_ids = [r.roster_id for r in rows]
+    entries = {
+        e.id: e for e in db.query(DriverRosterEntry).filter(DriverRosterEntry.id.in_(roster_ids)).all()
+    } if roster_ids else {}
+    return {
+        "roster_date": roster_date.isoformat(),
+        "suggestions": [
+            {
+                "roster_id": r.roster_id,
+                "payroll_name": entries[r.roster_id].payroll_name if r.roster_id in entries else "Unknown",
+                "wave": r.suggested_wave,
+                "position": r.suggested_rank_position,
+                "is_wave_lead_slot": r.is_wave_lead_slot,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.post("/check-discrepancies/{roster_date}")
+def trigger_check_discrepancies(
+    roster_date: date,
+    db: Session = Depends(get_db),
+    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager")),
+):
+    result = check_roster_discrepancies(roster_date, db)
+    send_result = send_discrepancy_summary(roster_date, db)
+    return {**result, "summary_send": send_result}
+
+
+@router.get("/discrepancies/{roster_date}")
+def get_discrepancies(roster_date: date, db: Session = Depends(get_db)):
+    rows = db.query(WaveRosterDiscrepancy).filter(WaveRosterDiscrepancy.roster_date == roster_date).all()
+    roster_ids = [r.roster_id for r in rows]
+    entries = {
+        e.id: e for e in db.query(DriverRosterEntry).filter(DriverRosterEntry.id.in_(roster_ids)).all()
+    } if roster_ids else {}
+    return {
+        "roster_date": roster_date.isoformat(),
+        "discrepancies": [
+            {
+                "id": r.id,
+                "roster_id": r.roster_id,
+                "payroll_name": entries[r.roster_id].payroll_name if r.roster_id in entries else "Unknown",
+                "type": r.discrepancy_type,
+                "detail": r.detail,
+                "resolved": r.resolved,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.post("/discrepancies/{discrepancy_id}/resolve")
+def resolve_discrepancy(
+    discrepancy_id: int,
+    resolved_by: str,
+    db: Session = Depends(get_db),
+    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager")),
+):
+    row = db.query(WaveRosterDiscrepancy).filter(WaveRosterDiscrepancy.id == discrepancy_id).first()
+    if not row:
+        raise HTTPException(404, f"Discrepancy {discrepancy_id} not found")
+    row.resolved = True
+    row.resolved_by = resolved_by
+    row.resolved_at = datetime.utcnow()
+    db.commit()
+    return {"status": "resolved", "id": discrepancy_id}

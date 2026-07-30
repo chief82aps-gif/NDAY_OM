@@ -313,15 +313,14 @@ def manual_check():
 # data needs a timekeeping API (ADP, currently paused on cost -- see
 # adp.py), so until then this just nudges HR to post the daily timecard
 # audit report into #nday-operations-management, once a day, after HR's
-# own daily audit is normally done. TIMECARD_REPORT_NUDGE_HOUR is a
-# placeholder (2 PM Pacific) pending confirmation of Amanda's actual daily
-# audit completion time -- asked 2026-07-29, update the env var once
-# she replies so this doesn't land before or during her workflow.
+# own daily audit is normally done. Amanda confirmed (2026-07-29 via Slack
+# DM) audits typically finish between 9-10 AM Pacific -- default hour set
+# to 10 AM so the nudge lands right after that window closes.
 # ─────────────────────────────────────────────────────────────────────────────
 
 OPS_MGMT_CHANNEL = os.getenv("SLACK_OPS_MGMT_CHANNEL", "C0BE4ALL1EX")   # #nday-operations-management
 TIMECARD_REPORT_NUDGE_ACTIVE = os.getenv("TIMECARD_REPORT_NUDGE_ACTIVE", "false").lower() == "true"
-TIMECARD_REPORT_NUDGE_HOUR = int(os.getenv("TIMECARD_REPORT_NUDGE_HOUR", "14"))  # placeholder -- confirm with Amanda
+TIMECARD_REPORT_NUDGE_HOUR = int(os.getenv("TIMECARD_REPORT_NUDGE_HOUR", "10"))  # confirmed with Amanda: audits finish 9-10 AM
 _TIMECARD_NUDGE_KEY_PREFIX = "timecard_report_nudge_"
 
 

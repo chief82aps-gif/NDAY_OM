@@ -602,6 +602,24 @@ def _mgt_summary_rows(snapshot_id: int, db: Session) -> list[dict]:
     return rows
 
 
+def _latest_day_violators(snapshot_id: int, db: Session) -> tuple[Optional[date], list[dict]]:
+    """Violators (<90s) on just the single most recent inspection date
+    within this snapshot -- added 2026-07-30 so the processed-report
+    notification can call out the latest day's actual violators
+    specifically, not just the whole rolling-7-day table."""
+    violations = db.query(DvicViolation).filter(DvicViolation.snapshot_id == snapshot_id).all()
+    dated = [v for v in violations if v.start_date]
+    if not dated:
+        return None, []
+    latest_date = max(v.start_date for v in dated)
+    latest_rows = [v for v in dated if v.start_date == latest_date]
+    latest_rows.sort(key=lambda v: v.duration_seconds if v.duration_seconds is not None else 0)
+    return latest_date, [
+        {"name": v.transporter_name or v.transporter_id, "duration_seconds": v.duration_seconds}
+        for v in latest_rows
+    ]
+
+
 def post_dvic_naughty_list(snapshot_id: int, db: Session) -> dict:
     """Build and post the driver-name / avg-time / instance-count 'Naughty
     List' table to #nday-mgt for one specific snapshot. Shared by the
@@ -626,6 +644,21 @@ def post_dvic_naughty_list(snapshot_id: int, db: Session) -> dict:
         lines.append(f"{r['name']:<24} {str(r['instances']):>10} {avg:>10} {recent:>12}")
     table = "```\n" + "\n".join(lines) + "\n```"
 
+    latest_date, latest_violators = _latest_day_violators(snap.id, db)
+    latest_block = None
+    if latest_date and latest_violators:
+        latest_lines = [
+            f"• {v['name']}" + (f" — {v['duration_seconds']}s" if v["duration_seconds"] is not None else "")
+            for v in latest_violators
+        ]
+        latest_block = {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*Violators on {latest_date.strftime('%A, %B %-d')}* ({len(latest_violators)}):\n" + "\n".join(latest_lines),
+            },
+        }
+
     blocks = [
         {
             "type": "header",
@@ -635,6 +668,7 @@ def post_dvic_naughty_list(snapshot_id: int, db: Session) -> dict:
             "type": "context",
             "elements": [{"type": "mrkdwn", "text": "Drivers with pre-trip inspections completed in under 90 seconds this week, sorted by instance count."}],
         },
+        *([latest_block, {"type": "divider"}] if latest_block else []),
         {"type": "section", "text": {"type": "mrkdwn", "text": table}},
     ]
     _post(NDAY_MGT_CHANNEL, f"DVIC Naughty List — {week_label}", blocks=blocks)

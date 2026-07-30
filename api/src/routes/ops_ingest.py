@@ -866,13 +866,20 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
 
     # ── DVIC Pre-Trip Under-90s Excel ────────────────────────────────────────
     if t == "dvic":
-        from api.src.routes.dvic import _store_dvic, post_dvic_naughty_list
+        from api.src.routes.dvic import _store_dvic, post_dvic_naughty_list, _process_week
         result = _store_dvic(content, job.file_name, job.slack_file_id, db)
         # Daily #nday-mgt "Naughty List" summary — per explicit 2026-07-20
-        # decision, fires automatically on each real new upload (driver DMs
-        # are a separate, deliberately deferred future step, not built here).
+        # decision, fires automatically on each real new upload.
         if result.get("status") == "ingested" and result.get("snapshot_id"):
             post_dvic_naughty_list(result["snapshot_id"], db)
+            # Driver counseling DMs — changed 2026-07-30 from "deliberately
+            # deferred, manual-trigger-only" to fully hands-off per explicit
+            # request. _process_week() already no-ops safely if
+            # DRIVER_DM_ACTIVE is off, and its own (transporter_id,
+            # start_time) dedup means re-running on the same rolling-7-day
+            # re-upload never re-sends an already-actioned violation.
+            dm_result = _process_week(result["week"], db)
+            result["dm_result"] = dm_result
         return result
 
     # ── DSP Scorecard PDF ────────────────────────────────────────────────────

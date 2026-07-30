@@ -559,7 +559,37 @@ async def slack_callback(
         if alias:
             user = db.query(User).filter(User.id == alias.user_id).first()
     if not user:
-        return _fail("not_linked", slack_user_id=slack_user_id)
+        # Auto-create a driver-role account on first successful Slack login --
+        # changed 2026-07-30. This gate previously rejected anyone without a
+        # pre-created User row as "not_linked", which turned out to be
+        # blocking every real workspace member from ever completing website
+        # login -- most people were never manually invited/added. Anyone who
+        # can authenticate into the New Day Logistics Slack workspace is
+        # already a real, vetted employee, so no separate manual step should
+        # be required just to get in. Role escalation (dispatcher/manager/
+        # owner) still happens deliberately elsewhere (Add New Hire modal,
+        # run_website_user_sync's #nday-mgt/#nday-hr channel-membership
+        # sync) -- this path only ever grants the lowest-privilege "driver"
+        # role, same pattern/random-unusable-password as that sync function.
+        real_name = userinfo_resp.get("name") or slack_user_id
+        base_username = "".join(c for c in real_name.lower().split()[0] if c.isalnum()) or slack_user_id.lower()
+        username = base_username
+        suffix = 1
+        while get_user_by_username(db, username):
+            suffix += 1
+            username = f"{base_username}{suffix}"
+        user = User(
+            username=username,
+            password_hash=hash_password(secrets.token_urlsafe(24)),
+            role="driver",
+            name=real_name,
+            email=userinfo_resp.get("email"),
+            slack_user_id=slack_user_id,
+            is_active=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
     if not user.is_active:
         return _fail("inactive")
 

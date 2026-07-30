@@ -25,7 +25,10 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
   }
 
   if (!isAuthenticated) {
-    router.push('/login');
+    // Preserve where they were headed — added 2026-07-30 so bouncing
+    // through /login (e.g. an expired/missing session) lands back on the
+    // originally requested page afterward, not always the home page.
+    router.push(`/login?redirect=${encodeURIComponent(router.asPath)}`);
     return null;
   }
 

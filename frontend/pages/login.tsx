@@ -34,7 +34,7 @@ export default function Login() {
 
   useEffect(() => {
     if (!router.isReady) return;
-    const { slack_token: slackToken, username: slackUsername, name: slackName, role: slackRole, slack_error: slackError, slack_user_id: slackErrorUserId } = router.query;
+    const { slack_token: slackToken, username: slackUsername, name: slackName, role: slackRole, slack_error: slackError, slack_user_id: slackErrorUserId, redirect } = router.query;
 
     if (typeof slackToken === 'string') {
       loginWithSlackToken(
@@ -43,7 +43,9 @@ export default function Login() {
         typeof slackName === 'string' ? slackName : '',
         typeof slackRole === 'string' ? slackRole : 'driver'
       );
-      router.replace('/');
+      // Land back on whatever page originally bounced here (added
+      // 2026-07-30), not always the home page.
+      router.replace(typeof redirect === 'string' && redirect.startsWith('/') ? redirect : '/');
       return;
     }
 
@@ -63,7 +65,8 @@ export default function Login() {
 
     try {
       await login(username, password);
-      router.push('/');
+      const { redirect } = router.query;
+      router.push(typeof redirect === 'string' && redirect.startsWith('/') ? redirect : '/');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
     } finally {
@@ -72,7 +75,9 @@ export default function Login() {
   };
 
   const handleSlackLogin = () => {
-    window.location.href = `${resolveApi()}/auth/slack/login`;
+    const { redirect } = router.query;
+    const target = typeof redirect === 'string' && redirect.startsWith('/') ? redirect : '/';
+    window.location.href = `${resolveApi()}/auth/slack/login?redirect=${encodeURIComponent(target)}`;
   };
 
   return (

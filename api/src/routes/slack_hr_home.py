@@ -31,13 +31,19 @@ PACIFIC = ZoneInfo("America/Los_Angeles")
 
 
 def _slack_login_url(redirect_path: str) -> str:
-    """Routes a dashboard button through Slack OAuth login first (added
-    2026-07-27) so clicking it from Slack authenticates via the clicker's
-    Slack identity and lands directly on the target page — no separate
-    website login screen, as long as their Slack ID is already linked to
-    a User row (same as the plain Sign in with Slack flow)."""
-    from urllib.parse import quote
-    return f"{BACKEND_URL}/auth/slack/login?redirect={quote(redirect_path)}"
+    """Links straight to the frontend page itself (changed 2026-07-30) —
+    NOT always through /auth/slack/login. The page's own ProtectedRoute
+    already checks for a valid stored session first and renders directly
+    if one exists, only bouncing to /login when it doesn't. Previously
+    this always forced a fresh Slack OAuth redirect on every single tap,
+    regardless of whether the clicker already had a valid 24h session —
+    which meant every tap from Slack's mobile in-app browser re-hit
+    Slack's own "sign in to workspace" wall, since that in-app browser
+    doesn't reliably persist Slack's own login cookies between separate
+    link opens. Landing directly on the target page sidesteps that
+    entirely whenever our own session is still good, and /login itself
+    still offers Sign in with Slack for the cases where it isn't."""
+    return f"{FRONTEND_URL}{redirect_path}"
 
 HR_INVITE_CALLBACK_ID = "hr_home_invite_user_submit"
 HR_INVITE_ROLE_OPTIONS = ["admin", "manager", "dispatcher", "driver"]

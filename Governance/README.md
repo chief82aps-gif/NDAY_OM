@@ -2,12 +2,13 @@
 
 Use this index to quickly locate governing standards, ingest rules, audit rules, and technical governance references.
 
-> **Latest snapshot:** [Archive/PROGRESS_SNAPSHOT_2026-07-03.md](Archive/PROGRESS_SNAPSHOT_2026-07-03.md) — complete system state, all modules, all tables, outstanding items.
+> **Latest snapshot:** [WHERE_WE_LEFT_OFF_2026-07-30.md](WHERE_WE_LEFT_OFF_2026-07-30.md) — login architecture fix, sentiment survey rebuild, callout tightening, DVIC fixes, Wave Lead correction, "Blake" rename, outstanding items.
 
 ---
 
 ## System State & Progress
 
+- [Where We Left Off — 2026-07-30](WHERE_WE_LEFT_OFF_2026-07-30.md) — most recent session recap; **read this first**
 - [Progress Snapshot 2026-07-03](Archive/PROGRESS_SNAPSHOT_2026-07-03.md) — Full system state at session close; modules, tables, deployment config, outstanding items
 
 ---

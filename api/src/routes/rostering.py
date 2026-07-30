@@ -2065,10 +2065,10 @@ def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str
     callout_token = _issue_callout_token(a.driver_name, a.assignment_date.isoformat(), ttl_hours=48)
     callout_url = f"{FRONTEND_URL}/callout?token={callout_token}"
 
-    hint_block = None
+    hint_blocks: list = []
     if db is not None:
         from api.src.routes.sentiment_survey import get_driver_dm_hint_block
-        hint_block = get_driver_dm_hint_block(a.roster_id, a.driver_name, a.assignment_date, db)
+        hint_blocks = get_driver_dm_hint_block(a.roster_id, a.driver_name, a.assignment_date, db) or []
 
     blocks = [
         {
@@ -2090,7 +2090,7 @@ def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str
             "type": "section",
             "fields": fields,
         },
-        *([hint_block] if hint_block else []),
+        *hint_blocks,
         {"type": "divider"},
         {
             "type": "section",

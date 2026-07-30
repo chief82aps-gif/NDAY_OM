@@ -279,6 +279,25 @@ async def _mgt_reminders_loop():
         await asyncio.sleep(60)
 
 
+async def _timecard_report_nudge_loop():
+    """Every 60 s — delegates to mgt_reminders.run_timecard_report_nudge(),
+    which no-ops outside TIMECARD_REPORT_NUDGE_HOUR and respects an
+    "already sent today" guard. Gated by TIMECARD_REPORT_NUDGE_ACTIVE
+    (default false)."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(mgt_reminders.run_timecard_report_nudge, db)
+            except Exception as exc:
+                logger.warning("Timecard report nudge loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("Timecard report nudge loop outer error: %s", exc)
+        await asyncio.sleep(60)
+
+
 async def _okami_finalize_reminder_loop():
     """Every 60 s — delegates to okami_capacity.run_okami_finalize_reminder(),
     which nags #nday-mgt every 5 min from 3:30 PM until Okami is finalized
@@ -654,6 +673,7 @@ async def startup():
     asyncio.create_task(_grounded_van_watcher_loop())
     asyncio.create_task(_wave_lead_watcher_loop())
     asyncio.create_task(_mgt_reminders_loop())
+    asyncio.create_task(_timecard_report_nudge_loop())
     asyncio.create_task(_okami_finalize_reminder_loop())
     asyncio.create_task(_associate_data_reminder_loop())
     asyncio.create_task(_dm_response_summary_loop())

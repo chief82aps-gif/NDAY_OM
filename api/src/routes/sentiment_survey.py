@@ -54,7 +54,7 @@ APP_URL = os.getenv("APP_URL", "https://nday-om.vercel.app")
 # survey send itself since it touches rostering.py's DM, not this module's
 # own send path.
 SENTIMENT_SURVEY_DM_HINTS_ACTIVE = os.getenv("SENTIMENT_SURVEY_DM_HINTS_ACTIVE", "false").lower() == "true"
-_NUDGE_THRESHOLD_DAYS = 5
+_NUDGE_THRESHOLD_DAYS = 3  # shortened from 5 (2026-07-29) -- "I really want them to know we want their input"
 
 # Monthly proactive push — added 2026-07-29. Sent ahead of Amazon's own
 # survey window (first two weeks of the month) so drivers' sentiment is
@@ -141,18 +141,33 @@ SENTIMENT_HINTS = {
 _HINT_KEYS_ORDER = [q["key"] for q in SENTIMENT_QUESTIONS]
 
 
-def get_driver_dm_hint_block(roster_id: Optional[int], driver_name: str, today: date, db: Session) -> Optional[dict]:
-    """Public helper for rostering.py's morning shift DM. Two modes,
-    gated by SENTIMENT_SURVEY_DM_HINTS_ACTIVE:
+def get_driver_dm_hint_block(roster_id: Optional[int], driver_name: str, today: date, db: Session) -> Optional[list]:
+    """Public helper for rostering.py's morning shift DM — returns a list
+    of blocks (a text section + a "Share Feedback" button) to splice into
+    the DM, or None if gated off. Every variant always includes the
+    button, not just the overdue case — added 2026-07-29 per explicit
+    "I really want them to know we want their input" direction. Two text
+    variants, gated by SENTIMENT_SURVEY_DM_HINTS_ACTIVE:
       - A driver who hasn't submitted a sentiment-survey response in
-        _NUDGE_THRESHOLD_DAYS+ days (or ever) gets a personalized nudge
-        with a direct link to today's survey — this is the "haven't heard
-        from you" case.
+        _NUDGE_THRESHOLD_DAYS+ days (or ever) gets a personalized
+        "haven't heard from you" nudge.
       - Everyone else gets a rotating category hint instead, cycling by
         day-of-year, each one directly addressing what that survey
         question asks about."""
     if not SENTIMENT_SURVEY_DM_HINTS_ACTIVE or not roster_id:
         return None
+
+    token = _issue_sentiment_token(roster_id, driver_name, today)
+    url = f"{APP_URL}/sentiment-survey?token={token}"
+    feedback_button = {
+        "type": "actions",
+        "elements": [{
+            "type": "button",
+            "text": {"type": "plain_text", "text": "📝 Share Feedback", "emoji": True},
+            "url": url,
+            "action_id": "sentiment_hint_share_feedback",
+        }],
+    }
 
     last = (
         db.query(func.max(SentimentSurveyResponse.survey_date))
@@ -161,24 +176,25 @@ def get_driver_dm_hint_block(roster_id: Optional[int], driver_name: str, today: 
     )
     if not last or (today - last).days >= _NUDGE_THRESHOLD_DAYS:
         first_name = driver_name.split(",")[1].strip().split()[0] if "," in driver_name else driver_name.split()[0]
-        token = _issue_sentiment_token(roster_id, driver_name, today)
-        url = f"{APP_URL}/sentiment-survey?token={token}"
-        return {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": (
-                    f"👋 *{first_name}, we haven't heard from you in a few days* — let us know what you "
-                    f"need to make your days easier. <{url}|Drop a quick suggestion>."
-                ),
+        return [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"👋 *{first_name}, we haven't heard from you in a few days* — we really want your "
+                        f"input on how things are going and what would make your days easier."
+                    ),
+                },
             },
-        }
+            feedback_button,
+        ]
 
     key = _HINT_KEYS_ORDER[today.timetuple().tm_yday % len(_HINT_KEYS_ORDER)]
-    return {
-        "type": "section",
-        "text": {"type": "mrkdwn", "text": SENTIMENT_HINTS[key]},
-    }
+    return [
+        {"type": "section", "text": {"type": "mrkdwn", "text": SENTIMENT_HINTS[key]}},
+        feedback_button,
+    ]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

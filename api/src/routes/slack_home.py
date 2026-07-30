@@ -283,6 +283,20 @@ def _communication_buttons_block(driver: DriverRosterEntry, db: Session) -> Opti
         "url": f"slack://channel?team={_SLACK_TEAM_ID}&id={MGT_CHANNEL}",
     })
 
+    # Persistent "we want your input" surface — added 2026-07-29 alongside
+    # the morning DM hints (sentiment_survey.py), same gate. The Home tab
+    # is checked far more often than any single DM lands, so this is
+    # another chance for a driver to notice we're actively asking.
+    from api.src.routes.sentiment_survey import SENTIMENT_SURVEY_DM_HINTS_ACTIVE, _issue_sentiment_token
+    if SENTIMENT_SURVEY_DM_HINTS_ACTIVE:
+        token = _issue_sentiment_token(driver.id, driver.payroll_name, today)
+        elements.append({
+            "type": "button",
+            "action_id": "home_give_feedback",
+            "text": {"type": "plain_text", "text": "📝 Give Feedback", "emoji": True},
+            "url": f"{os.getenv('APP_URL', 'https://nday-om.vercel.app')}/sentiment-survey?token={token}",
+        })
+
     return {"type": "actions", "elements": elements} if elements else None
 
 

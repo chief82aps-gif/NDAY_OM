@@ -305,3 +305,64 @@ def run_mgt_reminders_check() -> list[dict]:
 def manual_check():
     results = run_mgt_reminders_check()
     return {"status": "checked", "results": results}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Timecard report nudge — added 2026-07-29. Stopgap for driver_scoring.py's
+# proposed expected-vs-actual clocked-time efficiency metric: real clock
+# data needs a timekeeping API (ADP, currently paused on cost -- see
+# adp.py), so until then this just nudges HR to post the daily timecard
+# audit report into #nday-operations-management, once a day, after HR's
+# own daily audit is normally done. TIMECARD_REPORT_NUDGE_HOUR is a
+# placeholder (2 PM Pacific) pending confirmation of Amanda's actual daily
+# audit completion time -- asked 2026-07-29, update the env var once
+# she replies so this doesn't land before or during her workflow.
+# ─────────────────────────────────────────────────────────────────────────────
+
+OPS_MGMT_CHANNEL = os.getenv("SLACK_OPS_MGMT_CHANNEL", "C0BE4ALL1EX")   # #nday-operations-management
+TIMECARD_REPORT_NUDGE_ACTIVE = os.getenv("TIMECARD_REPORT_NUDGE_ACTIVE", "false").lower() == "true"
+TIMECARD_REPORT_NUDGE_HOUR = int(os.getenv("TIMECARD_REPORT_NUDGE_HOUR", "14"))  # placeholder -- confirm with Amanda
+_TIMECARD_NUDGE_KEY_PREFIX = "timecard_report_nudge_"
+
+
+def run_timecard_report_nudge(db: Session, force: bool = False) -> dict:
+    """Once a day: post a reminder to #nday-operations-management asking
+    HR to drop today's timecard audit report there. force=True bypasses
+    the hour gate and already-sent guard for manual testing."""
+    if not TIMECARD_REPORT_NUDGE_ACTIVE:
+        return {"status": "inactive", "note": "Set TIMECARD_REPORT_NUDGE_ACTIVE=true on Render to enable"}
+
+    now_pt = datetime.now(PT)
+    today = now_pt.date()
+
+    if not force and now_pt.hour != TIMECARD_REPORT_NUDGE_HOUR:
+        return {"status": "not_send_hour", "date": today.isoformat()}
+
+    state_key = f"{_TIMECARD_NUDGE_KEY_PREFIX}{today.isoformat()}"
+    if not force and get_reminder_state(db, state_key).get("sent_at"):
+        return {"status": "already_sent", "date": today.isoformat()}
+
+    client = _client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    try:
+        client.chat_postMessage(
+            channel=OPS_MGMT_CHANNEL,
+            text=(
+                ":alarm_clock: *Daily reminder* — once today's timecard audit is wrapped up, "
+                "please drop the timecard report here for the team."
+            ),
+        )
+    except Exception as exc:
+        logger.warning("Timecard report nudge post failed: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+    set_reminder_state(db, state_key, {"sent_at": datetime.utcnow().isoformat()})
+    return {"status": "sent", "date": today.isoformat()}
+
+
+@router.post("/timecard-nudge/trigger")
+def trigger_timecard_nudge(force: bool = True, db: Session = Depends(get_db)):
+    """Manual trigger for testing/recovery — same function the daily loop calls."""
+    return run_timecard_report_nudge(db, force=force)

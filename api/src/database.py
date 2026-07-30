@@ -3193,6 +3193,17 @@ class SentimentSurveyResponse(Base):
     # re-summarized every time the loop ticks.
     reviewed_at = Column(DateTime, nullable=True)
 
+    # "Respond as Blake" — added 2026-07-30. A deliberate, human-supervised
+    # exception to this table's anonymity: HR can choose to reply directly
+    # to the specific driver about their specific suggestion (their
+    # identity was already visible to HR via the admin report; this just
+    # lets HR act on it for the ones worth a real answer). See
+    # sentiment_survey.py's BLAKE_RESPONSE_TEMPLATES.
+    responded_at = Column(DateTime, nullable=True)
+    responded_by = Column(String(100), nullable=True)
+    response_mode = Column(String(30), nullable=True)   # "noted" | "noted_with_reason" | "decline_with_reason"
+    response_text = Column(Text, nullable=True)          # the final assembled message actually sent
+
     __table_args__ = (
         Index("idx_sentiment_date", "survey_date"),
     )
@@ -3547,6 +3558,26 @@ def ensure_sentiment_survey_rating_columns():
             with engine.begin() as conn:
                 if DATABASE_URL.startswith("sqlite"):
                     conn.execute(text(f"ALTER TABLE sentiment_survey_responses ADD COLUMN {col} {coltype}"))
+                else:
+                    conn.execute(text(f"ALTER TABLE sentiment_survey_responses ADD COLUMN IF NOT EXISTS {col} {coltype}"))
+        except Exception:
+            pass  # Column already exists
+
+
+def ensure_sentiment_survey_response_columns():
+    """Add the "Respond as Blake" tracking columns to
+    sentiment_survey_responses -- added 2026-07-30."""
+    for col, coltype in (
+        ("responded_at", "TIMESTAMP"),
+        ("responded_by", "VARCHAR(100)"),
+        ("response_mode", "VARCHAR(30)"),
+        ("response_text", "TEXT"),
+    ):
+        try:
+            with engine.begin() as conn:
+                if DATABASE_URL.startswith("sqlite"):
+                    sqlite_type = "TEXT" if "VARCHAR" in coltype else "DATETIME"
+                    conn.execute(text(f"ALTER TABLE sentiment_survey_responses ADD COLUMN {col} {sqlite_type}"))
                 else:
                     conn.execute(text(f"ALTER TABLE sentiment_survey_responses ADD COLUMN IF NOT EXISTS {col} {coltype}"))
         except Exception:

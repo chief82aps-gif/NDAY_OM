@@ -521,10 +521,11 @@ def admin_report(
         .all()
     )
     roster_ids = {r.roster_id for r in rows if r.roster_id}
-    roster_map = {
-        r.id: r.payroll_name
-        for r in db.query(DriverRosterEntry).filter(DriverRosterEntry.id.in_(roster_ids)).all()
-    } if roster_ids else {}
+    roster_entries = (
+        db.query(DriverRosterEntry).filter(DriverRosterEntry.id.in_(roster_ids)).all()
+    ) if roster_ids else []
+    roster_map = {r.id: r.payroll_name for r in roster_entries}
+    roster_id_slack_map = {r.id: r.slack_member_id for r in roster_entries}
 
     question_stats = _compute_question_stats(rows)
 
@@ -552,10 +553,94 @@ def admin_report(
                     for q in SENTIMENT_QUESTIONS
                     if getattr(r, f"rating_{q['key']}") is not None or getattr(r, f"note_{q['key']}")
                 ],
+                "responded_at": r.responded_at.isoformat() if r.responded_at else None,
+                "response_mode": r.response_mode,
+                "response_text": r.response_text,
+                "has_slack_link": bool(r.roster_id and roster_id_slack_map.get(r.roster_id)),
             }
             for r in rows
         ],
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# "Respond as Blake" — added 2026-07-30, in memory of Chief Blake Cooke. A
+# deliberate, human-supervised exception to this module's anonymity: HR
+# can choose to reply directly to the specific driver about their
+# specific suggestion (their identity was already visible to HR via the
+# admin report above -- this just lets HR act on it for the ones worth a
+# real answer). Three modes, matching Blake's own real signature phrases:
+#   - "noted": bare acknowledgment, no elaboration -- for something that
+#     doesn't warrant a real response.
+#   - "noted_with_reason": "Noted. {reason}" -- for feedback that needs a
+#     real answer but isn't a genuine constructive suggestion (e.g. a
+#     blunt complaint), paired with a constructive redirect where possible.
+#   - "decline_with_reason": "Thank you for the suggestion, I see where
+#     you're coming from -- unfortunately we cannot do this, and here's
+#     why: {reason}" -- for genuine suggestions being declined.
+# ─────────────────────────────────────────────────────────────────────────────
+
+BLAKE_RESPONSE_TEMPLATES = {
+    "noted": lambda reason: "Noted.",
+    "noted_with_reason": lambda reason: f"Noted. {reason}",
+    "decline_with_reason": lambda reason: (
+        "Thank you for the suggestion, I see where you're coming from — "
+        f"unfortunately we cannot do this, and here's why: {reason}"
+    ),
+}
+
+
+class BlakeResponseRequest(BaseModel):
+    mode: str   # "noted" | "noted_with_reason" | "decline_with_reason"
+    reason: Optional[str] = None
+    responded_by: Optional[str] = None
+
+
+@router.post("/respond/{response_id}")
+def respond_as_blake(
+    response_id: int,
+    payload: BlakeResponseRequest,
+    db: Session = Depends(get_db),
+    caller_role: str = Depends(require_any_role("owner", "hr")),
+):
+    """Sends a direct DM to the specific driver who submitted this
+    response, using Blake's voice. See module note above for why this is
+    a deliberate, one-off exception to the anonymity design, not a
+    general leak of who-said-what."""
+    if payload.mode not in BLAKE_RESPONSE_TEMPLATES:
+        raise HTTPException(status_code=400, detail="mode must be one of: " + ", ".join(BLAKE_RESPONSE_TEMPLATES))
+    if payload.mode != "noted" and not (payload.reason or "").strip():
+        raise HTTPException(status_code=400, detail="reason is required for this mode")
+
+    response_row = db.query(SentimentSurveyResponse).filter(SentimentSurveyResponse.id == response_id).first()
+    if not response_row:
+        raise HTTPException(status_code=404, detail=f"Response {response_id} not found")
+    if not response_row.roster_id:
+        raise HTTPException(status_code=400, detail="This response has no linked driver to reply to")
+
+    driver = db.query(DriverRosterEntry).filter(DriverRosterEntry.id == response_row.roster_id).first()
+    if not driver or not driver.slack_member_id:
+        raise HTTPException(status_code=400, detail="Driver is not Slack-linked")
+
+    text = BLAKE_RESPONSE_TEMPLATES[payload.mode]((payload.reason or "").strip())
+
+    token = os.getenv("SLACK_BOT_TOKEN")
+    if not token:
+        raise HTTPException(status_code=503, detail="SLACK_BOT_TOKEN is not configured")
+    try:
+        from slack_sdk import WebClient
+        WebClient(token=token).chat_postMessage(channel=driver.slack_member_id, text=text)
+    except Exception as exc:
+        logger.warning("Blake response send failed for response %s: %s", response_id, exc)
+        raise HTTPException(status_code=502, detail=f"Send failed: {exc}")
+
+    response_row.responded_at = datetime.utcnow()
+    response_row.responded_by = payload.responded_by or caller_role
+    response_row.response_mode = payload.mode
+    response_row.response_text = text
+    db.commit()
+
+    return {"status": "sent", "response_id": response_id, "text": text}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -26,7 +26,19 @@ interface SentimentResponse {
   suggestions: string | null;
   treatment_concerns: string | null;
   ratings: QuestionRating[];
+  responded_at: string | null;
+  response_mode: string | null;
+  response_text: string | null;
+  has_slack_link: boolean;
 }
+
+type BlakeMode = 'noted' | 'noted_with_reason' | 'decline_with_reason';
+
+const BLAKE_MODE_LABELS: Record<BlakeMode, string> = {
+  noted: 'Noted (no elaboration)',
+  noted_with_reason: 'Noted + reason',
+  decline_with_reason: "Thank you for the suggestion... here's why",
+};
 
 interface QuestionStat {
   key: string;
@@ -61,6 +73,11 @@ export default function SentimentSurveyAdminPage() {
   const [report, setReport] = useState<AdminReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [composerFor, setComposerFor] = useState<number | null>(null);
+  const [composerMode, setComposerMode] = useState<BlakeMode>('decline_with_reason');
+  const [composerReason, setComposerReason] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -88,6 +105,49 @@ export default function SentimentSurveyAdminPage() {
   useEffect(() => { load(); }, [load]);
 
   const responses = report?.responses ?? [];
+
+  const openComposer = (id: number) => {
+    setComposerFor(id);
+    setComposerMode('decline_with_reason');
+    setComposerReason('');
+    setSendError('');
+  };
+
+  const closeComposer = () => {
+    setComposerFor(null);
+    setSendError('');
+  };
+
+  const sendBlakeResponse = async (responseId: number) => {
+    if (composerMode !== 'noted' && !composerReason.trim()) {
+      setSendError('A reason is required for this mode.');
+      return;
+    }
+    setSending(true);
+    setSendError('');
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+      const res = await fetch(`${api}/sentiment-survey/respond/${responseId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ mode: composerMode, reason: composerReason.trim() || null }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setSendError(d.detail ?? 'Failed to send.');
+        return;
+      }
+      setComposerFor(null);
+      await load();
+    } catch {
+      setSendError('Network error.');
+    } finally {
+      setSending(false);
+    }
+  };
 
   return (
     <ProtectedRoute>
@@ -194,11 +254,68 @@ export default function SentimentSurveyAdminPage() {
                     </div>
                   )}
                   {r.treatment_concerns && (
-                    <div>
+                    <div style={{ marginBottom: 8 }}>
                       <div style={{ fontSize: 11, color: '#f59e0b', fontWeight: 700, textTransform: 'uppercase' }}>Treatment Concerns</div>
                       <div style={{ fontSize: 14, color: '#e2e8f0' }}>{r.treatment_concerns}</div>
                     </div>
                   )}
+
+                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #334155' }}>
+                    {r.responded_at ? (
+                      <div style={{ fontSize: 13, color: '#4ade80' }}>
+                        ✓ Responded as Blake ({BLAKE_MODE_LABELS[r.response_mode as BlakeMode] ?? r.response_mode}) — {fmtDateTime(r.responded_at)}
+                        <div style={{ marginTop: 4, fontSize: 13, color: '#94a3b8', fontStyle: 'italic' }}>&ldquo;{r.response_text}&rdquo;</div>
+                      </div>
+                    ) : composerFor === r.id ? (
+                      <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, padding: 12 }}>
+                        <select
+                          value={composerMode}
+                          onChange={e => setComposerMode(e.target.value as BlakeMode)}
+                          style={{ background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155', borderRadius: 6, padding: '6px 10px', fontSize: 13, marginBottom: 8, width: '100%' }}
+                        >
+                          {(Object.keys(BLAKE_MODE_LABELS) as BlakeMode[]).map(m => (
+                            <option key={m} value={m}>{BLAKE_MODE_LABELS[m]}</option>
+                          ))}
+                        </select>
+                        {composerMode !== 'noted' && (
+                          <textarea
+                            value={composerReason}
+                            onChange={e => setComposerReason(e.target.value)}
+                            placeholder="Reason / body of the response..."
+                            style={{ width: '100%', boxSizing: 'border-box', background: '#1e293b', border: '1px solid #334155', borderRadius: 6, padding: '8px 10px', color: '#e2e8f0', fontSize: 13, minHeight: 70, marginBottom: 8, fontFamily: 'inherit' }}
+                          />
+                        )}
+                        <div style={{ fontSize: 12, color: '#64748b', marginBottom: 8 }}>
+                          Preview: &ldquo;{composerMode === 'noted' ? 'Noted.' : composerMode === 'noted_with_reason' ? `Noted. ${composerReason || '...'}` : `Thank you for the suggestion, I see where you're coming from — unfortunately we cannot do this, and here's why: ${composerReason || '...'}`}&rdquo;
+                        </div>
+                        {sendError && <div style={{ color: '#f87171', fontSize: 12, marginBottom: 8 }}>{sendError}</div>}
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button
+                            onClick={() => sendBlakeResponse(r.id)}
+                            disabled={sending}
+                            style={{ background: '#16a34a', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 13, fontWeight: 600, cursor: sending ? 'default' : 'pointer' }}
+                          >
+                            {sending ? 'Sending…' : 'Send as Blake'}
+                          </button>
+                          <button
+                            onClick={closeComposer}
+                            style={{ background: 'transparent', color: '#94a3b8', border: '1px solid #334155', borderRadius: 6, padding: '6px 14px', fontSize: 13, cursor: 'pointer' }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : r.has_slack_link ? (
+                      <button
+                        onClick={() => openComposer(r.id)}
+                        style={{ background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155', borderRadius: 6, padding: '6px 14px', fontSize: 13, cursor: 'pointer' }}
+                      >
+                        💬 Respond as Blake
+                      </button>
+                    ) : (
+                      <span style={{ fontSize: 12, color: '#64748b' }}>Driver not Slack-linked — can&apos;t reply directly.</span>
+                    )}
+                  </div>
                 </div>
               ))}
             </>

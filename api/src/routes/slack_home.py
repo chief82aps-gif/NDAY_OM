@@ -298,6 +298,30 @@ def _communication_buttons_block(driver: DriverRosterEntry, db: Session) -> Opti
             "url": f"{os.getenv('APP_URL', 'https://nday-om.vercel.app')}/sentiment-survey?token={token}",
         })
 
+    # Senior Wave Lead's own "Team Focus" page — added 2026-07-30. Only
+    # shown to Spencer/Gallo (whoever is currently the active Senior Wave
+    # Lead for a half), checked directly against WaveLeadRole by roster_id
+    # rather than going through the username/JWT resolver used by the
+    # backend endpoint's own auth check (that resolver is for when only a
+    # JWT is available; here we already have the driver row directly).
+    from api.src.database import WaveLeadRole
+    lead_role = (
+        db.query(WaveLeadRole)
+        .filter(WaveLeadRole.roster_id == driver.id, WaveLeadRole.active == True, WaveLeadRole.half.isnot(None))  # noqa: E712
+        .first()
+    )
+    if lead_role:
+        from api.src.routes.auth import get_or_create_user_for_slack, issue_jwt_for_user
+        from api.src.routes.slack_hr_home import _slack_login_url
+        dash_user = get_or_create_user_for_slack(driver.slack_member_id, db)
+        dash_token = issue_jwt_for_user(dash_user)
+        elements.append({
+            "type": "button",
+            "action_id": "home_wave_lead_team_focus",
+            "text": {"type": "plain_text", "text": "📊 My Team's Focus", "emoji": True},
+            "url": _slack_login_url(f"/wave-lead-focus?half={lead_role.half}", dash_user, dash_token),
+        })
+
     return {"type": "actions", "elements": elements} if elements else None
 
 

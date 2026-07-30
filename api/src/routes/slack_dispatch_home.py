@@ -328,6 +328,12 @@ def build_dispatch_home_view_blocks(db: Session, dash_user, dash_token: str) -> 
                     "text": {"type": "plain_text", "text": "🌊 Wave Lead Admin", "emoji": True},
                     "url": _slack_login_url("/wave-lead-admin", dash_user, dash_token),
                 },
+                {
+                    "type": "button",
+                    "action_id": "dispatch_open_wave_lead_focus",
+                    "text": {"type": "plain_text", "text": "📊 Wave Team Focus", "emoji": True},
+                    "url": _slack_login_url("/wave-lead-focus?half=front", dash_user, dash_token),
+                },
             ],
         },
         {

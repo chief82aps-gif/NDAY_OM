@@ -30,7 +30,8 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException
+import jwt
+from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -41,6 +42,7 @@ from api.src.database import (
     get_reminder_state, set_reminder_state,
 )
 from api.src.authorization import require_any_role
+from api.src.routes.auth import JWT_SECRET, JWT_ALGORITHM
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/wave-lead", tags=["wave-lead"])
@@ -319,6 +321,193 @@ def get_team_standings(db: Session) -> list[dict]:
     for i, t in enumerate(standings):
         t["rank"] = i + 1
     return standings
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Wave Lead Team Focus — added 2026-07-30. Per explicit request: each Senior
+# Wave Lead needs visibility into their own team's performance metrics plus
+# an improvement focus area per driver, ordered by "biggest bang for the
+# buck" -- not raw worst-score-first, but whoever is CLOSEST to their next
+# tier threshold, since that's where a single coaching conversation is most
+# likely to actually move the needle. A driver already at Platinum (no tier
+# left to climb into) or with no computable score sorts to the bottom --
+# there's no tier-crossing upside to prioritize there.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Maps each driver_scoring.py sub-metric to the matching corrective-video
+# topic from Governance/06_NDL_CAP_Compliance_Monitoring_SRD.md's video
+# list, so a driver's focus area comes with a concrete next step, not just
+# a diagnosis. PSB folds into the same "proof-of-delivery photos" video as
+# POD per that doc's consolidation.
+_METRIC_TO_VIDEO = {
+    "speeding_score": "Speeding",
+    "seatbelt_score": "Seatbelt compliance",
+    "distraction_score": "Distracted driving",
+    "sign_violation_score": "Stop sign / signal violations",
+    "following_distance_score": "Following distance",
+    "dc_dpmo_score": "Delivery completion",
+    "dsb_score": "Package handling",
+    "pod_score": "Proof-of-delivery photos",
+    "cdf_dpmo_score": "Customer experience / professionalism",
+    "psb_score": "Proof-of-delivery photos",
+}
+
+
+def _gap_to_next_tier(overall: Optional[float], tier: str) -> Optional[float]:
+    """Points needed to exceed the next tier threshold up. None if
+    already Platinum (nothing higher to climb into) or score/tier
+    couldn't be computed at all."""
+    from api.src.routes.driver_scoring import TIER_THRESHOLDS
+
+    if overall is None or tier == "gray" or tier == "platinum":
+        return None
+    tier_order = [name for name, _ in TIER_THRESHOLDS] + ["sawdust"]
+    if tier not in tier_order:
+        return None
+    idx = tier_order.index(tier)
+    next_threshold = TIER_THRESHOLDS[idx - 1][1]
+    return round(next_threshold - overall, 2)
+
+
+def get_team_focus_for_half(half: str, db: Session) -> list[dict]:
+    """Per-driver performance snapshot + top improvement focus area for
+    every standing team member of a half (roving across all of waves
+    1-4), sorted by 'biggest bang for the buck' -- smallest gap to the
+    next tier threshold first."""
+    from api.src.routes.driver_scoring import compute_driver_scores
+    from api.src.routes.quality import _METRIC_LABELS
+    from api.src.driver_identity import resolve_roster_entry
+    from api.src.database import QualityMetricDriver, QualityMetricSnapshot
+
+    team_ids = [t.id for t in db.query(WaveTeam).filter(WaveTeam.half == half).all()]
+    member_roster_ids = {
+        m.roster_id for m in db.query(WaveTeamMembership).filter(WaveTeamMembership.team_id.in_(team_ids)).all()
+    } if team_ids else set()
+    if not member_roster_ids:
+        return []
+
+    scores = compute_driver_scores(db)
+    by_roster_id: dict[int, dict] = {}
+    for s in scores:
+        if not s["driver_name"]:
+            continue
+        entry = resolve_roster_entry(s["driver_name"], db)
+        if entry and entry.id in member_roster_ids:
+            by_roster_id[entry.id] = s
+
+    latest_week = db.query(QualityMetricSnapshot).order_by(QualityMetricSnapshot.week.desc()).first()
+
+    results = []
+    for roster_id in member_roster_ids:
+        entry = db.query(DriverRosterEntry).filter(DriverRosterEntry.id == roster_id).first()
+        if not entry:
+            continue
+        s = by_roster_id.get(roster_id)
+        overall = s["overall"] if s else None
+        tier = s["overall_tier"] if s else "gray"
+
+        focus_areas: list[dict] = []
+        if s and s.get("transporter_id") and latest_week:
+            row = (
+                db.query(QualityMetricDriver)
+                .filter(
+                    QualityMetricDriver.transporter_id == s["transporter_id"],
+                    QualityMetricDriver.snapshot_id == latest_week.id,
+                )
+                .first()
+            )
+            if row:
+                metric_scores = [
+                    (attr, label, getattr(row, attr))
+                    for attr, label in _METRIC_LABELS.items()
+                    if getattr(row, attr, None) is not None
+                ]
+                metric_scores.sort(key=lambda m: m[2])
+                focus_areas = [
+                    {"metric": label, "score": round(float(val), 1), "video": _METRIC_TO_VIDEO.get(attr)}
+                    for attr, label, val in metric_scores[:2]
+                ]
+
+        results.append({
+            "roster_id": roster_id,
+            "driver_name": entry.payroll_name,
+            "overall": overall,
+            "tier": tier,
+            "safety": s["safety"] if s else None,
+            "quality": s["quality"] if s else None,
+            "attendance": s["attendance"] if s else None,
+            "gap_to_next_tier": _gap_to_next_tier(overall, tier),
+            "focus_areas": focus_areas,
+        })
+
+    # "Biggest bang for the buck" first: smallest gap-to-next-tier sorts
+    # first; no-gap (Platinum, or no data at all) sorts last.
+    results.sort(key=lambda r: (r["gap_to_next_tier"] is None, r["gap_to_next_tier"] or 0))
+    return results
+
+
+def is_senior_wave_lead_half(username: str, db: Session) -> Optional[str]:
+    """Resolve a website username to the half they lead, if they're
+    currently an active Senior Wave Lead -- returns 'front'/'back', or
+    None. Lets Spencer/Gallo reach their own team's focus page without
+    needing an elevated website role (they're otherwise just driver-role
+    accounts)."""
+    from api.src.database import User
+
+    user = db.query(User).filter(User.username == username).first()
+    if not user or not user.slack_user_id:
+        return None
+    roster = db.query(DriverRosterEntry).filter(DriverRosterEntry.slack_member_id == user.slack_user_id).first()
+    if not roster:
+        return None
+    role = (
+        db.query(WaveLeadRole)
+        .filter(WaveLeadRole.roster_id == roster.id, WaveLeadRole.active == True, WaveLeadRole.half.isnot(None))  # noqa: E712
+        .first()
+    )
+    return role.half if role else None
+
+
+def _current_username_and_role(authorization: Optional[str] = Header(None)) -> tuple[str, str]:
+    """Same JWT already used everywhere else in the app -- decoded
+    directly here (rather than authorization.get_current_user_role())
+    since this endpoint needs the username too, not just the role, to
+    resolve self-access for a Senior Wave Lead."""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise ValueError("not bearer")
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    username = payload.get("username") or payload.get("sub")
+    role = payload.get("role")
+    if not username or not role:
+        raise HTTPException(status_code=401, detail="Token missing required claims")
+    return username, role
+
+
+_TEAM_FOCUS_FULL_ACCESS_ROLES = {"admin", "manager", "dispatcher", "hr", "owner"}
+
+
+@router.get("/team-focus")
+def team_focus(
+    half: str,
+    db: Session = Depends(get_db),
+    identity: tuple[str, str] = Depends(_current_username_and_role),
+):
+    if half not in HALVES:
+        raise HTTPException(400, "half must be 'front' or 'back'")
+
+    username, role = identity
+    if role not in _TEAM_FOCUS_FULL_ACCESS_ROLES:
+        own_half = is_senior_wave_lead_half(username, db)
+        if own_half != half:
+            raise HTTPException(403, "You can only view your own team's focus page.")
+
+    return {"half": half, "drivers": get_team_focus_for_half(half, db)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

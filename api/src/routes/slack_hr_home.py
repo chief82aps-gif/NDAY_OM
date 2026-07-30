@@ -30,20 +30,29 @@ BACKEND_URL = os.getenv("BACKEND_URL", "https://nday-om.onrender.com")
 PACIFIC = ZoneInfo("America/Los_Angeles")
 
 
-def _slack_login_url(redirect_path: str) -> str:
-    """Links straight to the frontend page itself (changed 2026-07-30) —
-    NOT always through /auth/slack/login. The page's own ProtectedRoute
-    already checks for a valid stored session first and renders directly
-    if one exists, only bouncing to /login when it doesn't. Previously
-    this always forced a fresh Slack OAuth redirect on every single tap,
-    regardless of whether the clicker already had a valid 24h session —
-    which meant every tap from Slack's mobile in-app browser re-hit
-    Slack's own "sign in to workspace" wall, since that in-app browser
-    doesn't reliably persist Slack's own login cookies between separate
-    link opens. Landing directly on the target page sidesteps that
-    entirely whenever our own session is still good, and /login itself
-    still offers Sign in with Slack for the cases where it isn't."""
-    return f"{FRONTEND_URL}{redirect_path}"
+def _slack_login_url(redirect_path: str, dash_user, dash_token: str) -> str:
+    """Links straight to the frontend page with a real, ready-to-use
+    session token already attached (changed 2026-07-30 — was: always
+    force a fresh /auth/slack/login round trip on every single tap,
+    which re-hit Slack's own "sign in to workspace" wall every time on
+    mobile, since Slack's in-app browser doesn't reliably persist that
+    between separate link opens). dash_user/dash_token are minted once
+    per Home-tab render (see slack_home.py's _build_combined_home_blocks)
+    via auth.get_or_create_user_for_slack()/issue_jwt_for_user() — this
+    trusts Slack's own app_home_opened event + the live is_dispatch_staff/
+    is_hr_staff channel-membership check as sufficient identity proof, so
+    no separate OAuth handshake is needed just to open a dashboard button,
+    even the very first time. Same query-param shape the OAuth callback
+    already produces (slack_token/username/name/role), so the frontend's
+    existing AuthContext handling needs no changes."""
+    from urllib.parse import urlencode
+    params = urlencode({
+        "slack_token": dash_token,
+        "username": dash_user.username,
+        "name": dash_user.name or dash_user.username,
+        "role": dash_user.role,
+    })
+    return f"{FRONTEND_URL}{redirect_path}?{params}"
 
 HR_INVITE_CALLBACK_ID = "hr_home_invite_user_submit"
 HR_INVITE_ROLE_OPTIONS = ["admin", "manager", "dispatcher", "driver"]
@@ -51,7 +60,7 @@ HR_INVITE_ROLE_OPTIONS = ["admin", "manager", "dispatcher", "driver"]
 SEND_SENTIMENT_SURVEY_CALLBACK_ID = "hr_home_send_sentiment_survey_submit"
 
 
-def build_hr_home_view_blocks(db: Session) -> list:
+def build_hr_home_view_blocks(db: Session, dash_user, dash_token: str) -> list:
     """Pure builder — no Slack API calls, unit-testable against fixture data."""
     today = datetime.now(PACIFIC).date()
 
@@ -64,19 +73,19 @@ def build_hr_home_view_blocks(db: Session) -> list:
                     "type": "button",
                     "action_id": "hr_home_open_eod_admin",
                     "text": {"type": "plain_text", "text": "📋 EOD Responses", "emoji": True},
-                    "url": _slack_login_url("/eod-admin"),
+                    "url": _slack_login_url("/eod-admin", dash_user, dash_token),
                 },
                 {
                     "type": "button",
                     "action_id": "hr_home_open_sentiment_admin",
                     "text": {"type": "plain_text", "text": "💬 Sentiment Survey", "emoji": True},
-                    "url": _slack_login_url("/sentiment-survey-admin"),
+                    "url": _slack_login_url("/sentiment-survey-admin", dash_user, dash_token),
                 },
                 {
                     "type": "button",
                     "action_id": "hr_home_open_discipline_tracker",
                     "text": {"type": "plain_text", "text": "📝 Write-Ups", "emoji": True},
-                    "url": _slack_login_url("/discipline-tracker"),
+                    "url": _slack_login_url("/discipline-tracker", dash_user, dash_token),
                 },
                 {
                     "type": "button",

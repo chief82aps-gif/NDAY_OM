@@ -565,15 +565,30 @@ def _build_combined_home_blocks(slack_user_id: str, db: Session) -> tuple[list, 
     blocks: list = []
     info: dict = {"sections": []}
 
-    if is_dispatch_staff(slack_user_id, db):
+    is_dispatch = is_dispatch_staff(slack_user_id, db)
+    is_hr = is_hr_staff(slack_user_id, db)
+    dash_user = dash_token = None
+    if is_dispatch or is_hr:
+        # Minted once per Home-tab render, reused across every dashboard
+        # button below — trusts Slack's own app_home_opened event + the
+        # live is_dispatch_staff/is_hr_staff channel-membership check
+        # (just computed above) as sufficient identity proof, so no
+        # separate OAuth handshake is needed just to open a dashboard
+        # button, even the very first time. See auth.py's
+        # get_or_create_user_for_slack()/issue_jwt_for_user() docstrings.
+        from api.src.routes.auth import get_or_create_user_for_slack, issue_jwt_for_user
+        dash_user = get_or_create_user_for_slack(slack_user_id, db)
+        dash_token = issue_jwt_for_user(dash_user)
+
+    if is_dispatch:
         from api.src.routes.slack_dispatch_home import build_dispatch_home_view_blocks
-        blocks += build_dispatch_home_view_blocks(db)
+        blocks += build_dispatch_home_view_blocks(db, dash_user, dash_token)
         blocks.append({"type": "divider"})
         info["sections"].append("dispatch_staff")
 
-    if is_hr_staff(slack_user_id, db):
+    if is_hr:
         from api.src.routes.slack_hr_home import build_hr_home_view_blocks
-        blocks += build_hr_home_view_blocks(db)
+        blocks += build_hr_home_view_blocks(db, dash_user, dash_token)
         blocks.append({"type": "divider"})
         info["sections"].append("hr_staff")
 

@@ -119,7 +119,7 @@ def _ingest_status_block(db: Session) -> dict:
 # Home tab builder
 # ─────────────────────────────────────────────────────────────────────────────
 
-def build_dispatch_home_view_blocks(db: Session) -> list:
+def build_dispatch_home_view_blocks(db: Session, dash_user, dash_token: str) -> list:
     """Pure builder — no Slack API calls in here, so it's unit-testable."""
     now = datetime.now(PACIFIC)
     current_phase = _current_phase_key(now)
@@ -296,37 +296,37 @@ def build_dispatch_home_view_blocks(db: Session) -> list:
                     "type": "button",
                     "action_id": "hr_home_open_eod_admin",
                     "text": {"type": "plain_text", "text": "📋 EOD Responses", "emoji": True},
-                    "url": _slack_login_url("/eod-admin"),
+                    "url": _slack_login_url("/eod-admin", dash_user, dash_token),
                 },
                 {
                     "type": "button",
                     "action_id": "hr_home_open_sentiment_admin",
                     "text": {"type": "plain_text", "text": "💬 Sentiment Survey", "emoji": True},
-                    "url": _slack_login_url("/sentiment-survey-admin"),
+                    "url": _slack_login_url("/sentiment-survey-admin", dash_user, dash_token),
                 },
                 {
                     "type": "button",
                     "action_id": "hr_home_open_discipline_tracker",
                     "text": {"type": "plain_text", "text": "📝 Write-Ups", "emoji": True},
-                    "url": _slack_login_url("/discipline-tracker"),
+                    "url": _slack_login_url("/discipline-tracker", dash_user, dash_token),
                 },
                 {
                     "type": "button",
                     "action_id": "hr_home_open_mentoring_dashboard",
                     "text": {"type": "plain_text", "text": "🏆 Mentoring Dashboard", "emoji": True},
-                    "url": _slack_login_url("/driver-quality"),
+                    "url": _slack_login_url("/driver-quality", dash_user, dash_token),
                 },
                 {
                     "type": "button",
                     "action_id": "dispatch_open_dvic_trend",
                     "text": {"type": "plain_text", "text": "📉 DVIC Trend", "emoji": True},
-                    "url": _slack_login_url("/dvic-trend"),
+                    "url": _slack_login_url("/dvic-trend", dash_user, dash_token),
                 },
                 {
                     "type": "button",
                     "action_id": "dispatch_open_wave_lead_admin",
                     "text": {"type": "plain_text", "text": "🌊 Wave Lead Admin", "emoji": True},
-                    "url": _slack_login_url("/wave-lead-admin"),
+                    "url": _slack_login_url("/wave-lead-admin", dash_user, dash_token),
                 },
             ],
         },
@@ -673,7 +673,10 @@ def _handle_dispatch_back_from_preview(payload: dict, db: Session) -> None:
     if not client:
         return
     try:
-        client.views_publish(user_id=user_id, view={"type": "home", "blocks": build_dispatch_home_view_blocks(db)})
+        from api.src.routes.auth import get_or_create_user_for_slack, issue_jwt_for_user
+        dash_user = get_or_create_user_for_slack(user_id, db)
+        dash_token = issue_jwt_for_user(dash_user)
+        client.views_publish(user_id=user_id, view={"type": "home", "blocks": build_dispatch_home_view_blocks(db, dash_user, dash_token)})
     except Exception as exc:
         logger.warning("Back-to-dispatch publish failed for %s: %s", user_id, exc)
 

@@ -455,6 +455,60 @@ SLACK_OAUTH_REDIRECT_URI = f"{BACKEND_URL}/auth/slack/callback"
 SLACK_STATE_TTL_MINUTES = 10
 
 
+def get_or_create_user_for_slack(
+    slack_user_id: str, db: Session, real_name: Optional[str] = None, email: Optional[str] = None,
+) -> User:
+    """Resolve (or auto-create) the website User row for a Slack ID.
+    Shared by the OAuth callback below and by slack_home.py's Home-tab
+    token mint (added 2026-07-30) -- the latter trusts Slack's own
+    app_home_opened event + is_dispatch_staff()/is_hr_staff() live-
+    channel-membership checks as sufficient identity proof, so dashboard
+    buttons can carry a real, ready-to-use session token without sending
+    the clicker through the OAuth round trip at all. Auto-creates a
+    driver-role account (lowest privilege, random unusable password) on
+    first resolution -- role escalation still only ever happens
+    deliberately (Add New Hire modal, run_website_user_sync's channel-
+    membership sync)."""
+    user = db.query(User).filter(User.slack_user_id == slack_user_id).first()
+    if not user:
+        alias = db.query(UserSlackAlias).filter(UserSlackAlias.slack_user_id == slack_user_id).first()
+        if alias:
+            user = db.query(User).filter(User.id == alias.user_id).first()
+    if not user:
+        base_name = real_name or slack_user_id
+        base_username = "".join(c for c in base_name.lower().split()[0] if c.isalnum()) or slack_user_id.lower()
+        username = base_username
+        suffix = 1
+        while get_user_by_username(db, username):
+            suffix += 1
+            username = f"{base_username}{suffix}"
+        user = User(
+            username=username,
+            password_hash=hash_password(secrets.token_urlsafe(24)),
+            role="driver",
+            name=base_name,
+            email=email,
+            slack_user_id=slack_user_id,
+            is_active=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    return user
+
+
+def issue_jwt_for_user(user: User) -> str:
+    payload = {
+        "sub": user.username,
+        "username": user.username,
+        "role": user.role,
+        "name": user.name or user.username.capitalize(),
+        "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS),
+        "iat": datetime.utcnow(),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
 @router.get("/slack/login")
 async def slack_login(redirect: Optional[str] = None):
     """Full-page redirect into Slack's OpenID Connect authorize flow — the
@@ -553,58 +607,18 @@ async def slack_callback(
         logger.warning("Slack OAuth userinfo missing user id: %s", userinfo_resp)
         return _fail("userinfo_failed")
 
-    user = db.query(User).filter(User.slack_user_id == slack_user_id).first()
-    if not user:
-        alias = db.query(UserSlackAlias).filter(UserSlackAlias.slack_user_id == slack_user_id).first()
-        if alias:
-            user = db.query(User).filter(User.id == alias.user_id).first()
-    if not user:
-        # Auto-create a driver-role account on first successful Slack login --
-        # changed 2026-07-30. This gate previously rejected anyone without a
-        # pre-created User row as "not_linked", which turned out to be
-        # blocking every real workspace member from ever completing website
-        # login -- most people were never manually invited/added. Anyone who
-        # can authenticate into the New Day Logistics Slack workspace is
-        # already a real, vetted employee, so no separate manual step should
-        # be required just to get in. Role escalation (dispatcher/manager/
-        # owner) still happens deliberately elsewhere (Add New Hire modal,
-        # run_website_user_sync's #nday-mgt/#nday-hr channel-membership
-        # sync) -- this path only ever grants the lowest-privilege "driver"
-        # role, same pattern/random-unusable-password as that sync function.
-        real_name = userinfo_resp.get("name") or slack_user_id
-        base_username = "".join(c for c in real_name.lower().split()[0] if c.isalnum()) or slack_user_id.lower()
-        username = base_username
-        suffix = 1
-        while get_user_by_username(db, username):
-            suffix += 1
-            username = f"{base_username}{suffix}"
-        user = User(
-            username=username,
-            password_hash=hash_password(secrets.token_urlsafe(24)),
-            role="driver",
-            name=real_name,
-            email=userinfo_resp.get("email"),
-            slack_user_id=slack_user_id,
-            is_active=True,
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
+    user = get_or_create_user_for_slack(
+        slack_user_id, db,
+        real_name=userinfo_resp.get("name"),
+        email=userinfo_resp.get("email"),
+    )
     if not user.is_active:
         return _fail("inactive")
 
     user.last_login = datetime.utcnow()
     db.commit()
 
-    payload = {
-        "sub": user.username,
-        "username": user.username,
-        "role": user.role,
-        "name": user.name or user.username.capitalize(),
-        "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS),
-        "iat": datetime.utcnow(),
-    }
-    access_token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    access_token = issue_jwt_for_user(user)
 
     params = urlencode({
         "slack_token": access_token,

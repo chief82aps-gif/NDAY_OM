@@ -27,13 +27,14 @@ from __future__ import annotations
 import logging
 import os
 import time
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from api.src.database import (
@@ -48,6 +49,18 @@ router = APIRouter(prefix="/sentiment-survey", tags=["sentiment-survey"])
 SENTIMENT_SURVEY_ACTIVE = os.getenv("SENTIMENT_SURVEY_ACTIVE", "false").lower() == "true"
 _DAILY_REPORT_KEY = "sentiment_survey_daily_report"
 APP_URL = os.getenv("APP_URL", "https://nday-om.vercel.app")
+
+# Morning shift-DM hints — added 2026-07-29, gated separately from the
+# survey send itself since it touches rostering.py's DM, not this module's
+# own send path.
+SENTIMENT_SURVEY_DM_HINTS_ACTIVE = os.getenv("SENTIMENT_SURVEY_DM_HINTS_ACTIVE", "false").lower() == "true"
+_NUDGE_THRESHOLD_DAYS = 5
+
+# Monthly proactive push — added 2026-07-29. Sent ahead of Amazon's own
+# survey window (first two weeks of the month) so drivers' sentiment is
+# already positively primed by the time Amazon asks.
+SENTIMENT_SURVEY_MONTHLY_PUSH_ACTIVE = os.getenv("SENTIMENT_SURVEY_MONTHLY_PUSH_ACTIVE", "false").lower() == "true"
+_MONTHLY_PUSH_KEY_PREFIX = "sentiment_survey_monthly_push_"
 PACIFIC = ZoneInfo("America/Los_Angeles")
 
 
@@ -106,6 +119,66 @@ def get_sentiment_questions():
     """Public — the driver-facing form and the admin report both read the
     question list from here so the two can never drift apart."""
     return {"questions": SENTIMENT_QUESTIONS}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Morning shift-DM hints — added 2026-07-29, per explicit request: rather
+# than waiting for the survey to reveal a problem, the daily DM proactively
+# addresses each category's substance directly, ahead of Amazon's own
+# survey window (their first two weeks of the month). One hint per
+# SENTIMENT_QUESTIONS key, cycling by day-of-year so all 6 get even
+# coverage across a month regardless of which day rostering.py calls in.
+# ─────────────────────────────────────────────────────────────────────────────
+
+SENTIMENT_HINTS = {
+    "recognition": "💡 Crushed it out there? Tell your lead — we want to hear about it and recognize it.",
+    "practical_solutions": "💡 Hit a snag today? Ping dispatch — we're here to help problem-solve in real time.",
+    "leadership_info": "💡 Not sure about a policy or process? Ask your wave lead or dispatch — we'd rather you ask than guess.",
+    "clear_expectations": "💡 Unclear on what's expected for a route or task? Reach out before you start and we'll clear it up.",
+    "feel_valued": "💡 You're a valued part of this team — thank you for showing up and getting it done.",
+    "easy_reach": "💡 Need us? Message Dispatch right from your Home tab — we're just a tap away.",
+}
+_HINT_KEYS_ORDER = [q["key"] for q in SENTIMENT_QUESTIONS]
+
+
+def get_driver_dm_hint_block(roster_id: Optional[int], driver_name: str, today: date, db: Session) -> Optional[dict]:
+    """Public helper for rostering.py's morning shift DM. Two modes,
+    gated by SENTIMENT_SURVEY_DM_HINTS_ACTIVE:
+      - A driver who hasn't submitted a sentiment-survey response in
+        _NUDGE_THRESHOLD_DAYS+ days (or ever) gets a personalized nudge
+        with a direct link to today's survey — this is the "haven't heard
+        from you" case.
+      - Everyone else gets a rotating category hint instead, cycling by
+        day-of-year, each one directly addressing what that survey
+        question asks about."""
+    if not SENTIMENT_SURVEY_DM_HINTS_ACTIVE or not roster_id:
+        return None
+
+    last = (
+        db.query(func.max(SentimentSurveyResponse.survey_date))
+        .filter(SentimentSurveyResponse.roster_id == roster_id)
+        .scalar()
+    )
+    if not last or (today - last).days >= _NUDGE_THRESHOLD_DAYS:
+        first_name = driver_name.split(",")[1].strip().split()[0] if "," in driver_name else driver_name.split()[0]
+        token = _issue_sentiment_token(roster_id, driver_name, today)
+        url = f"{APP_URL}/sentiment-survey?token={token}"
+        return {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"👋 *{first_name}, we haven't heard from you in a few days* — let us know what you "
+                    f"need to make your days easier. <{url}|Drop a quick suggestion>."
+                ),
+            },
+        }
+
+    key = _HINT_KEYS_ORDER[today.timetuple().tm_yday % len(_HINT_KEYS_ORDER)]
+    return {
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": SENTIMENT_HINTS[key]},
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -211,6 +284,77 @@ def send_sentiment_survey_endpoint(
     if not payload.send_to_all and not payload.roster_ids:
         raise HTTPException(status_code=400, detail="Provide roster_ids or set send_to_all=true")
     return send_sentiment_survey(payload.roster_ids, payload.send_to_all, db)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Monthly proactive push — added 2026-07-29. Amazon runs its own DSP
+# sentiment survey in the first two weeks of the month; sending ours on
+# the Sunday of the last full week of the *previous* month puts a fresh,
+# positively-primed check-in in front of drivers right before Amazon asks,
+# instead of relying on scattered organic responses.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _last_full_week_sunday(year: int, month: int) -> date:
+    """The Sunday of the last Sunday-Saturday week fully contained within
+    (year, month) -- e.g. if the month ends mid-week, that partial trailing
+    week doesn't count; it backs up to the prior full week instead."""
+    import calendar
+    last_day = date(year, month, calendar.monthrange(year, month)[1])
+    # date.weekday(): Monday=0 ... Saturday=5, Sunday=6
+    days_back_to_saturday = (last_day.weekday() - 5) % 7
+    saturday = last_day - timedelta(days=days_back_to_saturday)
+    sunday = saturday - timedelta(days=6)
+    if sunday.month != month:
+        # That week actually started in the previous month -- not "fully
+        # contained" -- so use the full week before it instead.
+        sunday -= timedelta(days=7)
+    return sunday
+
+
+def run_monthly_sentiment_survey_push(db: Session, force: bool = False) -> dict:
+    """Once a month: auto-send the full survey to every active, linked
+    driver on the Sunday of the last full week of the month. force=True
+    bypasses the day-gate and already-sent guard for manual testing."""
+    if not SENTIMENT_SURVEY_MONTHLY_PUSH_ACTIVE:
+        return {"status": "inactive", "note": "Set SENTIMENT_SURVEY_MONTHLY_PUSH_ACTIVE=true on Render to enable"}
+
+    today = _pacific_today()
+    target_sunday = _last_full_week_sunday(today.year, today.month)
+
+    if not force and today != target_sunday:
+        return {"status": "not_send_day", "date": today.isoformat(), "target_date": target_sunday.isoformat()}
+
+    state_key = f"{_MONTHLY_PUSH_KEY_PREFIX}{today.year}-{today.month:02d}"
+    if not force and get_reminder_state(db, state_key).get("sent_at"):
+        return {"status": "already_sent", "date": today.isoformat()}
+
+    result = send_sentiment_survey(None, True, db)
+    set_reminder_state(db, state_key, {"sent_at": datetime.utcnow().isoformat()})
+
+    try:
+        from api.src.routes.document_routing import get_role_slack_ids
+        hr_channel_ids = get_role_slack_ids(db, "hr")
+        if hr_channel_ids:
+            from slack_sdk import WebClient
+            token = os.getenv("SLACK_BOT_TOKEN")
+            if token:
+                summary = (
+                    f"🗣️ *Monthly sentiment survey push sent* — {result['sent']} sent"
+                    f", {result['already_submitted']} already checked in today"
+                    f", {result['no_slack_id']} skipped (no Slack link)"
+                    f" (of {result['total_candidates']} considered)"
+                )
+                WebClient(token=token).chat_postMessage(channel=hr_channel_ids[0], text=summary)
+    except Exception as exc:
+        logger.warning("Monthly sentiment survey push audit log post failed: %s", exc)
+
+    return {"status": "sent", "date": today.isoformat(), **result}
+
+
+@router.post("/trigger-monthly-push")
+def trigger_monthly_push(force: bool = True, db: Session = Depends(get_db)):
+    """Manual trigger for testing/recovery — same function the daily loop calls."""
+    return run_monthly_sentiment_survey_push(db, force=force)
 
 
 @router.get("/status-by-token")

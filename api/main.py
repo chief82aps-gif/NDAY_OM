@@ -180,6 +180,25 @@ async def _sentiment_survey_monthly_push_loop():
         await asyncio.sleep(60)
 
 
+async def _sentiment_survey_weekly_summary_loop():
+    """Every 60 s — delegates to sentiment_survey.send_weekly_sentiment_summary(),
+    which no-ops outside Monday 8 AM Pacific and respects an "already sent
+    this week" guard. Gated by SENTIMENT_SURVEY_WEEKLY_SUMMARY_ACTIVE
+    (default false)."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(sentiment_survey.send_weekly_sentiment_summary, db)
+            except Exception as exc:
+                logger.warning("Sentiment survey weekly summary loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("Sentiment survey weekly summary loop outer error: %s", exc)
+        await asyncio.sleep(60)
+
+
 async def _website_user_sync_loop():
     """Every 60 s — delegates to auth.run_website_user_sync(), which
     throttles itself to once an hour. Gated by WEBSITE_USER_SYNC_ACTIVE
@@ -683,6 +702,7 @@ async def startup():
     asyncio.create_task(_rescue_payroll_hr_report_loop())
     asyncio.create_task(_sentiment_survey_report_loop())
     asyncio.create_task(_sentiment_survey_monthly_push_loop())
+    asyncio.create_task(_sentiment_survey_weekly_summary_loop())
     asyncio.create_task(_weekly_slack_relink_loop())
     asyncio.create_task(_eod_category_digest_loop())
     asyncio.create_task(_safety_violation_review_loop())

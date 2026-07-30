@@ -50,6 +50,17 @@ SENTIMENT_SURVEY_ACTIVE = os.getenv("SENTIMENT_SURVEY_ACTIVE", "false").lower() 
 _DAILY_REPORT_KEY = "sentiment_survey_daily_report"
 APP_URL = os.getenv("APP_URL", "https://nday-om.vercel.app")
 
+# Weekly #nday-hr summary — added 2026-07-30 per explicit request ("we need
+# to make sure these are being reviewed by mgt"). Separate from the daily
+# DM report above: posts once a week, to the #nday-hr channel specifically
+# (not owner/hr DMs), and includes the quantitative rating stats alongside
+# the AI-flagged qualitative themes -- the daily report predates the 6
+# rating questions and never mentions them.
+SENTIMENT_SURVEY_WEEKLY_SUMMARY_ACTIVE = os.getenv("SENTIMENT_SURVEY_WEEKLY_SUMMARY_ACTIVE", "false").lower() == "true"
+_WEEKLY_SUMMARY_KEY_PREFIX = "sentiment_survey_weekly_summary_"
+_WEEKLY_SUMMARY_SEND_WEEKDAY = 0   # Monday (Python weekday(): Monday=0)
+_WEEKLY_SUMMARY_SEND_HOUR = 8      # 8 AM Pacific
+
 # Morning shift-DM hints — added 2026-07-29, gated separately from the
 # survey send itself since it touches rostering.py's DM, not this module's
 # own send path.
@@ -119,6 +130,25 @@ def get_sentiment_questions():
     """Public — the driver-facing form and the admin report both read the
     question list from here so the two can never drift apart."""
     return {"questions": SENTIMENT_QUESTIONS}
+
+
+def _compute_question_stats(rows: list) -> list[dict]:
+    """Per-question response count / average (1-5) / % favorable (rated
+    3-5, matching Amazon's own report shape) across a set of responses.
+    Shared by the monthly admin report and the weekly #nday-hr summary
+    so the two can never disagree on the math."""
+    question_stats = []
+    for q in SENTIMENT_QUESTIONS:
+        ratings = [v for r in rows if (v := getattr(r, f"rating_{q['key']}")) is not None]
+        favorable = [v for v in ratings if v >= 3]
+        question_stats.append({
+            "key": q["key"],
+            "text": q["text"],
+            "responses": len(ratings),
+            "average": round(sum(ratings) / len(ratings), 2) if ratings else None,
+            "favorable_rate": round(100 * len(favorable) / len(ratings), 1) if ratings else None,
+        })
+    return question_stats
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -496,17 +526,7 @@ def admin_report(
         for r in db.query(DriverRosterEntry).filter(DriverRosterEntry.id.in_(roster_ids)).all()
     } if roster_ids else {}
 
-    question_stats = []
-    for q in SENTIMENT_QUESTIONS:
-        ratings = [v for r in rows if (v := getattr(r, f"rating_{q['key']}")) is not None]
-        favorable = [v for v in ratings if v >= 3]
-        question_stats.append({
-            "key": q["key"],
-            "text": q["text"],
-            "responses": len(ratings),
-            "average": round(sum(ratings) / len(ratings), 2) if ratings else None,
-            "favorable_rate": round(100 * len(favorable) / len(ratings), 1) if ratings else None,
-        })
+    question_stats = _compute_question_stats(rows)
 
     return {
         "month": f"{year_i:04d}-{month_i:02d}",
@@ -585,6 +605,11 @@ def _run_ai_analysis(rows: list[SentimentSurveyResponse]) -> Optional[str]:
             lines.append(f"  Suggestions: {r.suggestions}")
         if r.treatment_concerns:
             lines.append(f"  Treatment concerns: {r.treatment_concerns}")
+        for q in SENTIMENT_QUESTIONS:
+            note = getattr(r, f"note_{q['key']}")
+            rating = getattr(r, f"rating_{q['key']}")
+            if note:
+                lines.append(f"  [{q['text']}] (rated {rating}/5 if given): {note}")
     raw_text = "\n".join(lines)
 
     try:
@@ -662,3 +687,84 @@ def send_daily_sentiment_report(db: Session, force: bool = False) -> dict:
 def trigger_daily_report(force: bool = True, db: Session = Depends(get_db)):
     """Manual trigger for testing/recovery."""
     return send_daily_sentiment_report(db, force=force)
+
+
+def send_weekly_sentiment_summary(db: Session, force: bool = False) -> dict:
+    """Once a week (Monday mornings): post a summary of the trailing 7
+    days' responses to #nday-hr -- both the quantitative rating stats
+    (average/% favorable per question) and an AI-flagged qualitative
+    rollup, so management has a standing weekly checkpoint to actually
+    review sentiment data rather than it only surfacing via the daily DM
+    (which several people may not open) or the on-demand monthly admin
+    report (which nobody's prompted to go check). force=True bypasses
+    the day/hour gate and the already-sent-this-week guard for manual
+    testing/recovery."""
+    if not SENTIMENT_SURVEY_WEEKLY_SUMMARY_ACTIVE:
+        return {"status": "inactive", "note": "Set SENTIMENT_SURVEY_WEEKLY_SUMMARY_ACTIVE=true on Render to enable"}
+
+    now_pt = datetime.now(PACIFIC)
+    today = now_pt.date()
+
+    if not force and (now_pt.weekday() != _WEEKLY_SUMMARY_SEND_WEEKDAY or now_pt.hour != _WEEKLY_SUMMARY_SEND_HOUR):
+        return {"status": "not_send_time", "date": today.isoformat()}
+
+    # ISO week number keys the dedup guard, not the date -- avoids a
+    # double-send if the loop ticks more than once inside the send hour.
+    iso_year, iso_week, _ = today.isocalendar()
+    state_key = f"{_WEEKLY_SUMMARY_KEY_PREFIX}{iso_year}-W{iso_week:02d}"
+    if not force and get_reminder_state(db, state_key).get("sent_at"):
+        return {"status": "already_sent", "week": f"{iso_year}-W{iso_week:02d}"}
+
+    range_end = today  # exclusive -- trailing 7 days ending yesterday
+    range_start = range_end - timedelta(days=7)
+    rows = (
+        db.query(SentimentSurveyResponse)
+        .filter(SentimentSurveyResponse.survey_date >= range_start, SentimentSurveyResponse.survey_date < range_end)
+        .all()
+    )
+
+    if not rows:
+        set_reminder_state(db, state_key, {"sent_at": datetime.utcnow().isoformat()})
+        return {"status": "no_responses", "range": f"{range_start.isoformat()} to {range_end.isoformat()}"}
+
+    question_stats = _compute_question_stats(rows)
+    stats_lines = []
+    for q in question_stats:
+        if q["responses"] == 0:
+            continue
+        stats_lines.append(f"• {q['text']} — avg *{q['average']}/5*, {q['favorable_rate']}% favorable ({q['responses']} responses)")
+    stats_text = "\n".join(stats_lines) if stats_lines else "_No ratings submitted this week._"
+
+    ai_summary = _run_ai_analysis(rows)
+
+    text = (
+        f"🗣️ *Weekly Sentiment Survey Summary — {range_start.strftime('%b %-d')} to "
+        f"{(range_end - timedelta(days=1)).strftime('%b %-d')}* ({len(rows)} response(s))\n\n"
+        f"📊 *Ratings*\n{stats_text}\n\n"
+        f"🤖 *AI-Flagged Themes*\n{ai_summary or '_Analysis unavailable — see the full report._'}\n\n"
+        f"👉 Full detail: {APP_URL}/sentiment-survey-admin"
+    )
+
+    from api.src.routes.document_routing import get_role_slack_ids
+    hr_channel_ids = get_role_slack_ids(db, "hr")
+    if not hr_channel_ids:
+        logger.info("Sentiment survey: no hr channel configured, skipping weekly summary.")
+        return {"status": "no_recipient"}
+
+    token = os.getenv("SLACK_BOT_TOKEN")
+    if token:
+        try:
+            from slack_sdk import WebClient
+            WebClient(token=token).chat_postMessage(channel=hr_channel_ids[0], text=text)
+        except Exception as exc:
+            logger.warning("Weekly sentiment summary post failed: %s", exc)
+            return {"status": "error", "detail": str(exc)}
+
+    set_reminder_state(db, state_key, {"sent_at": datetime.utcnow().isoformat()})
+    return {"status": "sent", "range": f"{range_start.isoformat()} to {range_end.isoformat()}", "responses": len(rows)}
+
+
+@router.post("/trigger-weekly-summary")
+def trigger_weekly_summary(force: bool = True, db: Session = Depends(get_db)):
+    """Manual trigger for testing/recovery — same function the daily loop calls."""
+    return send_weekly_sentiment_summary(db, force=force)

@@ -44,6 +44,7 @@ from api.src.database import (
 from api.src.routes.dvic import _name_tokens
 from api.src.routes.document_routing import resolve_recipients, is_dispatch_staff, is_hr_staff
 from api.src.routes.quality import get_rankings, _METRIC_LABELS
+from api.src.authorization import require_any_role
 from api.src.routes.slack_interactions import (
     _resolve_driver,
     _verify_slack_signature,
@@ -619,6 +620,46 @@ async def debug_publish_home(slack_user_id: str, db: Session = Depends(get_db)) 
         result["error"] = str(exc)
         result["traceback"] = traceback.format_exc()
     return result
+
+
+@router.post("/republish-all-homes")
+def republish_all_homes(
+    db: Session = Depends(get_db),
+    caller_role: str = Depends(require_any_role("owner", "dispatcher", "ops_manager")),
+) -> dict:
+    """Force a fresh views.publish for every actively Slack-linked driver —
+    added 2026-07-30 after multiple drivers reported being stuck on the
+    "Coming Soon" placeholder (_INACTIVE_BLOCKS) despite DRIVER_DM_ACTIVE
+    actually being on. Root cause: the App Home tab is a static,
+    server-published view — Slack never refreshes it on its own, only
+    when the app calls views.publish again (normally triggered by the
+    user's own app_home_opened event, i.e. tapping away and back to
+    Home). Anyone whose Home tab was last published while the flag was
+    still off stays stuck on that placeholder until they happen to
+    reopen the tab — most drivers won't think to. This forces the
+    refresh proactively instead of waiting on that. Safe to re-run any
+    time a gating flag changes and views need to catch up."""
+    client = _client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    drivers = (
+        db.query(DriverRosterEntry)
+        .filter(DriverRosterEntry.is_active == True, DriverRosterEntry.slack_member_id.isnot(None))  # noqa: E712
+        .all()
+    )
+
+    published = 0
+    errors: list[str] = []
+    for d in drivers:
+        try:
+            blocks, _ = _build_combined_home_blocks(d.slack_member_id, db)
+            client.views_publish(user_id=d.slack_member_id, view={"type": "home", "blocks": blocks})
+            published += 1
+        except Exception as exc:
+            errors.append(f"{d.payroll_name}: {exc}")
+
+    return {"status": "done", "attempted": len(drivers), "published": published, "errors": errors[:10]}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

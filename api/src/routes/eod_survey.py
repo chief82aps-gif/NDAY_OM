@@ -446,6 +446,29 @@ def submit_survey(req: EodSubmitRequest, db: Session = Depends(get_db)):
 
 
 def _alert_mgt_on_serious_flags(req: "EodSubmitRequest", driver_name: str, survey_date: date) -> None:
+    # Van issues get their own immediate, unconditional (no feature flag)
+    # alert straight to #nday-fleet -- added 2026-07-30 per explicit
+    # request ("make sure all van reports are reaching #nday-fleet").
+    # Previously the ONLY delivery path for a van issue was the once-daily
+    # digest (send_daily_eod_category_digests(), gated behind
+    # EOD_CATEGORY_DIGEST_ACTIVE, default false) -- if that flag was ever
+    # left off, a reported van issue never reached Slack at all. This
+    # fires on every submission regardless of that flag, same
+    # unconditional pattern as crash/injury/incident below. The digest
+    # stays as-is too, as an end-of-day rollup for whoever has it enabled.
+    if req.van_issues:
+        try:
+            _slack().chat_postMessage(
+                channel=FLEET_CHANNEL,
+                text=(
+                    f"🔧 *Van Issue* reported via EOD Survey — *{driver_name}*"
+                    + (f" (Van {req.van_number})" if req.van_number else "")
+                    + f" ({survey_date.isoformat()}).\n{req.van_issue_description or 'See survey for details.'}"
+                ),
+            )
+        except Exception as exc:
+            logger.warning("EOD van-issue fleet alert failed: %s", exc)
+
     if not (req.crash_occurred or req.injury_occurred or req.incident_occurred):
         return
     lines = []

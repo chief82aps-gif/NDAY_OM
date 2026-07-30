@@ -3171,6 +3171,24 @@ class SentimentSurveyResponse(Base):
     suggestions = Column(Text)          # recurring/actionable suggestions
     treatment_concerns = Column(Text)   # anything about how they've been treated
 
+    # Added 2026-07-29: the real Amazon DSP sentiment-survey categories
+    # (see sentiment_survey.py's SENTIMENT_QUESTIONS), each a 1-5 rating
+    # (5 = most positive, matching Amazon's own scale) plus its own
+    # optional free-text elaboration -- these were part of the original
+    # spec and had been omitted from the first build.
+    rating_recognition = Column(Integer, nullable=True)
+    note_recognition = Column(Text, nullable=True)
+    rating_practical_solutions = Column(Integer, nullable=True)
+    note_practical_solutions = Column(Text, nullable=True)
+    rating_leadership_info = Column(Integer, nullable=True)
+    note_leadership_info = Column(Text, nullable=True)
+    rating_clear_expectations = Column(Integer, nullable=True)
+    note_clear_expectations = Column(Text, nullable=True)
+    rating_feel_valued = Column(Integer, nullable=True)
+    note_feel_valued = Column(Text, nullable=True)
+    rating_easy_reach = Column(Integer, nullable=True)
+    note_easy_reach = Column(Text, nullable=True)
+
     # Set once the daily AI-analysis job has read this row, so it isn't
     # re-summarized every time the loop ticks.
     reviewed_at = Column(DateTime, nullable=True)
@@ -3511,6 +3529,28 @@ def ensure_rescue_bonus_ledger_columns():
                 conn.execute(text("ALTER TABLE rescue_contributions ADD COLUMN IF NOT EXISTS bonus_credited_to_ledger BOOLEAN DEFAULT FALSE"))
     except Exception:
         pass  # Column already exists
+
+
+def ensure_sentiment_survey_rating_columns():
+    """Add the 6 Amazon-DSP-style rating+note column pairs to
+    sentiment_survey_responses -- added 2026-07-29, these were part of the
+    original spec and had been omitted from the first build."""
+    for col, coltype in (
+        ("rating_recognition", "INTEGER"), ("note_recognition", "TEXT"),
+        ("rating_practical_solutions", "INTEGER"), ("note_practical_solutions", "TEXT"),
+        ("rating_leadership_info", "INTEGER"), ("note_leadership_info", "TEXT"),
+        ("rating_clear_expectations", "INTEGER"), ("note_clear_expectations", "TEXT"),
+        ("rating_feel_valued", "INTEGER"), ("note_feel_valued", "TEXT"),
+        ("rating_easy_reach", "INTEGER"), ("note_easy_reach", "TEXT"),
+    ):
+        try:
+            with engine.begin() as conn:
+                if DATABASE_URL.startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE sentiment_survey_responses ADD COLUMN {col} {coltype}"))
+                else:
+                    conn.execute(text(f"ALTER TABLE sentiment_survey_responses ADD COLUMN IF NOT EXISTS {col} {coltype}"))
+        except Exception:
+            pass  # Column already exists
 
 
 def ensure_wave_lead_role_half_column():

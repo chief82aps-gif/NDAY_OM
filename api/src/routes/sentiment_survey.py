@@ -82,6 +82,33 @@ def _verify_sentiment_token(token: str) -> Optional[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# The 6 real Amazon DSP sentiment-survey categories -- part of the original
+# spec (see the DSP's own weekly Sentiment Report export), each a 1-5 rating
+# (5 = most positive, matching Amazon's own scale) plus its own optional
+# free-text elaboration. Added 2026-07-29 after these were found omitted
+# from the first build. `key` names the pair of DB columns
+# (rating_{key}/note_{key} on SentimentSurveyResponse) and doubles as the
+# question_stats key in the monthly admin report.
+# ─────────────────────────────────────────────────────────────────────────────
+
+SENTIMENT_QUESTIONS = [
+    {"key": "recognition", "text": "My DSP regularly recognizes the hard work I do to meet customer expectations."},
+    {"key": "practical_solutions", "text": "My DSP provides practical solutions when I face challenges in my work."},
+    {"key": "leadership_info", "text": "My DSP leadership provides useful information to help me succeed."},
+    {"key": "clear_expectations", "text": "My DSP communicates clear expectations for my role."},
+    {"key": "feel_valued", "text": "I feel valued as a member of my DSP team."},
+    {"key": "easy_reach", "text": "I can easily reach out to my DSP when needed."},
+]
+
+
+@router.get("/questions")
+def get_sentiment_questions():
+    """Public — the driver-facing form and the admin report both read the
+    question list from here so the two can never drift apart."""
+    return {"questions": SENTIMENT_QUESTIONS}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Outbound send — added 2026-07-27. Until now the only way a driver ever saw
 # this survey was as a soft follow-up offer right after submitting their EOD
 # (eod_survey.py's submit endpoint). This adds a standalone send HR can
@@ -209,6 +236,25 @@ class SentimentSubmitRequest(BaseModel):
     suggestions: Optional[str] = None
     treatment_concerns: Optional[str] = None
 
+    # One optional 1-5 rating + free-text note per SENTIMENT_QUESTIONS key —
+    # added 2026-07-29, part of the original spec.
+    rating_recognition: Optional[int] = None
+    note_recognition: Optional[str] = None
+    rating_practical_solutions: Optional[int] = None
+    note_practical_solutions: Optional[str] = None
+    rating_leadership_info: Optional[int] = None
+    note_leadership_info: Optional[str] = None
+    rating_clear_expectations: Optional[int] = None
+    note_clear_expectations: Optional[str] = None
+    rating_feel_valued: Optional[int] = None
+    note_feel_valued: Optional[str] = None
+    rating_easy_reach: Optional[int] = None
+    note_easy_reach: Optional[str] = None
+
+
+_RATING_FIELDS = [f"rating_{q['key']}" for q in SENTIMENT_QUESTIONS]
+_NOTE_FIELDS = [f"note_{q['key']}" for q in SENTIMENT_QUESTIONS]
+
 
 @router.post("/submit")
 def submit_sentiment_survey(req: SentimentSubmitRequest, db: Session = Depends(get_db)):
@@ -224,7 +270,16 @@ def submit_sentiment_survey(req: SentimentSubmitRequest, db: Session = Depends(g
     if existing:
         raise HTTPException(status_code=409, detail="Already submitted for this date.")
 
-    if not any([req.feeling, req.van_equipment_issues, req.suggestions, req.treatment_concerns]):
+    for field in _RATING_FIELDS:
+        value = getattr(req, field)
+        if value is not None and not (1 <= value <= 5):
+            raise HTTPException(status_code=400, detail=f"{field} must be 1-5.")
+
+    if not any(
+        [req.feeling, req.van_equipment_issues, req.suggestions, req.treatment_concerns]
+        + [getattr(req, f) for f in _RATING_FIELDS]
+        + [getattr(req, f) for f in _NOTE_FIELDS]
+    ):
         raise HTTPException(status_code=400, detail="Nothing to submit — leave blank to skip instead.")
 
     db.add(SentimentSurveyResponse(
@@ -234,6 +289,8 @@ def submit_sentiment_survey(req: SentimentSubmitRequest, db: Session = Depends(g
         van_equipment_issues=(req.van_equipment_issues or None),
         suggestions=(req.suggestions or None),
         treatment_concerns=(req.treatment_concerns or None),
+        **{f: getattr(req, f) for f in _RATING_FIELDS},
+        **{f: getattr(req, f) for f in _NOTE_FIELDS},
     ))
     db.commit()
     return {"status": "submitted"}
@@ -246,14 +303,30 @@ def submit_sentiment_survey(req: SentimentSubmitRequest, db: Session = Depends(g
 
 @router.get("/admin-report")
 def admin_report(
-    survey_date: Optional[str] = None,
+    month: Optional[str] = None,   # "YYYY-MM" — defaults to the current month
     db: Session = Depends(get_db),
     caller_role: str = Depends(require_any_role("owner", "hr")),
 ):
-    target = date.fromisoformat(survey_date) if survey_date else date.today()
+    """Monthly, not daily (changed 2026-07-29) — it takes drivers several
+    days to get around to answering, so a single-day view was usually
+    near-empty. Aggregates the 6 rating questions (response count, average,
+    % favorable i.e. rated 3-5, matching Amazon's own report shape) across
+    the month, plus the full list of individual responses (identity
+    revealed here only, as before)."""
+    if month:
+        year_i, month_i = (int(p) for p in month.split("-"))
+    else:
+        today = date.today()
+        year_i, month_i = today.year, today.month
+    range_start = date(year_i, month_i, 1)
+    range_end = date(year_i + 1, 1, 1) if month_i == 12 else date(year_i, month_i + 1, 1)
+
     rows = (
         db.query(SentimentSurveyResponse)
-        .filter(SentimentSurveyResponse.survey_date == target)
+        .filter(
+            SentimentSurveyResponse.survey_date >= range_start,
+            SentimentSurveyResponse.survey_date < range_end,
+        )
         .order_by(SentimentSurveyResponse.submitted_at)
         .all()
     )
@@ -263,17 +336,42 @@ def admin_report(
         for r in db.query(DriverRosterEntry).filter(DriverRosterEntry.id.in_(roster_ids)).all()
     } if roster_ids else {}
 
+    question_stats = []
+    for q in SENTIMENT_QUESTIONS:
+        ratings = [v for r in rows if (v := getattr(r, f"rating_{q['key']}")) is not None]
+        favorable = [v for v in ratings if v >= 3]
+        question_stats.append({
+            "key": q["key"],
+            "text": q["text"],
+            "responses": len(ratings),
+            "average": round(sum(ratings) / len(ratings), 2) if ratings else None,
+            "favorable_rate": round(100 * len(favorable) / len(ratings), 1) if ratings else None,
+        })
+
     return {
-        "survey_date": target.isoformat(),
+        "month": f"{year_i:04d}-{month_i:02d}",
+        "response_count": len(rows),
+        "question_stats": question_stats,
         "responses": [
             {
                 "id": r.id,
                 "driver_name": roster_map.get(r.roster_id, "Unknown"),
+                "survey_date": r.survey_date.isoformat(),
                 "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None,
                 "feeling": r.feeling,
                 "van_equipment_issues": r.van_equipment_issues,
                 "suggestions": r.suggestions,
                 "treatment_concerns": r.treatment_concerns,
+                "ratings": [
+                    {
+                        "key": q["key"],
+                        "text": q["text"],
+                        "rating": getattr(r, f"rating_{q['key']}"),
+                        "note": getattr(r, f"note_{q['key']}"),
+                    }
+                    for q in SENTIMENT_QUESTIONS
+                    if getattr(r, f"rating_{q['key']}") is not None or getattr(r, f"note_{q['key']}")
+                ],
             }
             for r in rows
         ],

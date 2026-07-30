@@ -13,6 +13,11 @@ function resolveApi(): string {
 
 type Step = 'loading' | 'form' | 'done' | 'already_done' | 'error';
 
+interface SentimentQuestion {
+  key: string;
+  text: string;
+}
+
 const s = {
   page: { minHeight: '100vh', background: '#0f172a', color: '#e2e8f0', fontFamily: 'system-ui, sans-serif', padding: '24px 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'center' } as React.CSSProperties,
   card: { background: '#1e293b', borderRadius: 12, padding: 24, width: '100%', maxWidth: 520, boxShadow: '0 4px 24px rgba(0,0,0,0.4)' } as React.CSSProperties,
@@ -22,6 +27,20 @@ const s = {
     borderRadius: 8, padding: '10px 14px', color: '#f1f5f9', fontSize: 14, marginBottom: 18,
     minHeight: 70, fontFamily: 'inherit', resize: 'vertical' as const,
   },
+  questionBlock: { background: '#0f172a', border: '1px solid #334155', borderRadius: 10, padding: 14, marginBottom: 14 } as React.CSSProperties,
+  questionText: { fontSize: 14, color: '#f1f5f9', margin: '0 0 10px', fontWeight: 600 } as React.CSSProperties,
+  ratingRow: { display: 'flex', gap: 8, marginBottom: 10 } as React.CSSProperties,
+  ratingBtn: (active: boolean) => ({
+    flex: 1, padding: '8px 0', borderRadius: 6, border: active ? '1px solid #16a34a' : '1px solid #334155',
+    background: active ? '#16a34a' : '#1e293b', color: active ? '#fff' : '#94a3b8',
+    fontSize: 14, fontWeight: 700, cursor: 'pointer',
+  } as React.CSSProperties),
+  ratingCaption: { display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#64748b', marginBottom: 10 } as React.CSSProperties,
+  noteInput: {
+    width: '100%', boxSizing: 'border-box' as const, background: '#1e293b', border: '1px solid #334155',
+    borderRadius: 6, padding: '8px 10px', color: '#f1f5f9', fontSize: 13, fontFamily: 'inherit',
+    resize: 'vertical' as const, minHeight: 44,
+  } as React.CSSProperties,
   submit: (disabled: boolean) => ({
     width: '100%', background: disabled ? '#1e293b' : '#16a34a',
     color: '#fff', border: 'none', borderRadius: 8, padding: '14px 0',
@@ -42,6 +61,17 @@ export default function SentimentSurveyPage() {
   const [vanEquipmentIssues, setVanEquipmentIssues] = useState('');
   const [suggestions, setSuggestions] = useState('');
   const [treatmentConcerns, setTreatmentConcerns] = useState('');
+
+  const [questions, setQuestions] = useState<SentimentQuestion[]>([]);
+  const [ratings, setRatings] = useState<Record<string, number | null>>({});
+  const [notes, setNotes] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    fetch(`${api}/sentiment-survey/questions`)
+      .then(r => r.json())
+      .then((data: { questions: SentimentQuestion[] }) => setQuestions(data.questions ?? []))
+      .catch(() => setQuestions([]));
+  }, [api]);
 
   useEffect(() => {
     if (!token) return;
@@ -65,6 +95,12 @@ export default function SentimentSurveyPage() {
     setSubmitting(true);
     setErrorMsg('');
     try {
+      const ratingPayload: Record<string, number | string | null> = {};
+      for (const q of questions) {
+        ratingPayload[`rating_${q.key}`] = ratings[q.key] ?? null;
+        ratingPayload[`note_${q.key}`] = (notes[q.key] ?? '').trim() || null;
+      }
+
       const res = await fetch(`${api}/sentiment-survey/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -74,6 +110,7 @@ export default function SentimentSurveyPage() {
           van_equipment_issues: vanEquipmentIssues.trim() || null,
           suggestions: suggestions.trim() || null,
           treatment_concerns: treatmentConcerns.trim() || null,
+          ...ratingPayload,
         }),
       });
       if (!res.ok) {
@@ -132,6 +169,34 @@ export default function SentimentSurveyPage() {
           Leave anything blank you'd rather skip.
         </p>
         <form onSubmit={handleSubmit}>
+          {questions.map(q => (
+            <div key={q.key} style={s.questionBlock}>
+              <p style={s.questionText}>{q.text}</p>
+              <div style={s.ratingRow}>
+                {[1, 2, 3, 4, 5].map(n => (
+                  <button
+                    key={n}
+                    type="button"
+                    style={s.ratingBtn(ratings[q.key] === n)}
+                    onClick={() => setRatings(p => ({ ...p, [q.key]: p[q.key] === n ? null : n }))}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+              <div style={s.ratingCaption}>
+                <span>Least positive</span>
+                <span>Most positive</span>
+              </div>
+              <textarea
+                style={s.noteInput}
+                placeholder="Anything you'd like to add? (optional)"
+                value={notes[q.key] ?? ''}
+                onChange={e => setNotes(p => ({ ...p, [q.key]: e.target.value }))}
+              />
+            </div>
+          ))}
+
           <label style={s.label}>How are you feeling about work today? Anything on your mind?</label>
           <textarea style={s.textarea} value={feeling} onChange={e => setFeeling(e.target.value)} />
 

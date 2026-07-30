@@ -1995,7 +1995,19 @@ class AttendanceEvent(Base):
     # call_in | no_show | late_arrival | early_departure | present | excused
 
     reason_code = Column(String(50))
-    # sick | personal | family | weather | transportation | no_call | other
+    # sick | personal | family | weather | transportation | doctor_appointment | childcare | no_call | other
+
+    # Added 2026-07-30 -- tightened callout reason enforcement, per explicit
+    # HR request: "personal", a non-emergency doctor's appointment, and a
+    # childcare/school issue with no backup plan are NOT valid reasons to
+    # miss a scheduled shift. A family-emergency callout is only valid for
+    # an immediate family member (spouse/child/mother/father) the driver
+    # currently lives with. NULL/True = valid (unchanged from today's
+    # behavior for existing rows); False = driver was shown the pushback
+    # explanation and chose to submit anyway -- still logged (points still
+    # apply, we can't force attendance), but flagged prominently to
+    # dispatch/HR as an unauthorized callout rather than a quietly-accepted one.
+    reason_valid = Column(Boolean, default=True)
 
     # Call-in timing (for 4-hour rule compliance)
     call_time = Column(DateTime)           # when driver actually called
@@ -3582,6 +3594,20 @@ def ensure_sentiment_survey_response_columns():
                     conn.execute(text(f"ALTER TABLE sentiment_survey_responses ADD COLUMN IF NOT EXISTS {col} {coltype}"))
         except Exception:
             pass  # Column already exists
+
+
+def ensure_attendance_reason_valid_column():
+    """Add reason_valid to attendance_events -- added 2026-07-30 for
+    tightened callout reason enforcement. Defaults True so existing rows
+    are unaffected."""
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE attendance_events ADD COLUMN reason_valid BOOLEAN DEFAULT 1"))
+            else:
+                conn.execute(text("ALTER TABLE attendance_events ADD COLUMN IF NOT EXISTS reason_valid BOOLEAN DEFAULT TRUE"))
+    except Exception:
+        pass  # Column already exists
 
 
 def ensure_wave_lead_role_half_column():

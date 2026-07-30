@@ -12,12 +12,14 @@ function resolveApi() {
 }
 
 const REASONS: { value: string; label: string; emoji: string }[] = [
-  { value: 'sick',           label: 'Sick',             emoji: '🤒' },
-  { value: 'personal',       label: 'Personal',         emoji: '👤' },
-  { value: 'family',         label: 'Family emergency', emoji: '🏠' },
-  { value: 'weather',        label: 'Weather',          emoji: '🌧️' },
-  { value: 'transportation', label: 'Transportation',   emoji: '🚗' },
-  { value: 'other',          label: 'Other',            emoji: '📋' },
+  { value: 'sick',               label: 'Sick',                     emoji: '🤒' },
+  { value: 'personal',           label: 'Personal',                 emoji: '👤' },
+  { value: 'family',             label: 'Family emergency',         emoji: '🏠' },
+  { value: 'weather',            label: 'Weather',                  emoji: '🌧️' },
+  { value: 'transportation',     label: 'Transportation',           emoji: '🚗' },
+  { value: 'doctor_appointment', label: "Doctor's Appointment",     emoji: '🩺' },
+  { value: 'childcare',          label: 'Childcare / School Issue', emoji: '🧒' },
+  { value: 'other',              label: 'Other',                    emoji: '📋' },
 ];
 
 // HRM-023.1 point thresholds
@@ -60,6 +62,8 @@ interface SubmitResult {
   new_status: Status;
   next_threshold: { points: number; label: string; points_away: number };
   roster_tight: boolean;
+  reason_valid: boolean;
+  unauthorized_message: string | null;
 }
 
 type Step = 'loading' | 'blocked' | 'identify' | 'set-pin' | 'status' | 'details' | 'review' | 'submitting' | 'done' | 'error';
@@ -131,7 +135,16 @@ export default function CalloutPage() {
   const [notes, setNotes]             = useState('');
   const [familyWhat, setFamilyWhat]   = useState('');
   const [familyWho, setFamilyWho]     = useState('');
+  const [livesWithFamily, setLivesWithFamily] = useState<boolean | null>(null);
   const [detailErr, setDetailErr]     = useState('');
+
+  // Reason validity push-back (added 2026-07-30) — "personal", non-emergency
+  // doctor's appointments, childcare/school issues, and a family emergency
+  // for someone the driver doesn't live with are not valid reasons on their
+  // own. reasonCheck holds the server's verdict; reasonAck tracks whether
+  // the driver explicitly chose to submit anyway after seeing the push-back.
+  const [reasonCheck, setReasonCheck] = useState<{ valid: boolean; message: string | null } | null>(null);
+  const [reasonAck, setReasonAck]     = useState(false);
 
   // Set-PIN step
   const [newPin, setNewPin]         = useState('');
@@ -220,6 +233,25 @@ export default function CalloutPage() {
       .catch(() => setFamilyPatternMsg(''));
   }, [familyWho, driverName, pin]);
 
+  // Check reason validity the moment a reason is picked (and re-check for
+  // family once who/lives-with are answered) — surfaces the push-back
+  // message immediately rather than only at final submit. Resets the
+  // acknowledgment any time the underlying answer changes.
+  useEffect(() => {
+    setReasonAck(false);
+    if (!reason) { setReasonCheck(null); return; }
+    if (reason === 'family' && !familyWho) { setReasonCheck(null); return; }
+    const params = new URLSearchParams({ reason_code: reason });
+    if (reason === 'family') {
+      params.set('family_who', familyWho.toLowerCase());
+      params.set('lives_with_family', String(livesWithFamily === true));
+    }
+    fetch(`${resolveApi()}/attendance/callout/reason-check?${params}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setReasonCheck(d ?? null))
+      .catch(() => setReasonCheck(null));
+  }, [reason, familyWho, livesWithFamily]);
+
   // Step 1 → Step 2: verify PIN and load status
   async function handleIdentify(e: React.FormEvent) {
     e.preventDefault();
@@ -282,6 +314,11 @@ export default function CalloutPage() {
     if (reason === 'family') {
       if (!familyWhat.trim()) { setDetailErr('Please describe the emergency.'); return; }
       if (!familyWho) { setDetailErr('Please select who the emergency pertains to.'); return; }
+      if (livesWithFamily === null) { setDetailErr('Please answer whether you currently live with this person.'); return; }
+    }
+    if (reasonCheck && !reasonCheck.valid && !reasonAck) {
+      setDetailErr('Please review the note above before continuing.');
+      return;
     }
     setStep('review');
   }
@@ -315,6 +352,8 @@ export default function CalloutPage() {
           driver_name: driverName,
           ...(calloutToken ? { callout_token: calloutToken } : { ssn_last4: pin }),
           reason_code: reason,
+          ...(reason === 'family' ? { family_who: familyWho.toLowerCase(), lives_with_family: livesWithFamily === true } : {}),
+          reason_override_ack: reasonAck,
           shift_date: shiftDate || undefined,
           notes: combinedNotes || undefined,
           signature_name: signatureName.trim(),
@@ -323,6 +362,15 @@ export default function CalloutPage() {
       if (res.status === 401) {
         setErrorMsg('Session expired. Please go back and re-enter your PIN.');
         setStep('error');
+        return;
+      }
+      if (res.status === 409) {
+        // Reason validity re-check failed server-side (state drifted, or
+        // the client was modified) -- send them back to details rather
+        // than the generic error screen so they can actually fix it.
+        const d = await res.json().catch(() => ({}));
+        setDetailErr(d.detail ?? 'Please review your reason before continuing.');
+        setStep('details');
         return;
       }
       if (!res.ok) {
@@ -403,11 +451,17 @@ export default function CalloutPage() {
         <Head><title>Call-Out Received — New Day Logistics</title></Head>
         <div className="min-h-screen bg-slate-900 px-4 flex items-center justify-center">
           <div className="w-full max-w-sm text-center space-y-4">
-            <div className="text-6xl">✅</div>
-            <h1 className="text-2xl font-bold text-white">Thank you for submitting your call-out</h1>
-            <p className="text-slate-400 text-sm leading-relaxed">
-              Dispatch has been notified. Be safe and have a great day.
-            </p>
+            <div className="text-6xl">{result.reason_valid ? '✅' : '⚠️'}</div>
+            <h1 className="text-2xl font-bold text-white">
+              {result.reason_valid ? 'Thank you for submitting your call-out' : 'Call-Out Logged — Unauthorized'}
+            </h1>
+            {result.unauthorized_message ? (
+              <p className="text-amber-300 text-sm leading-relaxed font-semibold">{result.unauthorized_message}</p>
+            ) : (
+              <p className="text-slate-400 text-sm leading-relaxed">
+                Dispatch has been notified. Be safe and have a great day.
+              </p>
+            )}
             <p className="text-slate-600 text-xs pt-4">You may close this page.</p>
           </div>
         </div>
@@ -810,9 +864,36 @@ export default function CalloutPage() {
                       ))}
                     </div>
                     <p className="text-slate-500 text-xs mt-2">
-                      Family emergency is only accepted for spouse, child, mother, or father.
+                      Family emergency is only accepted for spouse, child, mother, or father —
+                      and only if you currently live with them.
                     </p>
+                  </div>
 
+                  {familyWho && (
+                    <div>
+                      <label className="block text-slate-300 text-sm font-medium mb-1.5">
+                        Do you currently live with this person? <span className="text-red-400">*</span>
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {[{ v: true, l: 'Yes' }, { v: false, l: 'No' }].map(opt => (
+                          <button
+                            key={String(opt.v)}
+                            type="button"
+                            onClick={() => setLivesWithFamily(opt.v)}
+                            className={`py-3 rounded-xl text-sm font-medium transition-colors ${
+                              livesWithFamily === opt.v
+                                ? 'bg-amber-600 text-white'
+                                : 'bg-slate-800 border border-slate-600 text-slate-300'
+                            }`}
+                          >
+                            {opt.l}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
                     {/* Family member pattern push-back */}
                     {familyPatternMsg && (
                       <div className="mt-3 bg-amber-950/60 border border-amber-600/50 rounded-xl p-3">
@@ -821,6 +902,30 @@ export default function CalloutPage() {
                       </div>
                     )}
                   </div>
+                </div>
+              )}
+
+              {/* Reason validity push-back — added 2026-07-30. "Personal",
+                  non-emergency doctor's appointments, childcare/school
+                  issues, and a family emergency for someone the driver
+                  doesn't live with aren't valid reasons on their own. */}
+              {reasonCheck && !reasonCheck.valid && (
+                <div className="bg-red-950/50 border border-red-600/50 rounded-2xl p-4 space-y-3">
+                  <p className="text-red-300 text-xs font-semibold uppercase tracking-wide">⚑ Not a Valid Reason</p>
+                  <p className="text-red-100 text-sm leading-relaxed">{reasonCheck.message}</p>
+                  <p className="text-red-200/70 text-xs">
+                    Please pick a different reason above, or acknowledge below that this will be
+                    logged as an unauthorized callout and you're still expected to report to work.
+                  </p>
+                  <label className="flex items-start gap-2 text-xs text-red-200">
+                    <input
+                      type="checkbox"
+                      checked={reasonAck}
+                      onChange={e => setReasonAck(e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span>I understand this isn't a valid reason and I'm submitting anyway — this will be logged as an unauthorized callout.</span>
+                  </label>
                 </div>
               )}
 
@@ -868,6 +973,11 @@ export default function CalloutPage() {
 
             return (
               <form onSubmit={handleSign} className="space-y-4">
+                {reasonCheck && !reasonCheck.valid && (
+                  <div className="bg-red-950/50 border border-red-600/50 rounded-2xl p-3 text-red-200 text-xs font-semibold text-center">
+                    ⚠️ This will be logged as an UNAUTHORIZED callout — you are still expected to report to work.
+                  </div>
+                )}
                 {/* NDL Document Header */}
                 <div className="bg-white rounded-2xl p-5 text-slate-900 space-y-4 text-sm">
                   <div className="text-center border-b border-slate-200 pb-3">

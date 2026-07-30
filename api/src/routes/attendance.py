@@ -34,6 +34,8 @@ from api.src.database import (
     DriverRosterEntry,
     CalloutQueue,
     DriverScheduleEntry,
+    get_reminder_state,
+    set_reminder_state,
 )
 from api.src.driver_identity import resolve_roster_entry
 from api.src.authorization import require_any_role
@@ -261,7 +263,63 @@ def _detect_callout_patterns(driver_name: str, today: date, db: Session) -> list
 # ─────────────────────────────────────────────────────────────────────────────
 
 VALID_EVENT_TYPES = {"call_in", "no_show", "late_arrival", "early_departure", "present", "excused"}
-VALID_REASON_CODES = {"sick", "personal", "family", "weather", "transportation", "no_call", "other"}
+VALID_REASON_CODES = {
+    "sick", "personal", "family", "weather", "transportation",
+    "doctor_appointment", "childcare", "no_call", "other",
+}
+
+# Tightened callout reason enforcement -- added 2026-07-30, per explicit HR
+# request. These reason codes are still selectable (so we can catch and
+# respond to them rather than let the driver quietly submit under "other"),
+# but are NOT valid excuses on their own -- the driver sees this pushback
+# message and either picks a genuine reason or acknowledges they're
+# submitting anyway, which gets flagged as an unauthorized callout
+# (AttendanceEvent.reason_valid=False) rather than a quietly-accepted one.
+# "family" is validated separately below (see _family_reason_valid) since
+# its validity depends on which family member + whether the driver
+# currently lives with them, not the reason code alone.
+INVALID_REASON_MESSAGES = {
+    "personal": (
+        "\"Personal\" isn't a valid reason for a callout. Please give us a specific reason — "
+        "sick, a true family emergency, weather, or a transportation issue."
+    ),
+    "doctor_appointment": (
+        "Non-emergency doctor's appointments should be scheduled outside of work hours whenever "
+        "possible. If this isn't a medical emergency, it should be rescheduled for a day you're not working."
+    ),
+    "childcare": (
+        "School closures, snow days, and babysitter issues need a backup childcare plan in place — "
+        "this isn't an approved reason to miss a scheduled shift."
+    ),
+}
+
+# Family emergency is only valid for an immediate family member the driver
+# currently lives with -- spouse, child (son/daughter), mother, or father.
+# Does not extend to extended family or anyone not in the same household.
+VALID_FAMILY_MEMBERS = {"spouse", "child", "mother", "father"}
+
+
+def _family_reason_valid(family_who: Optional[str], lives_with: Optional[bool]) -> bool:
+    if not family_who or family_who.lower() not in VALID_FAMILY_MEMBERS:
+        return False
+    return bool(lives_with)
+
+
+def check_reason_validity(reason_code: str, family_who: Optional[str] = None, lives_with_family: Optional[bool] = None) -> tuple[bool, Optional[str]]:
+    """Returns (is_valid, pushback_message_or_None). Used both by the
+    pre-submit reason-check endpoint (frontend shows this inline the
+    moment a reason is picked) and re-validated server-side on actual
+    submission, so a modified client can't bypass it."""
+    if reason_code in INVALID_REASON_MESSAGES:
+        return False, INVALID_REASON_MESSAGES[reason_code]
+    if reason_code == "family":
+        if not _family_reason_valid(family_who, lives_with_family):
+            return False, (
+                "A family emergency callout only applies to an immediate family member you currently "
+                "live with — spouse, child, mother, or father. It doesn't extend beyond that."
+            )
+        return True, None
+    return True, None
 
 # Wave → scheduled time (Pacific) for 4-hour rule calculation
 WAVE_TIMES: dict[str, tuple[int, int]] = {
@@ -296,6 +354,9 @@ class CalloutRequest(BaseModel):
     ssn_last4: Optional[str] = None          # 4-digit PIN — required unless callout_token is provided
     callout_token: Optional[str] = None      # Signed token from Slack link — alternative to PIN
     reason_code: str
+    family_who: Optional[str] = None         # spouse | child | mother | father -- only when reason_code == "family"
+    lives_with_family: Optional[bool] = None  # does the driver currently live with family_who
+    reason_override_ack: bool = False        # driver was shown the pushback message and chose to submit anyway
     scheduled_wave: Optional[str] = None
     shift_date: Optional[str] = None         # ISO date of the shift being called out for
     notes: Optional[str] = None
@@ -365,6 +426,7 @@ def _event_to_dict(e: AttendanceEvent) -> dict:
         "event_date": e.event_date.isoformat() if e.event_date else None,
         "event_type": e.event_type,
         "reason_code": e.reason_code,
+        "reason_valid": e.reason_valid,
         "call_time": e.call_time.isoformat() if e.call_time else None,
         "scheduled_wave": e.scheduled_wave,
         "hours_before_shift": float(e.hours_before_shift) if e.hours_before_shift is not None else None,
@@ -621,6 +683,8 @@ REASON_LABELS = {
     "family": "Family emergency",
     "weather": "Weather",
     "transportation": "Transportation",
+    "doctor_appointment": "Doctor's Appointment",
+    "childcare": "Childcare / School Issue",
     "no_call": "No call / No show",
     "other": "Other",
 }
@@ -826,6 +890,19 @@ def driver_status(driver_name: str, ssn_last4: str, db: Session = Depends(get_db
     return _build_driver_status_response(roster_entry, db)
 
 
+@router.get("/callout/reason-check")
+def callout_reason_check(reason_code: str, family_who: Optional[str] = None, lives_with_family: Optional[bool] = None):
+    """Public — the callout page calls this the moment a driver picks a
+    reason, so the pushback message (if any) shows immediately rather
+    than only being discovered at final submit. Re-checked server-side
+    in submit_callout() regardless, so this is a UX convenience, not the
+    actual enforcement point."""
+    if reason_code not in VALID_REASON_CODES:
+        raise HTTPException(400, "Invalid reason.")
+    valid, message = check_reason_validity(reason_code, family_who, lives_with_family)
+    return {"valid": valid, "message": message}
+
+
 @router.post("/callout")
 def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
     """
@@ -834,6 +911,15 @@ def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
     """
     if req.reason_code not in VALID_REASON_CODES:
         raise HTTPException(400, "Invalid reason.")
+
+    reason_valid, reason_message = check_reason_validity(req.reason_code, req.family_who, req.lives_with_family)
+    if not reason_valid and not req.reason_override_ack:
+        # Re-validated server-side regardless of what the reason-check
+        # endpoint already told the frontend -- a modified client
+        # shouldn't be able to skip straight past this. 409, not 400: the
+        # request itself is well-formed, it just needs the driver to see
+        # the pushback and explicitly acknowledge before it'll go through.
+        raise HTTPException(status_code=409, detail=reason_message)
 
     roster_entry = db.query(DriverRosterEntry).filter(
         func.lower(DriverRosterEntry.payroll_name) == req.driver_name.lower(),
@@ -906,6 +992,10 @@ def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
         pass
 
     notes_with_flag = req.notes or ""
+    if req.reason_code == "family" and req.family_who:
+        notes_with_flag = f"Family: {req.family_who.title()} | Lives with driver: {'Yes' if req.lives_with_family else 'No'} {notes_with_flag}".strip()
+    if not reason_valid:
+        notes_with_flag = f"[UNAUTHORIZED — driver acknowledged and submitted anyway] {notes_with_flag}".strip()
     if not_scheduled:
         notes_with_flag = f"[NOT ON SCHEDULE FOR {shift_date}] {notes_with_flag}".strip()
 
@@ -915,6 +1005,7 @@ def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
         event_date=shift_date,
         event_type="call_in",
         reason_code=req.reason_code,
+        reason_valid=reason_valid,
         call_time=call_time,
         scheduled_wave=req.scheduled_wave,
         hours_before_shift=Decimal(str(hours_before)) if hours_before is not None else None,
@@ -952,6 +1043,11 @@ def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
         "new_status": updated_summary["status"],
         "next_threshold": updated_summary["next_threshold"],
         "roster_tight": roster_tight,
+        "reason_valid": reason_valid,
+        "unauthorized_message": (
+            "This has been logged as an UNAUTHORIZED callout. You are still expected to report to work."
+            if not reason_valid else None
+        ),
     }
 
 
@@ -1237,7 +1333,9 @@ MGT_CHANNEL = "C0BCYAW7QP3"  # #nday-mgt
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://nday-om.vercel.app")
 REASON_LABELS = {
     "sick": "Sick", "personal": "Personal", "family": "Family Emergency",
-    "weather": "Weather", "transportation": "Transportation", "other": "Other",
+    "weather": "Weather", "transportation": "Transportation",
+    "doctor_appointment": "Doctor's Appointment", "childcare": "Childcare / School Issue",
+    "other": "Other",
 }
 MIN_REPLACEMENT_POOL = 2  # fewer available drivers than this = tight roster
 
@@ -1429,6 +1527,7 @@ def send_morning_callout_digest(shift_date: date, db: Session) -> int:
     for entry in pending:
         event = db.query(AttendanceEvent).filter(AttendanceEvent.id == entry.event_id).first()
         reason = REASON_LABELS.get(event.reason_code, event.reason_code.title()) if event else "—"
+        unauthorized_flag = " ⚠️ *UNAUTHORIZED*" if event and event.reason_valid is False else ""
         pool = json.loads(entry.replacement_pool or "[]")
         wave_str = f" · Wave {entry.wave_time}" if entry.wave_time else ""
         if pool:
@@ -1439,7 +1538,7 @@ def send_morning_callout_digest(shift_date: date, db: Session) -> int:
             repl_str = "Replacement: *None available*"
         review_url = f"{FRONTEND_URL}/admin/callout-review/{entry.event_id}"
         lines.append(
-            f"• <{review_url}|{entry.driver_name}>{wave_str} — {reason} | {repl_str}"
+            f"• <{review_url}|{entry.driver_name}>{wave_str} — {reason}{unauthorized_flag} | {repl_str}"
         )
 
     try:
@@ -1481,6 +1580,91 @@ def send_morning_callout_digest(shift_date: date, db: Session) -> int:
     except Exception as exc:
         logger.warning("Morning callout digest failed: %s", exc)
         return 0
+
+
+# ── Recurring callout summary (9:30 AM - 12:30 PM, every 15 min) ──────────────
+# Added 2026-07-30 per explicit HR request: "the callouts are not flagging
+# the nday-mgt and nday-hr rooms... we need a summary of callouts that
+# happen" sent repeatedly through the morning so it can't be missed and
+# actually reaches HR too, not just dispatch. Separate from (additive to)
+# send_morning_callout_digest() above, which is a one-time 8:30 AM
+# per-callout digest to #nday-mgt only -- this is an always-current
+# rolling summary of the whole day so far, reposted every 15 minutes.
+
+CALLOUT_SUMMARY_ACTIVE = os.getenv("CALLOUT_SUMMARY_ACTIVE", "false").lower() == "true"
+_CALLOUT_SUMMARY_WINDOW_START = (9, 30)    # 9:30 AM Pacific
+_CALLOUT_SUMMARY_WINDOW_END = (12, 30)     # 12:30 PM Pacific -- "roughly when everybody is on the road"
+_CALLOUT_SUMMARY_INTERVAL_MINUTES = 15
+_CALLOUT_SUMMARY_KEY_PREFIX = "callout_recurring_summary_"
+
+
+def send_recurring_callout_summary(db: Session, force: bool = False) -> dict:
+    """Repeating summary of today's callouts, posted to BOTH #nday-mgt and
+    #nday-hr. force=True bypasses the time window and the 15-minute
+    throttle for manual testing/recovery."""
+    if not CALLOUT_SUMMARY_ACTIVE:
+        return {"status": "inactive", "note": "Set CALLOUT_SUMMARY_ACTIVE=true on Render to enable"}
+
+    now = datetime.now(PACIFIC)
+    today = now.date()
+    window_start = now.replace(hour=_CALLOUT_SUMMARY_WINDOW_START[0], minute=_CALLOUT_SUMMARY_WINDOW_START[1], second=0, microsecond=0)
+    window_end = now.replace(hour=_CALLOUT_SUMMARY_WINDOW_END[0], minute=_CALLOUT_SUMMARY_WINDOW_END[1], second=0, microsecond=0)
+
+    if not force and not (window_start <= now <= window_end):
+        return {"status": "outside_window", "date": today.isoformat()}
+
+    state_key = f"{_CALLOUT_SUMMARY_KEY_PREFIX}{today.isoformat()}"
+    state = get_reminder_state(db, state_key)
+    last_sent_at = datetime.fromisoformat(state["last_sent_at"]) if state.get("last_sent_at") else None
+    if not force and last_sent_at and (now - last_sent_at).total_seconds() < _CALLOUT_SUMMARY_INTERVAL_MINUTES * 60:
+        return {"status": "throttled", "date": today.isoformat()}
+
+    events = (
+        db.query(AttendanceEvent)
+        .filter(AttendanceEvent.event_date == today, AttendanceEvent.event_type == "call_in")
+        .order_by(AttendanceEvent.call_time)
+        .all()
+    )
+    if not events:
+        set_reminder_state(db, state_key, {"last_sent_at": now.isoformat()})
+        return {"status": "no_callouts", "date": today.isoformat()}
+
+    lines = []
+    for e in events:
+        reason = REASON_LABELS.get(e.reason_code, (e.reason_code or "").title())
+        flag = " ⚠️ *UNAUTHORIZED*" if e.reason_valid is False else ""
+        lines.append(f"• *{e.driver_name}* — {reason}{flag}")
+
+    unauthorized_count = sum(1 for e in events if e.reason_valid is False)
+    text = (
+        f"📋 *Callout Summary — {now.strftime('%A, %B %-d')}* (as of {now.strftime('%-I:%M %p')} PT)\n"
+        f"{len(events)} callout(s) today"
+        + (f", {unauthorized_count} unauthorized" if unauthorized_count else "")
+        + "\n\n" + "\n".join(lines)
+    )
+
+    client = _slack_client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    from api.src.routes.document_routing import get_role_slack_ids
+    channel_ids = {MGT_CHANNEL} | set(get_role_slack_ids(db, "hr"))
+    sent = 0
+    for cid in channel_ids:
+        try:
+            client.chat_postMessage(channel=cid, text=text)
+            sent += 1
+        except Exception as exc:
+            logger.warning("Recurring callout summary post failed for %s: %s", cid, exc)
+
+    set_reminder_state(db, state_key, {"last_sent_at": now.isoformat()})
+    return {"status": "sent", "date": today.isoformat(), "callouts": len(events), "channels_sent": sent}
+
+
+@router.post("/callout/trigger-summary")
+def trigger_callout_summary(force: bool = True, db: Session = Depends(get_db)):
+    """Manual trigger for testing/recovery — same function the loop calls."""
+    return send_recurring_callout_summary(db, force=force)
 
 
 # ── Queue a callout notification ───────────────────────────────────────────────

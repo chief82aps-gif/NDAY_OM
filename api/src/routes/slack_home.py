@@ -622,11 +622,7 @@ async def debug_publish_home(slack_user_id: str, db: Session = Depends(get_db)) 
     return result
 
 
-@router.post("/republish-all-homes")
-def republish_all_homes(
-    db: Session = Depends(get_db),
-    caller_role: str = Depends(require_any_role("owner", "dispatcher", "ops_manager")),
-) -> dict:
+def run_republish_all_homes(db: Session) -> dict:
     """Force a fresh views.publish for every actively Slack-linked driver —
     added 2026-07-30 after multiple drivers reported being stuck on the
     "Coming Soon" placeholder (_INACTIVE_BLOCKS) despite DRIVER_DM_ACTIVE
@@ -638,7 +634,9 @@ def republish_all_homes(
     still off stays stuck on that placeholder until they happen to
     reopen the tab — most drivers won't think to. This forces the
     refresh proactively instead of waiting on that. Safe to re-run any
-    time a gating flag changes and views need to catch up."""
+    time a gating flag changes and views need to catch up. Shared by the
+    HTTP endpoint below (JWT-gated) and the Dispatch Home Slack button
+    (slack_dispatch_home.py, is_dispatch_staff-gated)."""
     client = _client()
     if not client:
         return {"status": "no_slack_token"}
@@ -660,6 +658,14 @@ def republish_all_homes(
             errors.append(f"{d.payroll_name}: {exc}")
 
     return {"status": "done", "attempted": len(drivers), "published": published, "errors": errors[:10]}
+
+
+@router.post("/republish-all-homes")
+def republish_all_homes(
+    db: Session = Depends(get_db),
+    caller_role: str = Depends(require_any_role("owner", "dispatcher", "ops_manager")),
+) -> dict:
+    return run_republish_all_homes(db)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

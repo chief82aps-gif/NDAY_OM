@@ -235,6 +235,23 @@ def build_dispatch_home_view_blocks(db: Session) -> list:
                 },
                 {
                     "type": "button",
+                    "action_id": "dispatch_republish_all_homes",
+                    "text": {"type": "plain_text", "text": "🔄 Refresh All Driver Homes", "emoji": True},
+                    "confirm": {
+                        "title": {"type": "plain_text", "text": "Refresh every driver's Home tab?"},
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": "Force-republishes the Slack Home tab for every actively linked driver right "
+                                     "now. Use this if drivers report being stuck on a \"Coming Soon\" placeholder "
+                                     "after a flag change — their tab won't refresh on its own until they happen "
+                                     "to reopen it.",
+                        },
+                        "confirm": {"type": "plain_text", "text": "Refresh"},
+                        "deny": {"type": "plain_text", "text": "Cancel"},
+                    },
+                },
+                {
+                    "type": "button",
                     "action_id": "dispatch_add_new_hire_button",
                     "text": {"type": "plain_text", "text": "🆕 Add New Hire", "emoji": True},
                     "style": "primary",
@@ -473,6 +490,58 @@ def _handle_dispatch_rerun_route_assignments(payload: dict, db: Session, backgro
         except Exception as exc:
             logger.warning("Rerun ack DM failed for %s: %s", user_id, exc)
     background_tasks.add_task(_run_rerun_and_report, user_id)
+
+
+def _run_republish_all_homes_and_report(user_id: str) -> None:
+    """Republishing ~100 drivers' Home tabs one views_publish call at a
+    time can take a few seconds -- same ack-fast/background-task pattern
+    as _run_rerun_and_report above, opening its own SessionLocal() since
+    the request-scoped session is gone by the time this runs."""
+    from api.src.database import SessionLocal
+    from api.src.routes.slack_home import run_republish_all_homes
+
+    db = SessionLocal()
+    try:
+        result = run_republish_all_homes(db)
+        summary = (
+            f":white_check_mark: *Refresh All Driver Homes complete* — "
+            f"{result.get('published', 0)}/{result.get('attempted', 0)} republished"
+        )
+        if result.get("errors"):
+            summary += f"\n:warning: {len(result['errors'])} error(s): " + "; ".join(result["errors"][:5])
+    except Exception as exc:
+        logger.exception("Refresh all driver homes background task failed")
+        summary = f":x: Refresh All Driver Homes failed: {exc}"
+    finally:
+        db.close()
+
+    client = _client()
+    if client:
+        try:
+            _dm_driver(client, user_id, summary)
+        except Exception as exc:
+            logger.warning("Refresh-all-homes summary DM failed for %s: %s", user_id, exc)
+        try:
+            client.chat_postMessage(channel=DISPATCH_HOME_CHANNEL_ID, text=summary)
+        except Exception as exc:
+            logger.warning("Refresh-all-homes summary audit-log post failed: %s", exc)
+
+
+def _handle_dispatch_republish_all_homes(payload: dict, db: Session, background_tasks: BackgroundTasks) -> None:
+    user_id = payload.get("user", {}).get("id", "")
+    if not is_dispatch_staff(user_id, db):
+        logger.warning("Non-dispatch user %s attempted dispatch_republish_all_homes", user_id)
+        return
+    client = _client()
+    if client:
+        try:
+            client.chat_postMessage(
+                channel=user_id,
+                text=":arrows_counterclockwise: Refreshing every driver's Home tab — results will post here shortly.",
+            )
+        except Exception as exc:
+            logger.warning("Refresh-all-homes ack DM failed for %s: %s", user_id, exc)
+    background_tasks.add_task(_run_republish_all_homes_and_report, user_id)
 
 
 def _handle_dispatch_republish_showtime(payload: dict, db: Session) -> None:

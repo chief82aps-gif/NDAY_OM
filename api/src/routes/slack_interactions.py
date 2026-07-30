@@ -543,6 +543,10 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
         from api.src.routes.slack_dispatch_home import _handle_dispatch_rerun_route_assignments
         _handle_dispatch_rerun_route_assignments(payload, db, background_tasks)
 
+    elif action_id == "dispatch_republish_all_homes":
+        from api.src.routes.slack_dispatch_home import _handle_dispatch_republish_all_homes
+        _handle_dispatch_republish_all_homes(payload, db, background_tasks)
+
     elif action_id == "dispatch_republish_showtime":
         from api.src.routes.slack_dispatch_home import _handle_dispatch_republish_showtime
         _handle_dispatch_republish_showtime(payload, db)

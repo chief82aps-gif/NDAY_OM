@@ -565,43 +565,6 @@ def ingest_slack(slack_file_id: str, file_url: str, filename: str, db: Session =
     return _store_dvic(content, filename, slack_file_id, db)
 
 
-def _mgt_summary_rows(snapshot_id: int, db: Session) -> list[dict]:
-    """Per-driver name / avg inspection time / instance count / most recent
-    inspection time (the "Naughty List") for one specific snapshot.
-
-    Scoped by snapshot_id, not week — DVIC is a rolling trailing-7-day
-    report re-uploaded daily under the SAME week label (e.g. four separate
-    "2026-W29" snapshots on 07-14/15/16/19), so filtering by week alone
-    would silently sum violation rows across every snapshot that shares
-    that label, wildly over-counting the same real-world instances that
-    reappear in each day's overlapping 7-day window."""
-    violations = db.query(DvicViolation).filter(DvicViolation.snapshot_id == snapshot_id).all()
-    by_driver: dict = defaultdict(list)
-    for v in violations:
-        by_driver[v.transporter_id].append(v)
-
-    rows = []
-    for tid, vrows in by_driver.items():
-        durations = [v.duration_seconds for v in vrows if v.duration_seconds is not None]
-        # "Most current" = the driver's latest inspection by start_time,
-        # falling back to start_date if start_time is missing — lets
-        # management see whether someone's trending better or worse, not
-        # just their flat average.
-        most_recent = max(
-            vrows,
-            key=lambda v: (v.start_time or datetime.min, v.start_date or date.min),
-        )
-        rows.append({
-            "transporter_id": tid,
-            "name": vrows[0].transporter_name or tid,
-            "avg_seconds": round(sum(durations) / len(durations), 1) if durations else None,
-            "instances": len(vrows),
-            "most_recent_seconds": most_recent.duration_seconds,
-        })
-    rows.sort(key=lambda r: r["instances"], reverse=True)
-    return rows
-
-
 def _latest_day_violators(snapshot_id: int, db: Session) -> tuple[Optional[date], list[dict]]:
     """Violators (<90s) on just the single most recent inspection date
     within this snapshot -- added 2026-07-30 so the processed-report
@@ -621,59 +584,50 @@ def _latest_day_violators(snapshot_id: int, db: Session) -> tuple[Optional[date]
 
 
 def post_dvic_naughty_list(snapshot_id: int, db: Session) -> dict:
-    """Build and post the driver-name / avg-time / instance-count 'Naughty
-    List' table to #nday-mgt for one specific snapshot. Shared by the
-    manual /post-mgt-summary endpoint and the automatic post-ingest hook
-    (ops_ingest.py's dvic dispatch) — per explicit 2026-07-20 decision,
-    this is now a daily summary that fires automatically once per real new
-    DVIC upload (driver DMs are a separate, not-yet-built, deliberately
-    deferred future step)."""
+    """Build and post the DVIC 'Naughty List' to #nday-mgt for one
+    specific snapshot — just the names of drivers who did a pre-trip
+    inspection in under 90 seconds on the final (most recent) day of the
+    report. Simplified 2026-07-30: this used to post the full rolling-
+    7-day table (every driver flagged in the whole trailing week), which
+    for a 57-driver week produced a ~3480-char block -- over Slack's
+    3000-char-per-block limit, so chat_postMessage was silently rejecting
+    it (_post() swallows the error) and nothing ever showed up. Per
+    explicit request, this is now just the latest day's violators, which
+    comfortably stays nowhere near that limit regardless of roster size.
+    Shared by the manual /post-mgt-summary endpoint and the automatic
+    post-ingest hook (ops_ingest.py's dvic dispatch)."""
     snap = db.query(DvicSnapshot).filter(DvicSnapshot.id == snapshot_id).first()
     if not snap:
         return {"status": "no_data"}
 
-    rows = _mgt_summary_rows(snap.id, db)
-    if not rows:
+    week_label = _week_label(snap.week)
+    latest_date, latest_violators = _latest_day_violators(snap.id, db)
+    if not latest_date or not latest_violators:
         return {"status": "no_data", "week": snap.week}
 
-    week_label = _week_label(snap.week)
-    lines = [f"{'Driver':<24} {'Instances':>10} {'Avg Time':>10} {'Most Recent':>12}"]
-    for r in rows:
-        avg = f"{r['avg_seconds']:.0f}s" if r["avg_seconds"] is not None else "—"
-        recent = f"{r['most_recent_seconds']}s" if r["most_recent_seconds"] is not None else "—"
-        lines.append(f"{r['name']:<24} {str(r['instances']):>10} {avg:>10} {recent:>12}")
-    table = "```\n" + "\n".join(lines) + "\n```"
-
-    latest_date, latest_violators = _latest_day_violators(snap.id, db)
-    latest_block = None
-    if latest_date and latest_violators:
-        latest_lines = [
-            f"• {v['name']}" + (f" — {v['duration_seconds']}s" if v["duration_seconds"] is not None else "")
-            for v in latest_violators
-        ]
-        latest_block = {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"*Violators on {latest_date.strftime('%A, %B %-d')}* ({len(latest_violators)}):\n" + "\n".join(latest_lines),
-            },
-        }
+    lines = [
+        f"• {v['name']}" + (f" — {v['duration_seconds']}s" if v["duration_seconds"] is not None else "")
+        for v in latest_violators
+    ]
+    date_label = latest_date.strftime("%A, %B %-d")
 
     blocks = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": f"🚨 DVIC Naughty List — {week_label}", "emoji": True},
+            "text": {"type": "plain_text", "text": f"🚨 DVIC Naughty List — {date_label}", "emoji": True},
         },
         {
             "type": "context",
-            "elements": [{"type": "mrkdwn", "text": "Drivers with pre-trip inspections completed in under 90 seconds this week, sorted by instance count."}],
+            "elements": [{"type": "mrkdwn", "text": f"Drivers who completed their pre-trip inspection in under 90 seconds on {date_label}."}],
         },
-        *([latest_block, {"type": "divider"}] if latest_block else []),
-        {"type": "section", "text": {"type": "mrkdwn", "text": table}},
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*{len(latest_violators)} violator(s):*\n" + "\n".join(lines)},
+        },
     ]
-    _post(NDAY_MGT_CHANNEL, f"DVIC Naughty List — {week_label}", blocks=blocks)
+    _post(NDAY_MGT_CHANNEL, f"DVIC Naughty List — {date_label}", blocks=blocks)
 
-    return {"status": "posted", "week": snap.week, "driver_count": len(rows)}
+    return {"status": "posted", "week": snap.week, "date": latest_date.isoformat(), "violator_count": len(latest_violators)}
 
 
 @router.post("/post-mgt-summary")

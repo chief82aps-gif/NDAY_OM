@@ -914,8 +914,9 @@ export default function CalloutPage() {
                   <p className="text-red-300 text-xs font-semibold uppercase tracking-wide">⚑ Not a Valid Reason</p>
                   <p className="text-red-100 text-sm leading-relaxed">{reasonCheck.message}</p>
                   <p className="text-red-200/70 text-xs">
-                    Please pick a different reason above, or acknowledge below that this will be
-                    logged as an unauthorized callout and you're still expected to report to work.
+                    Please pick a different reason above, or acknowledge below that since this
+                    isn't a valid reason, you are expected to report to work — submitting anyway
+                    will log this as an unauthorized callout.
                   </p>
                   <label className="flex items-start gap-2 text-xs text-red-200">
                     <input
@@ -924,7 +925,7 @@ export default function CalloutPage() {
                       onChange={e => setReasonAck(e.target.checked)}
                       className="mt-0.5"
                     />
-                    <span>I understand this isn't a valid reason and I'm submitting anyway — this will be logged as an unauthorized callout.</span>
+                    <span>I understand this isn't a valid reason, that I'm expected to report to work, and that submitting anyway logs this as an unauthorized callout.</span>
                   </label>
                 </div>
               )}
@@ -975,7 +976,7 @@ export default function CalloutPage() {
               <form onSubmit={handleSign} className="space-y-4">
                 {reasonCheck && !reasonCheck.valid && (
                   <div className="bg-red-950/50 border border-red-600/50 rounded-2xl p-3 text-red-200 text-xs font-semibold text-center">
-                    ⚠️ This will be logged as an UNAUTHORIZED callout — you are still expected to report to work.
+                    ⚠️ This is not a valid reason for a callout, so this will be logged as UNAUTHORIZED — you are expected to report to work.
                   </div>
                 )}
                 {/* NDL Document Header */}

@@ -1045,7 +1045,8 @@ def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
         "roster_tight": roster_tight,
         "reason_valid": reason_valid,
         "unauthorized_message": (
-            "This has been logged as an UNAUTHORIZED callout. You are still expected to report to work."
+            "This is not a valid reason for a callout, so this has been logged as UNAUTHORIZED — "
+            "you are expected to report to work."
             if not reason_valid else None
         ),
     }

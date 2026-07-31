@@ -2319,7 +2319,7 @@ def send_day_of_dms(shift_date: date, db: Session, bypass_outstanding_items: boo
     # post_showtime_summary()'s team-room copy (see CLAUDE.md) — if that's
     # still off from the 2026-07-20 incident, this stays off too until
     # explicitly re-enabled.
-    if sent > 0 and TEAM_ROOM_MESSAGES_ACTIVE:
+    if sent > 0 and get_flag("TEAM_ROOM_MESSAGES_ACTIVE"):
         try:
             team_client = _slack_client()
             if team_client:

@@ -933,7 +933,7 @@ def record_acknowledgment(transporter_id: str, week: str, signature_name: str, d
         DvicCounselingRecord.transporter_id == transporter_id
     ).first()
     if (
-        DVIC_TRAINING_VIDEO_ACTIVE
+        get_flag("DVIC_TRAINING_VIDEO_ACTIVE")
         and record_check
         and record_check.stage >= DVIC_VIDEO_GATE_MIN_STAGE
         and record_check.video_watched_at is None
@@ -1052,7 +1052,7 @@ def record_violation_acknowledgment(violation_id: int, signature_name: str, db: 
         }
 
     if (
-        DVIC_TRAINING_VIDEO_ACTIVE
+        get_flag("DVIC_TRAINING_VIDEO_ACTIVE")
         and (violation.action_stage or 0) >= DVIC_VIDEO_GATE_MIN_STAGE
         and violation.video_watched_at is None
     ):

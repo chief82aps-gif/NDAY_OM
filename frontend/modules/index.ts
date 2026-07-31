@@ -1,6 +1,6 @@
 import { assignmentDatabaseModule } from './assignmentDatabase';
 import { adminPanelModule } from './adminPanel';
-import { featureFlagsModule } from './featureFlags';
+import { adminHomeModule } from './adminHome';
 import { attendanceModule } from './attendance';
 import { attendanceReportsModule } from './attendanceReports';
 import { opsIngestModule } from './opsIngest';
@@ -35,7 +35,7 @@ export const dashboardModules: DashboardModule[] = [
   dailyScreenshotAuditModule,
   assignmentDatabaseModule,
   adminPanelModule,
-  featureFlagsModule,
+  adminHomeModule,
   attendanceModule,
   attendanceReportsModule,
   opsIngestModule,

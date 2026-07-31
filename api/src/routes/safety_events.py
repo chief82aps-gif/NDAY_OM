@@ -109,6 +109,17 @@ def _store_safety_events(content: bytes, filename: str, slack_file_id: Optional[
             created += 1
         db.commit()
 
+        # Perfect-day NDAY Points awarding (nday_points.py) -- runs per
+        # distinct report_date actually present in this file, since the
+        # Netradyne export is a rolling window that can span multiple
+        # days. No-ops entirely if NDAY_POINTS_ACTIVE is off.
+        try:
+            from api.src.routes.nday_points import award_perfect_day_points
+            for report_date in {rec.report_date for rec in records if rec.report_date}:
+                award_perfect_day_points(report_date, db)
+        except Exception as exc:
+            logger.warning("Perfect-day points awarding failed: %s", exc)
+
         return {"status": "ingested", "records": len(records), "created": created, "duplicates_skipped": len(records) - created}
     finally:
         try:

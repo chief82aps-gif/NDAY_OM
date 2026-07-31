@@ -340,6 +340,12 @@ def build_dispatch_home_view_blocks(db: Session, dash_user, dash_token: str) -> 
                     "text": {"type": "plain_text", "text": "🐛 Glitch Reports", "emoji": True},
                     "url": _slack_login_url("/glitch-reports", dash_user, dash_token),
                 },
+                {
+                    "type": "button",
+                    "action_id": "dispatch_open_swag_store_admin",
+                    "text": {"type": "plain_text", "text": "🎁 Swag Store", "emoji": True},
+                    "url": _slack_login_url("/swag-store-admin", dash_user, dash_token),
+                },
             ],
         },
         {

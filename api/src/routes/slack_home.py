@@ -401,6 +401,137 @@ def _handle_home_redeem_bonus_submit(payload: dict, db: Session) -> dict:
     return {"response_action": "clear"}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# NDAY Points — reward-only incentive currency, added 2026-07-31. Separate
+# from RescueBonusLedger (dollars) -- this is a points-for-swag redemption,
+# same "identify, don't execute" idiom (HR fulfills manually). See
+# nday_points.py for the full design/context.
+# ─────────────────────────────────────────────────────────────────────────────
+
+NDAY_POINTS_REDEEM_MODAL_CALLBACK_ID = "home_nday_points_redeem_submit"
+
+
+def _nday_points_block(driver: DriverRosterEntry, db: Session) -> Optional[list]:
+    """Driver's NDAY Points balance with a Redeem button, shown only when
+    they have a positive balance."""
+    from api.src.database import NdayPointsLedger
+    ledger = db.query(NdayPointsLedger).filter(NdayPointsLedger.roster_id == driver.id).first()
+    balance = ledger.balance if ledger else 0
+    if balance <= 0:
+        return None
+    return [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": f"⭐ {balance} NDAY Points!", "emoji": True},
+        },
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "Earned for perfect safety days. Redeem for swag any time — tap below."},
+        },
+        {
+            "type": "actions",
+            "elements": [{
+                "type": "button",
+                "action_id": "home_nday_points_redeem_button",
+                "text": {"type": "plain_text", "text": "🎁 Redeem Points", "emoji": True},
+                "style": "primary",
+            }],
+        },
+    ]
+
+
+def _nday_points_redeem_modal(balance: int, catalog_items: list) -> dict:
+    options = [
+        {"text": {"type": "plain_text", "text": f"{item['name']} — {item['point_cost']} pts"}, "value": str(item["id"])}
+        for item in catalog_items
+        if item["point_cost"] <= balance
+    ]
+    if not options:
+        return {
+            "type": "modal",
+            "callback_id": NDAY_POINTS_REDEEM_MODAL_CALLBACK_ID,
+            "title": {"type": "plain_text", "text": "Redeem Points"},
+            "close": {"type": "plain_text", "text": "Close"},
+            "blocks": [{
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"You have *{balance}* points, but nothing in the catalog is within reach yet. Check back soon!",
+                },
+            }],
+        }
+    return {
+        "type": "modal",
+        "callback_id": NDAY_POINTS_REDEEM_MODAL_CALLBACK_ID,
+        "title": {"type": "plain_text", "text": "Redeem Points"},
+        "submit": {"type": "plain_text", "text": "Redeem"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": [
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"You have *{balance}* points. HR will follow up to fulfill your redemption."},
+            },
+            {
+                "type": "input",
+                "block_id": "item_block",
+                "label": {"type": "plain_text", "text": "Choose an item"},
+                "element": {"type": "static_select", "action_id": "item", "options": options},
+            },
+        ],
+    }
+
+
+def _handle_home_nday_points_redeem_button(payload: dict, db: Session) -> None:
+    from api.src.database import NdayPointsLedger
+    from api.src.routes.nday_points import list_catalog
+    user_id = payload.get("user", {}).get("id", "")
+    trigger_id = payload.get("trigger_id")
+    client = _client()
+    if not client or not trigger_id:
+        return
+    driver = _resolve_driver(user_id, db)
+    if not driver:
+        return
+    ledger = db.query(NdayPointsLedger).filter(NdayPointsLedger.roster_id == driver.id).first()
+    balance = ledger.balance if ledger else 0
+    catalog = list_catalog(active_only=True, db=db)["items"]
+    try:
+        client.views_open(trigger_id=trigger_id, view=_nday_points_redeem_modal(balance, catalog))
+    except Exception as exc:
+        logger.warning("views_open failed for nday points redeem modal: %s", exc)
+
+
+def _handle_home_nday_points_redeem_submit(payload: dict, db: Session) -> dict:
+    from api.src.routes.nday_points import do_redeem_catalog_item
+    user_id = payload.get("user", {}).get("id", "")
+    values = payload.get("view", {}).get("state", {}).get("values", {})
+    item_id_raw = values.get("item_block", {}).get("item", {}).get("selected_option", {}).get("value")
+    if not item_id_raw:
+        return {"response_action": "clear"}
+
+    driver = _resolve_driver(user_id, db)
+    if not driver:
+        return {"response_action": "clear"}
+
+    try:
+        request = do_redeem_catalog_item(driver.id, int(item_id_raw), db)
+    except ValueError as exc:
+        return {"response_action": "errors", "errors": {"item_block": str(exc)}}
+
+    client = _client()
+    if client:
+        try:
+            _dm_driver(client, user_id, f"✅ Redeemed: {request.item_name_snapshot}! HR will follow up soon.")
+        except Exception as exc:
+            logger.warning("NDAY Points redeem confirmation DM failed: %s", exc)
+        try:
+            _publish_home(user_id, db)
+        except Exception as exc:
+            logger.warning("Home refresh after points redeem failed: %s", exc)
+
+    return {"response_action": "clear"}
+
+
 def _driver_return_countdown(driver: DriverRosterEntry, db: Session) -> Optional[str]:
     """'Time remaining until expected return', computed fresh each time the
     Home tab is opened/re-rendered — there's no true live-ticking
@@ -449,6 +580,11 @@ def build_home_view_blocks(driver: Optional[DriverRosterEntry], db: Session) -> 
     ledger_block = _bonus_ledger_block(driver, db)
     if ledger_block:
         blocks.extend(ledger_block)
+        blocks.append({"type": "divider"})
+
+    points_block = _nday_points_block(driver, db)
+    if points_block:
+        blocks.extend(points_block)
         blocks.append({"type": "divider"})
 
     bonus = _driver_rescue_bonus_this_week(driver, db)

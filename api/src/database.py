@@ -3865,6 +3865,77 @@ class DailyQualityRecord(Base):
     dsb_count = Column(Integer)                              # raw count, not a normalized score
 
 
+class NdayPointsLedger(Base):
+    """Persistent per-driver "NDAY Points" reward balance -- added
+    2026-07-31. Deliberately named apart from attendance.py's own
+    "points" (HRM-023.1 violation points, where more is worse and the
+    whole system is punitive) -- this is a positive, reward-only
+    currency; the two must never be confused in code or copy."""
+    __tablename__ = "nday_points_ledger"
+
+    id = Column(Integer, primary_key=True)
+    roster_id = Column(Integer, ForeignKey("driver_roster.id"), unique=True, nullable=False)
+    balance = Column(Integer, default=0, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class NdayPointsTransaction(Base):
+    """Append-only audit trail for every NDAY Points balance change --
+    plain-language description so a driver understands exactly what
+    moved their balance ("+10 pts -- Perfect Safety Day (2026-07-29)").
+    related_date + reason together are the dedup key for auto-awarded
+    transactions (e.g. perfect-day awarding is idempotent per driver per
+    date) -- see nday_points.py."""
+    __tablename__ = "nday_points_transactions"
+
+    id = Column(Integer, primary_key=True)
+    roster_id = Column(Integer, ForeignKey("driver_roster.id"), nullable=False, index=True)
+    points = Column(Integer, nullable=False)          # positive = earned, negative = redeemed/deducted
+    reason = Column(String(50), nullable=False)       # e.g. "perfect_day", "catalog_redemption", "manual_award"
+    description = Column(String(255), nullable=False)  # plain-language, shown to the driver
+    related_date = Column(Date)                        # the date this transaction pertains to, if any
+    created_at = Column(DateTime, default=datetime.utcnow)
+    created_by = Column(String(100))                   # "system" for auto-awards, a name for manual ones
+
+
+class SwagCatalogItem(Base):
+    """HR/dispatch-curated redemption catalog item -- added 2026-07-31.
+    Point cost, not dollars; no real inventory/fulfillment tracking
+    beyond a boolean "still offered" flag (identify, don't execute, same
+    as every other redemption flow in this app)."""
+    __tablename__ = "swag_catalog_items"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(150), nullable=False)
+    description = Column(String(500))
+    point_cost = Column(Integer, nullable=False)
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    created_by = Column(String(100))
+
+
+class SwagRedemptionRequest(Base):
+    """A driver's request to redeem points -- either a catalog item
+    (catalog_item_id set) or a cash-out (is_cash_out=True, catalog_item_id
+    null). Cash-out is a real, working code path but gated by
+    NDAY_POINTS_CASH_OUT_ACTIVE (default false) pending legal review of
+    converting a reward-points balance to cash -- see nday_points.py.
+    Fulfillment is manual (HR marks it done), same idiom as
+    RescueBonusRedemption/Okami/etc."""
+    __tablename__ = "swag_redemption_requests"
+
+    id = Column(Integer, primary_key=True)
+    roster_id = Column(Integer, ForeignKey("driver_roster.id"), nullable=False, index=True)
+    catalog_item_id = Column(Integer, ForeignKey("swag_catalog_items.id"), nullable=True)
+    item_name_snapshot = Column(String(150))   # in case the catalog item is later edited/removed
+    is_cash_out = Column(Boolean, default=False, nullable=False)
+    point_cost = Column(Integer, nullable=False)
+    requested_at = Column(DateTime, default=datetime.utcnow)
+    fulfilled_at = Column(DateTime)
+    fulfilled_by = Column(String(100))
+    status = Column(String(20), default="pending")   # "pending" | "fulfilled" | "cancelled"
+
+
 def get_db():
     """Get database session"""
     db = SessionLocal()

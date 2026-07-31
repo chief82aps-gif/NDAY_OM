@@ -66,6 +66,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from api.src.database import (
@@ -218,6 +219,59 @@ def compute_driver_scores(db: Session) -> list[dict]:
 
     results.sort(key=lambda r: (r["overall"] is None, -(r["overall"] or 0)))
     return results
+
+
+def get_driver_metric_highlights(driver_name: str, db: Session, top_n: int = 2) -> dict:
+    """Best- and worst-scoring safety/quality sub-metrics for one driver,
+    for driver-facing coaching content (the morning assignment DM) --
+    added 2026-07-31 per explicit request to surface both "doing great"
+    and "room to grow" in the same place, not just weaknesses. Returns
+    {"strengths": [...], "focus_areas": [...]}, each a list of
+    {"label", "score"} dicts, newest snapshot only. Reuses quality.py's
+    _METRIC_LABELS so the same metric names show consistently everywhere
+    they're surfaced (this DM, the Wave Lead Team Focus page, etc.).
+
+    Caps at len(scored)//2 per side so a driver with very few scored
+    metrics never sees the same metric labeled both a strength and a
+    focus area."""
+    latest_snap = (
+        db.query(QualityMetricSnapshot)
+        .order_by(QualityMetricSnapshot.week.desc())
+        .first()
+    )
+    if not latest_snap:
+        return {"strengths": [], "focus_areas": []}
+
+    row = (
+        db.query(QualityMetricDriver)
+        .filter(
+            QualityMetricDriver.snapshot_id == latest_snap.id,
+            func.lower(QualityMetricDriver.driver_name) == driver_name.lower(),
+        )
+        .first()
+    )
+    if not row:
+        return {"strengths": [], "focus_areas": []}
+
+    from api.src.routes.quality import _METRIC_LABELS
+
+    all_metrics = {**SAFETY_WEIGHTS, **QUALITY_WEIGHTS}
+    scored = [
+        (label, float(getattr(row, attr)))
+        for attr, label in _METRIC_LABELS.items()
+        if attr in all_metrics and getattr(row, attr, None) is not None
+    ]
+    if not scored:
+        return {"strengths": [], "focus_areas": []}
+
+    scored.sort(key=lambda m: m[1], reverse=True)
+    n = min(top_n, len(scored) // 2)
+    if n == 0:
+        return {"strengths": [], "focus_areas": []}
+
+    strengths = [{"label": label, "score": round(score, 1)} for label, score in scored[:n]]
+    focus_areas = [{"label": label, "score": round(score, 1)} for label, score in reversed(scored[-n:])]
+    return {"strengths": strengths, "focus_areas": focus_areas}
 
 
 @router.get("/scores")

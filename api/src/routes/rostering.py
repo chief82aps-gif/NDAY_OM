@@ -96,6 +96,16 @@ _ACTIVE = os.getenv("ROSTERING_ACTIVE", "false").lower() == "true"
 # Set DRIVER_DM_ACTIVE=true on Render to enable.
 _DM_ACTIVE = os.getenv("DRIVER_DM_ACTIVE", "false").lower() == "true"
 
+# Coaching highlights (strengths + focus areas) in the morning assignment
+# DM -- added 2026-07-31 per explicit request ("is the morning DM
+# providing hints to where drivers can improve? ... we need to provide
+# the points where they are doing great"). Separate flag from
+# DRIVER_DM_ACTIVE so this specific content can be tested/rolled back
+# independently of the DM itself. Framing must stay positive per the
+# established "coaching DMs must never read negative" rule -- see
+# _coaching_highlights_block() below.
+DM_COACHING_HIGHLIGHTS_ACTIVE = os.getenv("DM_COACHING_HIGHLIGHTS_ACTIVE", "false").lower() == "true"
+
 # Standing rank for quality tiers, sourced from driver_scoring.py's blended
 # 20/40/40 overall tier (Platinum down through Sawdust) -- fixed 2026-07-30,
 # same ranking-unification already applied to route_assignment.py's
@@ -1957,6 +1967,35 @@ def _resolve_wave_lead_for_driver(a: DailyRouteAssignment, shift_date: date, db:
     return wave_lead_name, wave_lead_slack_id
 
 
+def _coaching_highlights_block(driver_name: str, db: Session) -> list:
+    """Small Block Kit section for the morning DM: 1-2 metrics the driver
+    is excelling at, alongside 1-2 to focus on -- added 2026-07-31 per
+    explicit request. Framing must stay positive throughout (per the
+    established "coaching DMs must never read negative" rule) -- focus
+    areas are "room to grow," never "weakness"/failure language. Returns
+    [] if there's no quality data for this driver yet (nothing to show)."""
+    from api.src.routes.driver_scoring import get_driver_metric_highlights
+
+    highlights = get_driver_metric_highlights(driver_name, db)
+    strengths = highlights["strengths"]
+    focus_areas = highlights["focus_areas"]
+    if not strengths and not focus_areas:
+        return []
+
+    lines = []
+    if strengths:
+        labels = ", ".join(s["label"] for s in strengths)
+        lines.append(f"🌟 *Doing great on:* {labels}")
+    if focus_areas:
+        labels = ", ".join(f["label"] for f in focus_areas)
+        lines.append(f"🎯 *Room to grow:* {labels}")
+
+    return [{
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": "\n".join(lines)},
+    }]
+
+
 def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str, wave_lead_slack_id: Optional[str] = None, db: Optional[Session] = None) -> tuple[str, list]:
     """Build the (fallback_text, blocks) for one driver's day-of assignment
     DM. Shared by send_day_of_dms() (the real, gated send) and the
@@ -2083,6 +2122,10 @@ def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str
         from api.src.routes.sentiment_survey import get_driver_dm_hint_block
         hint_blocks = get_driver_dm_hint_block(a.roster_id, a.driver_name, a.assignment_date, db) or []
 
+    coaching_blocks: list = []
+    if db is not None and DM_COACHING_HIGHLIGHTS_ACTIVE:
+        coaching_blocks = _coaching_highlights_block(a.driver_name, db)
+
     blocks = [
         {
             "type": "header",
@@ -2104,6 +2147,7 @@ def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str
             "fields": fields,
         },
         *hint_blocks,
+        *coaching_blocks,
         {"type": "divider"},
         {
             "type": "section",
@@ -2172,8 +2216,9 @@ def send_day_of_dms(shift_date: date, db: Session, bypass_outstanding_items: boo
     Queries DailyRouteAssignment for shift_date where dm_sent=False.
     Each DM is Block Kit with route, van, staging, wave, showtime, expected
     return, wave lead, ACE Eligibility (static "TBD" until that module
-    exists), and the arrival confirmation button. Full content spec/
-    rationale: Governance/DRIVER_DM_CONTENT_RULES.md.
+    exists), coaching highlights (strengths + focus areas, gated by
+    DM_COACHING_HIGHLIGHTS_ACTIVE), and the arrival confirmation button.
+    Full content spec/rationale: Governance/DRIVER_DM_CONTENT_RULES.md.
 
     Marks dm_sent=True on each record so daily_notify.send_all_dms() won't double-send.
     Gated by DRIVER_DM_ACTIVE=true (independent of ROSTERING_ACTIVE, which

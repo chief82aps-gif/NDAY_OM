@@ -3810,6 +3810,26 @@ class RouteBandDefinition(Base):
     distinct_routes_used = Column(Integer)   # how many distinct route numbers informed this calibration
 
 
+class AppGlitchReport(Base):
+    """A driver/dispatch/HR-submitted bug report from the "Report an App
+    Glitch" button on every Slack Home tab — added 2026-07-31. Distinct
+    from the generic quick-report modal (injury/incident) in slack_home.py,
+    which only DMs recipients and doesn't persist anywhere -- this one is
+    meant to be an actionable, trackable list (open/resolved), not just a
+    Slack message that scrolls away."""
+    __tablename__ = "app_glitch_reports"
+
+    id = Column(Integer, primary_key=True)
+    reporter_name = Column(String(150))          # roster payroll_name if resolvable, else Slack display name
+    reporter_slack_id = Column(String(50))
+    source_page = Column(String(50))              # "driver_home" | "dispatch_home" | "hr_home"
+    description = Column(Text, nullable=False)
+    status = Column(String(20), default="open")   # "open" | "resolved"
+    reported_at = Column(DateTime, default=datetime.utcnow)
+    resolved_at = Column(DateTime)
+    resolved_by = Column(String(100))
+
+
 def get_db():
     """Get database session"""
     db = SessionLocal()

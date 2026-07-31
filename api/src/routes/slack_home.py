@@ -552,6 +552,11 @@ def build_home_view_blocks(driver: Optional[DriverRosterEntry], db: Session) -> 
                 "action_id": "home_rto_button",
                 "text": {"type": "plain_text", "text": "🗓️ Request Time Off", "emoji": True},
             },
+            {
+                "type": "button",
+                "action_id": "home_report_glitch",
+                "text": {"type": "plain_text", "text": "🐛 Report an App Glitch", "emoji": True},
+            },
         ],
     })
 
@@ -843,6 +848,87 @@ def _handle_home_report_submit(payload: dict, db: Session) -> dict:
             _dm_driver(client, user_id, f"✅ Your {report_type} report was submitted. A manager will follow up.")
         except Exception as exc:
             logger.warning("Report confirmation DM failed: %s", exc)
+
+    return {"response_action": "clear"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# "Report an App Glitch" — added 2026-07-31, on every Slack Home tab
+# (driver, dispatch, HR). Distinct from the generic injury/incident
+# quick-report above: this one persists to a real tracked list
+# (glitch_reports.py's AppGlitchReport) and DMs the owner role directly,
+# per explicit request for "an actionable list that feeds you directly
+# as we develop this system" — not just a Slack message that scrolls away.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_GLITCH_SOURCE_BY_ACTION = {
+    "home_report_glitch": "driver_home",
+    "dispatch_report_glitch": "dispatch_home",
+    "hr_report_glitch": "hr_home",
+}
+
+
+def _glitch_report_modal(source_page: str) -> dict:
+    return {
+        "type": "modal",
+        "callback_id": "home_glitch_report_submit",
+        "private_metadata": source_page,
+        "title": {"type": "plain_text", "text": "Report an App Glitch"},
+        "submit": {"type": "plain_text", "text": "Submit"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": [
+            {
+                "type": "input",
+                "block_id": "description_block",
+                "label": {
+                    "type": "plain_text",
+                    "text": "What's broken? Include what page you were on and what you tapped, if you can.",
+                },
+                "element": {"type": "plain_text_input", "action_id": "description", "multiline": True},
+            },
+            {
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": "This goes straight onto the tracked glitch list — thanks for flagging it!"}],
+            },
+        ],
+    }
+
+
+def _handle_glitch_report_button(payload: dict, db: Session, action_id: str) -> None:
+    source_page = _GLITCH_SOURCE_BY_ACTION.get(action_id, "driver_home")
+    trigger_id = payload.get("trigger_id")
+    client = _client()
+    if not client or not trigger_id:
+        return
+    try:
+        client.views_open(trigger_id=trigger_id, view=_glitch_report_modal(source_page))
+    except Exception as exc:
+        logger.warning("views_open failed for glitch report modal: %s", exc)
+
+
+def _handle_glitch_report_submit(payload: dict, db: Session) -> dict:
+    view = payload.get("view", {})
+    source_page = view.get("private_metadata") or "driver_home"
+    user_id = payload.get("user", {}).get("id", "")
+    values = view.get("state", {}).get("values", {})
+    description = (values.get("description_block", {}).get("description", {}).get("value") or "").strip()
+    if not description:
+        return {"response_action": "clear"}
+
+    driver = _resolve_driver(user_id, db)
+    reporter_name = driver.payroll_name if driver else (
+        payload.get("user", {}).get("username") or payload.get("user", {}).get("name") or user_id
+    )
+
+    from api.src.routes.glitch_reports import submit_glitch_report
+    submit_glitch_report(reporter_name, user_id, source_page, description, db)
+
+    client = _client()
+    if client:
+        try:
+            _dm_driver(client, user_id, "✅ Thanks — your glitch report was logged.")
+        except Exception as exc:
+            logger.warning("Glitch report confirmation DM failed: %s", exc)
 
     return {"response_action": "clear"}
 

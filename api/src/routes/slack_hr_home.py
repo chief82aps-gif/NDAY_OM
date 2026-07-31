@@ -98,6 +98,11 @@ def build_hr_home_view_blocks(db: Session, dash_user, dash_token: str) -> list:
                     "action_id": "hr_home_send_sentiment_survey_button",
                     "text": {"type": "plain_text", "text": "🗣️ Send Sentiment Survey", "emoji": True},
                 },
+                {
+                    "type": "button",
+                    "action_id": "hr_report_glitch",
+                    "text": {"type": "plain_text", "text": "🐛 Report an App Glitch", "emoji": True},
+                },
             ],
         },
         {"type": "divider"},

@@ -334,6 +334,12 @@ def build_dispatch_home_view_blocks(db: Session, dash_user, dash_token: str) -> 
                     "text": {"type": "plain_text", "text": "📊 Wave Team Focus", "emoji": True},
                     "url": _slack_login_url("/wave-lead-focus?half=front", dash_user, dash_token),
                 },
+                {
+                    "type": "button",
+                    "action_id": "dispatch_open_glitch_reports",
+                    "text": {"type": "plain_text", "text": "🐛 Glitch Reports", "emoji": True},
+                    "url": _slack_login_url("/glitch-reports", dash_user, dash_token),
+                },
             ],
         },
         {
@@ -349,6 +355,16 @@ def build_dispatch_home_view_blocks(db: Session, dash_user, dash_token: str) -> 
                     "type": "button",
                     "action_id": "hr_home_send_sentiment_survey_button",
                     "text": {"type": "plain_text", "text": "🗣️ Send Sentiment Survey", "emoji": True},
+                },
+            ],
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "action_id": "dispatch_report_glitch",
+                    "text": {"type": "plain_text", "text": "🐛 Report an App Glitch", "emoji": True},
                 },
             ],
         },

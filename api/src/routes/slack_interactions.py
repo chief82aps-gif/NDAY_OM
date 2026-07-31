@@ -468,6 +468,9 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
         if callback_id == "hr_home_send_sentiment_survey_submit":
             from api.src.routes.slack_hr_home import _handle_hr_home_send_sentiment_survey_submit
             return _handle_hr_home_send_sentiment_survey_submit(payload, db, background_tasks)
+        if callback_id == "home_glitch_report_submit":
+            from api.src.routes.slack_home import _handle_glitch_report_submit
+            return _handle_glitch_report_submit(payload, db)
         return {"ok": True}
 
     action_id = (payload.get("actions") or [{}])[0].get("action_id", "")
@@ -526,6 +529,10 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
     elif action_id == "home_redeem_bonus_button":
         from api.src.routes.slack_home import _handle_home_redeem_bonus_button
         _handle_home_redeem_bonus_button(payload, db)
+
+    elif action_id in ("home_report_glitch", "dispatch_report_glitch", "hr_report_glitch"):
+        from api.src.routes.slack_home import _handle_glitch_report_button
+        _handle_glitch_report_button(payload, db, action_id)
 
     elif action_id == "dispatch_remove_terminated_button":
         from api.src.routes.slack_dispatch_home import _handle_dispatch_remove_terminated_button

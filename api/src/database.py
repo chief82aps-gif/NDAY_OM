@@ -2353,6 +2353,24 @@ def ensure_dvic_violation_instance_columns():
         pass  # Index already exists
 
 
+def ensure_dvic_escalation_columns():
+    """Add escalation_tier/dispatch_pin_code to dvic_violations — added
+    2026-07-31 for the weekly-frequency (3-in-7-days) escalation tier.
+    See DvicViolation's column comments and dvic.py's _action_new_violations()."""
+    for col, coltype in (
+        ("escalation_tier", "VARCHAR(30)"),
+        ("dispatch_pin_code", "VARCHAR(10)"),
+    ):
+        try:
+            with engine.begin() as conn:
+                if DATABASE_URL.startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE dvic_violations ADD COLUMN {col} TEXT"))
+                else:
+                    conn.execute(text(f"ALTER TABLE dvic_violations ADD COLUMN IF NOT EXISTS {col} {coltype}"))
+        except Exception:
+            pass  # Column already exists
+
+
 def ensure_eod_crash_columns():
     """Add crash_occurred/crash_report_id to eod_survey_responses — added
     2026-07-22, splitting the crash question out from the generic
@@ -2758,6 +2776,19 @@ class DvicViolation(Base):
     video_started_at = Column(DateTime, nullable=True)
     manager_signature_name = Column(String(150), nullable=True)
     manager_signature_at = Column(DateTime, nullable=True)
+
+    # Weekly-frequency escalation — added 2026-07-31. Orthogonal to
+    # action_stage (which only ever tracks "first ever" vs "every
+    # subsequent"): this flags the SPECIFIC violation that pushed a
+    # driver to 3+ violations within a rolling 7-day window. One-time,
+    # per-occurrence trigger, not a sticky ladder -- a later single
+    # violation with no recent cluster goes back to normal Stage 2.
+    # dispatch_pin_code is a per-incident code dispatch reveals to the
+    # driver only after an actual conversation happens; entering it is
+    # the only way to clear this specific violation (no self-service
+    # Acknowledge button shown for these).
+    escalation_tier = Column(String(30), nullable=True)   # e.g. "weekly_frequency"
+    dispatch_pin_code = Column(String(10), nullable=True)
 
     snapshot = relationship("DvicSnapshot", back_populates="violations")
 

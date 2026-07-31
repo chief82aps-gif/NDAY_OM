@@ -474,6 +474,9 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
         if callback_id == "home_nday_points_redeem_submit":
             from api.src.routes.slack_home import _handle_home_nday_points_redeem_submit
             return _handle_home_nday_points_redeem_submit(payload, db)
+        if callback_id == "dvic_pin_submit":
+            from api.src.routes.dvic import _handle_dvic_pin_submit
+            return _handle_dvic_pin_submit(payload, db)
         return {"ok": True}
 
     action_id = (payload.get("actions") or [{}])[0].get("action_id", "")
@@ -504,6 +507,10 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
 
     elif action_id == "dvic_ack":
         _handle_dvic_ack(payload, db)
+
+    elif action_id == "dvic_pin_button":
+        from api.src.routes.dvic import _handle_dvic_pin_button
+        _handle_dvic_pin_button(payload, db)
 
     elif action_id == "safety_event_confirm":
         from api.src.routes.safety_events import _handle_safety_event_confirm

@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import re
 import time
 from collections import defaultdict
@@ -75,6 +76,43 @@ DVIC_TRAINING_VIDEO_STATE_KEY = "dvic_training_video"
 # fires immediately if someone scrubs straight to the end). Update this
 # to match the real video's length once uploaded.
 DVIC_VIDEO_MIN_WATCH_SECONDS = int(os.getenv("DVIC_VIDEO_MIN_WATCH_SECONDS", "360"))
+
+# Weekly-frequency escalation — added 2026-07-31, explicit request. A
+# THIRD dimension alongside action_stage's "first ever vs. every
+# subsequent": the 3rd violation within a rolling 7-day window (not
+# calendar week) gets a sterner message and drops the self-service
+# Acknowledge/video button entirely -- clearing it requires a
+# dispatch-supplied code, so a real face-to-face conversation has to
+# happen first. One-time, per-occurrence trigger: only the violation
+# that actually crosses the 3-in-7-days line gets this treatment; a
+# later isolated violation (no recent cluster) goes back to normal
+# Stage 2, since the rolling window naturally re-evaluates each time.
+WEEKLY_FREQUENCY_THRESHOLD = 3
+WEEKLY_FREQUENCY_WINDOW_DAYS = 7
+
+
+def _crosses_weekly_frequency_threshold(violation: "DvicViolation", db: Session) -> bool:
+    """True if this violation is the one that pushes the driver's count
+    of actioned violations within the trailing WEEKLY_FREQUENCY_WINDOW_DAYS
+    (inclusive, ending at this violation's own start_time) to
+    WEEKLY_FREQUENCY_THRESHOLD or more. Counts already-actioned rows
+    (deduped by definition, since actioned_at is only ever set once per
+    real violation) plus this one."""
+    if not violation.start_time:
+        return False
+    from datetime import timedelta
+    window_start = violation.start_time - timedelta(days=WEEKLY_FREQUENCY_WINDOW_DAYS - 1)
+    prior_count = (
+        db.query(DvicViolation)
+        .filter(
+            DvicViolation.transporter_id == violation.transporter_id,
+            DvicViolation.actioned_at.isnot(None),
+            DvicViolation.start_time >= window_start,
+            DvicViolation.start_time <= violation.start_time,
+        )
+        .count()
+    )
+    return (prior_count + 1) >= WEEKLY_FREQUENCY_THRESHOLD
 
 
 def _issue_dvic_video_token(violation_id: int) -> str:
@@ -186,6 +224,18 @@ def _counseling_message(stage: int, name: str, violation: "DvicViolation") -> st
     date_str = violation.start_date.strftime("%A, %B %-d") if violation.start_date else "recently"
     duration = violation.duration_seconds
 
+    if violation.escalation_tier == "weekly_frequency":
+        return (
+            f":rotating_light: {first}, this is your *{WEEKLY_FREQUENCY_THRESHOLD}rd* pre-trip inspection under "
+            f"90 seconds in the last {WEEKLY_FREQUENCY_WINDOW_DAYS} days — this one was *{duration} seconds* "
+            f"on {date_str}.\n\n"
+            "Genuine question: do you understand what 90 seconds actually is? It's the minimum time it takes to "
+            "walk around your van and check tires, mirrors, lights, and the cargo door before you're moving "
+            "thousands of pounds down the road at highway speed.\n\n"
+            "This one doesn't clear with a tap. You need to have a direct conversation with dispatch first — "
+            "they'll give you a code once you've talked, and you'll enter it below to clear this."
+        )
+
     if stage == 1:
         return (
             f":wave: Hey {first}, this is Dispatch/Safety checking in — not a write-up, just us looking out for you.\n\n"
@@ -214,6 +264,22 @@ def _counseling_message(stage: int, name: str, violation: "DvicViolation") -> st
 def _dm_blocks(violation: "DvicViolation", stage: int, name: str) -> list:
     text = _counseling_message(stage, name, violation)
     value = json.dumps({"violation_id": violation.id})
+
+    if violation.escalation_tier == "weekly_frequency":
+        # No Acknowledge/video button at all -- clearing this one requires
+        # a code only dispatch can give the driver, after they've actually
+        # talked. See _handle_dvic_pin_button/_handle_dvic_pin_submit.
+        actions = [{
+            "type": "button",
+            "text": {"type": "plain_text", "text": "🔢  Enter Code From Dispatch", "emoji": True},
+            "style": "danger",
+            "action_id": "dvic_pin_button",
+            "value": value,
+        }]
+        return [
+            {"type": "section", "text": {"type": "mrkdwn", "text": text}},
+            {"type": "actions", "elements": actions},
+        ]
 
     needs_video = get_flag("DVIC_TRAINING_VIDEO_ACTIVE") and stage >= DVIC_VIDEO_GATE_MIN_STAGE and not violation.video_watched_at
     if needs_video:
@@ -248,6 +314,37 @@ def _dm_blocks(violation: "DvicViolation", stage: int, name: str) -> list:
             "elements": actions,
         },
     ]
+
+
+def _notify_dispatch_of_escalation(violation: "DvicViolation", name: str, db: Session) -> None:
+    """Tells #nday-mgt the code for a weekly-frequency escalation --
+    explicit instruction not to hand it over until the conversation has
+    actually happened, since the whole point is forcing that
+    conversation before the violation can clear."""
+    date_str = violation.start_date.strftime("%A, %B %-d") if violation.start_date else "recently"
+    _post(
+        NDAY_MGT_CHANNEL,
+        f"DVIC weekly-frequency escalation — {name}",
+        blocks=[
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": "🔢 DVIC Escalation — Code Required", "emoji": True},
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"*{name}* just hit their {WEEKLY_FREQUENCY_THRESHOLD}rd under-90-second pre-trip in "
+                        f"{WEEKLY_FREQUENCY_WINDOW_DAYS} days (this one {violation.duration_seconds}s on {date_str}).\n\n"
+                        f"Their code is *{violation.dispatch_pin_code}*.\n\n"
+                        "⚠️ *Have the conversation first.* Only give them the code once you've actually talked "
+                        "to them about it — that's the entire point of this step."
+                    ),
+                },
+            },
+        ],
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -323,6 +420,13 @@ def _action_new_violations(week: str, db: Session, only_tid: Optional[str] = Non
         v.action_stage = stage
         v.ack_status = "pending"
 
+        # Weekly-frequency escalation check -- only possible once a driver
+        # is already past their first-ever violation (stage 1 can never be
+        # a 3rd-in-7-days by definition).
+        if stage == 2 and _crosses_weekly_frequency_threshold(v, db):
+            v.escalation_tier = "weekly_frequency"
+            v.dispatch_pin_code = f"{random.randint(1000, 9999)}"
+
         roster = _find_roster_entry(name, db)
         if not roster or not roster.slack_member_id:
             db.commit()
@@ -338,9 +442,13 @@ def _action_new_violations(week: str, db: Session, only_tid: Optional[str] = Non
             sent_count += 1
         db.commit()
 
+        if v.escalation_tier == "weekly_frequency":
+            _notify_dispatch_of_escalation(v, name, db)
+
         results.append({
             "driver": name, "violation_id": v.id,
             "status": "sent" if ok else "failed", "stage": stage,
+            "escalation_tier": v.escalation_tier,
         })
 
     if sent_count > 0:
@@ -1124,6 +1232,127 @@ def refresh_dvic_violation_ack_summary(db: Session) -> dict:
     except Exception as exc:
         logger.warning("DVIC violation ack summary post failed: %s", exc)
         return {"status": "error", "detail": str(exc)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Weekly-frequency escalation — dispatch-code entry (2026-07-31). Replaces
+# the normal Acknowledge/video button entirely for these violations; see
+# _dm_blocks()/_notify_dispatch_of_escalation() above.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _dvic_pin_modal(violation_id: int) -> dict:
+    return {
+        "type": "modal",
+        "callback_id": "dvic_pin_submit",
+        "private_metadata": json.dumps({"violation_id": violation_id}),
+        "title": {"type": "plain_text", "text": "Enter Code"},
+        "submit": {"type": "plain_text", "text": "Submit"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": [
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": "Enter the code dispatch gave you *after* your conversation."},
+            },
+            {
+                "type": "input",
+                "block_id": "code_block",
+                "label": {"type": "plain_text", "text": "Code"},
+                "element": {"type": "plain_text_input", "action_id": "code"},
+            },
+        ],
+    }
+
+
+def _handle_dvic_pin_button(payload: dict, db: Session) -> None:
+    trigger_id = payload.get("trigger_id")
+    client = _client()
+    if not client or not trigger_id:
+        return
+    action = next((a for a in payload.get("actions", []) if a.get("action_id") == "dvic_pin_button"), None)
+    if not action:
+        return
+    try:
+        violation_id = json.loads(action.get("value") or "{}").get("violation_id")
+    except Exception:
+        return
+    if not violation_id:
+        return
+    try:
+        client.views_open(trigger_id=trigger_id, view=_dvic_pin_modal(violation_id))
+    except Exception as exc:
+        logger.warning("views_open failed for dvic pin modal: %s", exc)
+
+
+def record_violation_pin_verification(violation_id: int, code: str, db: Session) -> dict:
+    """Verifies a dispatch-supplied code against DvicViolation.dispatch_pin_code
+    and, if correct, clears the violation the same way a normal
+    acknowledgment would -- mirrors record_violation_acknowledgment()'s shape."""
+    violation = db.query(DvicViolation).filter(DvicViolation.id == violation_id).first()
+    if not violation:
+        return {"status": "not_found"}
+    if violation.ack_status == "acknowledged":
+        return {
+            "status": "already_acknowledged",
+            "transporter_name": violation.transporter_name,
+            "acknowledged_at": violation.acknowledged_at.isoformat() if violation.acknowledged_at else None,
+        }
+    if not violation.dispatch_pin_code or (code or "").strip() != violation.dispatch_pin_code:
+        return {"status": "incorrect_code"}
+
+    now = datetime.utcnow()
+    violation.ack_status = "acknowledged"
+    violation.acknowledged_at = now
+    violation.ack_signature_name = "Verified via dispatch code"
+    db.commit()
+
+    refresh_dvic_violation_ack_summary(db)
+
+    return {
+        "status": "acknowledged",
+        "violation_id": violation_id,
+        "transporter_name": violation.transporter_name,
+        "acknowledged_at": now.isoformat(),
+    }
+
+
+def _handle_dvic_pin_submit(payload: dict, db: Session) -> dict:
+    view = payload.get("view", {})
+    try:
+        violation_id = json.loads(view.get("private_metadata") or "{}").get("violation_id")
+    except Exception:
+        violation_id = None
+    if not violation_id:
+        return {"response_action": "clear"}
+
+    values = view.get("state", {}).get("values", {})
+    code = values.get("code_block", {}).get("code", {}).get("value") or ""
+
+    result = record_violation_pin_verification(violation_id, code, db)
+    if result.get("status") == "incorrect_code":
+        return {
+            "response_action": "errors",
+            "errors": {"code_block": "That code isn't right — double check with dispatch."},
+        }
+    if result.get("status") not in ("acknowledged", "already_acknowledged"):
+        return {"response_action": "clear"}
+
+    violation = db.query(DvicViolation).filter(DvicViolation.id == violation_id).first()
+    client = _client()
+    if client and violation and violation.dm_channel and violation.dm_ts:
+        try:
+            client.chat_update(
+                channel=violation.dm_channel,
+                ts=violation.dm_ts,
+                text="Cleared",
+                blocks=[{
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "✅ *Cleared* — thanks for talking with dispatch."},
+                }],
+            )
+        except Exception as exc:
+            logger.warning("chat_update on dvic_pin_submit failed: %s", exc)
+
+    return {"response_action": "clear"}
 
 
 class ViolationAcknowledgeRequest(BaseModel):

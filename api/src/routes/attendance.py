@@ -1022,11 +1022,21 @@ def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
     db.add(event)
     db.commit()
 
+    # Once showtimes are out for this date, a tight roster means the
+    # self-service path stops being enough -- the callout is still
+    # logged above, but the driver gets sent to a real phone call
+    # instead of a confirmation screen. Checked BEFORE queuing the
+    # notification so the alert to #nday-mgt can flag it too.
+    must_call_dispatch = _showtimes_published(shift_date, db) and (
+        _get_replacement_pool(shift_date, roster_entry.payroll_name, req.scheduled_wave, db)[1]
+    )
+
     # Queue callout notification for #nday-mgt
     wave_time = scheduled.wave_time if (scheduled and hasattr(scheduled, "wave_time")) else req.scheduled_wave
     roster_tight = queue_callout_notification(
         event.id, roster_entry.payroll_name, req.reason_code,
         shift_date, wave_time, db,
+        must_call_dispatch=must_call_dispatch,
     )
 
     # Return updated points summary so the confirmation screen can show the new total
@@ -1045,6 +1055,8 @@ def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
         "next_threshold": updated_summary["next_threshold"],
         "roster_tight": roster_tight,
         "reason_valid": reason_valid,
+        "must_call_dispatch": must_call_dispatch,
+        "dispatch_phone": DISPATCH_PHONE_NUMBER if must_call_dispatch else None,
         "unauthorized_message": (
             "This is not a valid reason for a callout, so this has been logged as UNAUTHORIZED — "
             "you are expected to report to work."
@@ -1341,6 +1353,28 @@ REASON_LABELS = {
 }
 MIN_REPLACEMENT_POOL = 2  # fewer available drivers than this = tight roster
 
+# Added 2026-07-31, explicit request: once showtimes have gone out for a
+# shift_date AND the roster is already tight (same MIN_REPLACEMENT_POOL
+# definition as the existing tight-roster alert), the self-service callout
+# page/DM stops being a convenient one-tap action for THAT shift. The
+# callout is still logged (see submit_callout()) -- this never tells a
+# driver they can't call out, only that they can't use the automated path
+# and must call dispatch directly so a real conversation happens while
+# there's still time to react.
+DISPATCH_PHONE_NUMBER = os.getenv("DISPATCH_PHONE_NUMBER", "775-467-2283")
+
+
+def _showtimes_published(shift_date: date, db: Session) -> bool:
+    """True once the night-before Showtime DM batch has gone out for
+    shift_date (any DriverShiftDM row with dm_sent_at set) -- the
+    practical marker for "too late for the normal automated callout flow
+    to matter without a live conversation," per explicit request."""
+    from api.src.database import DriverShiftDM
+    return db.query(DriverShiftDM).filter(
+        DriverShiftDM.shift_date == shift_date,
+        DriverShiftDM.dm_sent_at.isnot(None),
+    ).first() is not None
+
 
 # ── Replacement pool ───────────────────────────────────────────────────────────
 
@@ -1380,7 +1414,7 @@ def _slack_client():
 
 # ── Immediate tight-roster alert ───────────────────────────────────────────────
 
-def _send_tight_roster_alert(queue_entry: CalloutQueue, reason_code: str, db: Session) -> None:
+def _send_tight_roster_alert(queue_entry: CalloutQueue, reason_code: str, db: Session, must_call_dispatch: bool = False) -> None:
     """Post an urgent alert to #nday-mgt immediately when no replacement is available."""
     client = _slack_client()
     if not client:
@@ -1411,7 +1445,12 @@ def _send_tight_roster_alert(queue_entry: CalloutQueue, reason_code: str, db: Se
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": "⚠️ The roster is tight for this wave. Immediate action required.",
+                        "text": "⚠️ The roster is tight for this wave. Immediate action required."
+                        + (
+                            "\n📞 *Showtimes were already out, so this driver was blocked from the "
+                            "automated callout and told to call dispatch directly — expect that call.*"
+                            if must_call_dispatch else ""
+                        ),
                     },
                 },
                 {
@@ -1673,6 +1712,7 @@ def trigger_callout_summary(force: bool = True, db: Session = Depends(get_db)):
 def queue_callout_notification(
     event_id: int, driver_name: str, reason_code: str,
     shift_date: date, wave_time: str | None, db: Session,
+    must_call_dispatch: bool = False,
 ) -> bool:
     """Create a CalloutQueue entry. Returns True if roster_tight."""
     available, is_tight = _get_replacement_pool(shift_date, driver_name, wave_time, db)
@@ -1688,7 +1728,7 @@ def queue_callout_notification(
     db.commit()
     db.refresh(entry)
     if is_tight:
-        _send_tight_roster_alert(entry, reason_code, db)
+        _send_tight_roster_alert(entry, reason_code, db, must_call_dispatch=must_call_dispatch)
     return is_tight
 
 

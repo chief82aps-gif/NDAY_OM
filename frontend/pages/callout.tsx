@@ -63,6 +63,8 @@ interface SubmitResult {
   next_threshold: { points: number; label: string; points_away: number };
   roster_tight: boolean;
   reason_valid: boolean;
+  must_call_dispatch: boolean;
+  dispatch_phone: string | null;
   unauthorized_message: string | null;
 }
 
@@ -451,16 +453,36 @@ export default function CalloutPage() {
         <Head><title>Call-Out Received — New Day Logistics</title></Head>
         <div className="min-h-screen bg-slate-900 px-4 flex items-center justify-center">
           <div className="w-full max-w-sm text-center space-y-4">
-            <div className="text-6xl">{result.reason_valid ? '✅' : '⚠️'}</div>
-            <h1 className="text-2xl font-bold text-white">
-              {result.reason_valid ? 'Thank you for submitting your call-out' : 'Call-Out Logged — Unauthorized'}
-            </h1>
-            {result.unauthorized_message ? (
-              <p className="text-amber-300 text-sm leading-relaxed font-semibold">{result.unauthorized_message}</p>
+            {result.must_call_dispatch ? (
+              <>
+                <div className="text-6xl">📞</div>
+                <h1 className="text-2xl font-bold text-white">You must call dispatch directly</h1>
+                <p className="text-slate-300 text-sm leading-relaxed">
+                  Your call-out has been logged, but showtimes are already out and the roster is too tight for
+                  this shift to be handled automatically. Please call dispatch right now so we can figure out
+                  coverage together.
+                </p>
+                <a
+                  href={`tel:${result.dispatch_phone}`}
+                  className="block bg-red-600 hover:bg-red-500 text-white text-xl font-bold rounded-lg py-4"
+                >
+                  📞 {result.dispatch_phone}
+                </a>
+              </>
             ) : (
-              <p className="text-slate-400 text-sm leading-relaxed">
-                Dispatch has been notified. Be safe and have a great day.
-              </p>
+              <>
+                <div className="text-6xl">{result.reason_valid ? '✅' : '⚠️'}</div>
+                <h1 className="text-2xl font-bold text-white">
+                  {result.reason_valid ? 'Thank you for submitting your call-out' : 'Call-Out Logged — Unauthorized'}
+                </h1>
+                {result.unauthorized_message ? (
+                  <p className="text-amber-300 text-sm leading-relaxed font-semibold">{result.unauthorized_message}</p>
+                ) : (
+                  <p className="text-slate-400 text-sm leading-relaxed">
+                    Dispatch has been notified. Be safe and have a great day.
+                  </p>
+                )}
+              </>
             )}
             <p className="text-slate-600 text-xs pt-4">You may close this page.</p>
           </div>

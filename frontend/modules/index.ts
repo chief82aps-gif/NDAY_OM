@@ -1,5 +1,6 @@
 import { assignmentDatabaseModule } from './assignmentDatabase';
 import { adminPanelModule } from './adminPanel';
+import { featureFlagsModule } from './featureFlags';
 import { attendanceModule } from './attendance';
 import { attendanceReportsModule } from './attendanceReports';
 import { opsIngestModule } from './opsIngest';
@@ -20,6 +21,7 @@ import { okamiCapacityModule } from './okamiCapacity';
 import { disciplineTrackerModule } from './disciplineTracker';
 import { driversModule } from './drivers';
 import { waveStatusModule } from './waveStatus';
+import { dispatchConsoleModule } from './dispatchConsole';
 import { DashboardModule } from './types';
 
 export const dashboardModules: DashboardModule[] = [
@@ -33,6 +35,7 @@ export const dashboardModules: DashboardModule[] = [
   dailyScreenshotAuditModule,
   assignmentDatabaseModule,
   adminPanelModule,
+  featureFlagsModule,
   attendanceModule,
   attendanceReportsModule,
   opsIngestModule,
@@ -43,6 +46,7 @@ export const dashboardModules: DashboardModule[] = [
   adpStatusModule,
   okamiCapacityModule,
   waveStatusModule,
+  dispatchConsoleModule,
   driversModule,
   disciplineTrackerModule,
 ];

@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 
 from api.src.database import DvicCounselingRecord, AttendanceEvent, DailyRouteAssignment, EodSurveyResponse
 from api.src.driver_identity import _tokens
+from api.src.feature_flags import get_flag
 
 # Hard off-switch, default false — added 2026-07-26 within hours of the
 # missed_eod_survey check below going live. That check depends entirely on
@@ -36,8 +37,8 @@ from api.src.driver_identity import _tokens
 # an already-broken system meant nearly the whole scheduled roster got
 # stuck behind a holding message the same day this shipped. Do not turn on
 # until EOD survey delivery/completion is confirmed genuinely working end
-# to end, not just deployed.
-MISSED_EOD_GATE_ACTIVE = os.getenv("MISSED_EOD_GATE_ACTIVE", "false").lower() == "true"
+# to end, not just deployed. Live-checked via get_flag() (feature_flags.py)
+# so it can be toggled from the admin page without a redeploy.
 
 
 def get_outstanding_items(driver_name: str, roster_id: Optional[int], db: Session) -> list[dict]:
@@ -84,7 +85,7 @@ def get_outstanding_items(driver_name: str, roster_id: Optional[int], db: Sessio
     # a multi-day gap doesn't silently stop resurfacing once today's route
     # DM would otherwise dedup past it. Only counts a day the driver
     # actually had a route (no assignment = nothing to have submitted).
-    if roster_id is not None and MISSED_EOD_GATE_ACTIVE:
+    if roster_id is not None and get_flag("MISSED_EOD_GATE_ACTIVE"):
         from api.src.routes.eod_survey import _issue_eod_token
 
         today = date.today()

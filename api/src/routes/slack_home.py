@@ -53,6 +53,7 @@ from api.src.routes.slack_interactions import (
     FRONTEND_URL,
     TOKEN_TTL_HOURS,
 )
+from api.src.feature_flags import get_flag
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/slack", tags=["slack"])
@@ -63,7 +64,6 @@ router = APIRouter(prefix="/slack", tags=["slack"])
 # would have let it go live with zero staged rollout the moment the Home
 # tab is enabled in Slack's app config. Kept off until explicit sign-off,
 # same as the others.
-_DM_ACTIVE = os.getenv("DRIVER_DM_ACTIVE", "false").lower() == "true"
 
 MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
 _SLACK_TEAM_ID = os.getenv("SLACK_TEAM_ID")
@@ -288,8 +288,8 @@ def _communication_buttons_block(driver: DriverRosterEntry, db: Session) -> Opti
     # the morning DM hints (sentiment_survey.py), same gate. The Home tab
     # is checked far more often than any single DM lands, so this is
     # another chance for a driver to notice we're actively asking.
-    from api.src.routes.sentiment_survey import SENTIMENT_SURVEY_DM_HINTS_ACTIVE, _issue_sentiment_token
-    if SENTIMENT_SURVEY_DM_HINTS_ACTIVE:
+    from api.src.routes.sentiment_survey import _issue_sentiment_token
+    if get_flag("SENTIMENT_SURVEY_DM_HINTS_ACTIVE"):
         token = _issue_sentiment_token(driver.id, driver.payroll_name, today)
         elements.append({
             "type": "button",
@@ -760,7 +760,7 @@ def _build_combined_home_blocks(slack_user_id: str, db: Session) -> tuple[list, 
     # Driver dashboard — always included, no role filter. Still gated by
     # DRIVER_DM_ACTIVE (a different, unrelated flag about whether it's
     # safe to show/DM real driver content at all).
-    if not _DM_ACTIVE:
+    if not get_flag("DRIVER_DM_ACTIVE"):
         blocks += _INACTIVE_BLOCKS
         info["sections"].append("dm_inactive")
     else:
@@ -882,7 +882,7 @@ async def slack_events(request: Request, db: Session = Depends(get_db)):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _handle_home_callout_button(payload: dict, db: Session) -> None:
-    if not _DM_ACTIVE:
+    if not get_flag("DRIVER_DM_ACTIVE"):
         return
     user_id = payload.get("user", {}).get("id", "")
     client = _client()
@@ -958,7 +958,7 @@ def _handle_home_report_button(payload: dict, db: Session, action_id: str) -> No
 
 
 def _handle_home_report_submit(payload: dict, db: Session) -> dict:
-    if not _DM_ACTIVE:
+    if not get_flag("DRIVER_DM_ACTIVE"):
         return {"response_action": "clear"}
     view = payload.get("view", {})
     report_type = view.get("private_metadata", "incident")
@@ -1126,7 +1126,7 @@ def _handle_home_rto_button(payload: dict, db: Session) -> None:
 
 
 def _handle_home_rto_submit(payload: dict, db: Session) -> dict:
-    if not _DM_ACTIVE:
+    if not get_flag("DRIVER_DM_ACTIVE"):
         return {"response_action": "clear"}
     view = payload.get("view", {})
     values = view.get("state", {}).get("values", {})

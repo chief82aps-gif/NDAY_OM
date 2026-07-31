@@ -3936,6 +3936,22 @@ class SwagRedemptionRequest(Base):
     status = Column(String(20), default="pending")   # "pending" | "fulfilled" | "cancelled"
 
 
+class FeatureFlag(Base):
+    """DB-backed override for an `_ACTIVE` feature flag -- added
+    2026-07-31 so admin-level users can toggle features from an in-app
+    page instead of hand-editing Render environment variables. A row
+    here overrides its matching env var; no row means "use the env var's
+    value" (or its coded default if the env var is unset too) -- see
+    api/src/feature_flags.py's get_flag()."""
+    __tablename__ = "feature_flags"
+
+    id = Column(Integer, primary_key=True)
+    key = Column(String(100), unique=True, nullable=False, index=True)   # matches the env var name, e.g. "DRIVER_DM_ACTIVE"
+    enabled = Column(Boolean, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_by = Column(String(100))
+
+
 def get_db():
     """Get database session"""
     db = SessionLocal()

@@ -26,6 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from api.src.database import get_db, OpsIngestJob, MisroutedFileAlert, get_reminder_state, set_reminder_state
+from api.src.feature_flags import get_flag
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ops-ingest", tags=["ops-ingest"])
@@ -39,7 +40,6 @@ MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")  # #nday-mgt — mis
 # this app (DRIVER_DM_ACTIVE, SCHEDULE_ESCALATION_ACTIVE): review it once
 # before it starts posting on its own. Added 2026-07-15 after a real DSP
 # Scorecard sat undetected for hours in the wrong channel.
-_MISROUTED_WATCH_ACTIVE = os.getenv("MISROUTED_FILE_WATCH_ACTIVE", "false").lower() == "true"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -368,7 +368,7 @@ def check_misrouted_files(db: Session) -> dict:
     scan does, and alert #nday-mgt if it looks like a real NDAY file type
     (not "unknown"). Every file evaluated gets a MisroutedFileAlert row —
     alerted or not — so nothing gets re-classified on the next pass."""
-    if not _MISROUTED_WATCH_ACTIVE:
+    if not get_flag("MISROUTED_FILE_WATCH_ACTIVE"):
         return {"status": "inactive"}
 
     client = _slack_client()
@@ -440,7 +440,7 @@ def run_misrouted_file_watch() -> dict:
     """Called every ~60s from main.py's loop; only actually scans once an
     hour (DB-backed throttle, same ReminderThrottleState mechanism used
     elsewhere in this app — never an in-memory dict)."""
-    if not _MISROUTED_WATCH_ACTIVE:
+    if not get_flag("MISROUTED_FILE_WATCH_ACTIVE"):
         return {"status": "inactive"}
 
     from api.src.database import SessionLocal
@@ -988,7 +988,6 @@ def manual_misrouted_scan(db: Session = Depends(get_db)):
 # real driver DM to fire on its own.
 # ─────────────────────────────────────────────────────────────────────────────
 
-OPS_AUTO_INGEST_ACTIVE = os.getenv("OPS_AUTO_INGEST_ACTIVE", "true").lower() == "true"
 _AUTO_INGEST_TYPES = ("dvic", "driver_schedule", "fleet", "quality_csv", "safety_events", "dsp_scorecard", "tenured_workforce", "daily_quality")
 
 
@@ -999,7 +998,7 @@ def run_ops_auto_ingest(db: Session) -> dict:
     update -> Slack confirmation) but runs automatically instead of waiting
     for a manual click. Processes oldest-first so a same-day correction
     (e.g. a later driver-schedule re-upload) ends up as the final state."""
-    if not OPS_AUTO_INGEST_ACTIVE:
+    if not get_flag("OPS_AUTO_INGEST_ACTIVE"):
         return {"status": "inactive"}
 
     jobs = (

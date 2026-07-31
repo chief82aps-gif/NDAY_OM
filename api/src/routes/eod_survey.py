@@ -32,6 +32,7 @@ from api.src.database import (
     EodSurveyResponse, DriverRosterEntry, DailyRouteAssignment,
     get_reminder_state, set_reminder_state,
 )
+from api.src.feature_flags import get_flag
 
 logger = logging.getLogger(__name__)
 PACIFIC = ZoneInfo("America/Los_Angeles")
@@ -436,8 +437,8 @@ def submit_survey(req: EodSubmitRequest, db: Session = Depends(get_db)):
     # blocked by this being unavailable.
     sentiment_token = None
     try:
-        from api.src.routes.sentiment_survey import _issue_sentiment_token, SENTIMENT_SURVEY_ACTIVE
-        if SENTIMENT_SURVEY_ACTIVE:
+        from api.src.routes.sentiment_survey import _issue_sentiment_token
+        if get_flag("SENTIMENT_SURVEY_ACTIVE"):
             sentiment_token = _issue_sentiment_token(entry.id, display_name, survey_date)
     except Exception as exc:
         logger.warning("Sentiment token issuance failed: %s", exc)
@@ -502,7 +503,6 @@ def _alert_mgt_on_serious_flags(req: "EodSubmitRequest", driver_name: str, surve
 
 
 FLEET_CHANNEL = os.getenv("SLACK_FLEET_CHANNEL", "C0BJ8J5LGAU")   # #nday-fleet
-EOD_CATEGORY_DIGEST_ACTIVE = os.getenv("EOD_CATEGORY_DIGEST_ACTIVE", "false").lower() == "true"
 _EOD_DIGEST_KEY = "eod_category_digest"
 
 
@@ -520,7 +520,7 @@ def send_daily_eod_category_digests(db: Session, force: bool = False) -> dict:
     so fleet/HR/management each get one end-of-day rollup relevant to
     their own follow-up, without every category flooding #nday-mgt
     individually all day."""
-    if not EOD_CATEGORY_DIGEST_ACTIVE:
+    if not get_flag("EOD_CATEGORY_DIGEST_ACTIVE"):
         return {"status": "inactive"}
 
     now = datetime.now(PACIFIC)

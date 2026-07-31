@@ -50,6 +50,7 @@ from api.src.database import (
 from api.src.driver_identity import resolve_roster_entry, resolve_roster_id
 from api.src.outstanding_items import get_outstanding_items
 from api.src.schedule_config import SHOWTIME_OFFSET_MINUTES
+from api.src.feature_flags import get_flag
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/rostering", tags=["rostering"])
@@ -66,7 +67,6 @@ FRONTEND_URL  = os.getenv("FRONTEND_URL", "https://nday-om.vercel.app")
 # Does NOT affect #nday-mgt (internal ops channel) or any manually-
 # triggered send (e.g. the Send Route Matrix Dispatch Home button) --
 # only this automatic showtime-summary destination.
-TEAM_ROOM_MESSAGES_ACTIVE = os.getenv("TEAM_ROOM_MESSAGES_ACTIVE", "false").lower() == "true"
 
 SPENCER_ID    = "U0BE493C5K9"
 LUIS_ID       = "U0B36C9R8N4"
@@ -87,14 +87,11 @@ DRIVER_VAN_CONSTRAINTS: dict[str, str] = {
 # Known nursery-area routes (flagged as risk in summary — extend as needed)
 NURSERY_ROUTE_PREFIXES: set[str] = set()   # e.g. {"NUR", "GRD"} — populated later
 
-# Feature gate — set ROSTERING_ACTIVE=true on Render to enable live messages
-_ACTIVE = os.getenv("ROSTERING_ACTIVE", "false").lower() == "true"
-
-# Separate gate for driver-facing DMs — the assignment matrix (_ACTIVE above)
-# stays live independently of this. Defaults to false: driver DMs must not
-# go out until the rostering pipeline has been fully tested end-to-end.
-# Set DRIVER_DM_ACTIVE=true on Render to enable.
-_DM_ACTIVE = os.getenv("DRIVER_DM_ACTIVE", "false").lower() == "true"
+# Feature gates below are all live-checked via get_flag() (feature_flags.py),
+# toggleable from the admin /feature-flags page without a redeploy.
+# ROSTERING_ACTIVE gates the assignment matrix; DRIVER_DM_ACTIVE gates
+# driver-facing DMs independently — driver DMs must not go out until the
+# rostering pipeline has been fully tested end-to-end.
 
 # Coaching highlights (strengths + focus areas) in the morning assignment
 # DM -- added 2026-07-31 per explicit request ("is the morning DM
@@ -104,7 +101,6 @@ _DM_ACTIVE = os.getenv("DRIVER_DM_ACTIVE", "false").lower() == "true"
 # independently of the DM itself. Framing must stay positive per the
 # established "coaching DMs must never read negative" rule -- see
 # _coaching_highlights_block() below.
-DM_COACHING_HIGHLIGHTS_ACTIVE = os.getenv("DM_COACHING_HIGHLIGHTS_ACTIVE", "false").lower() == "true"
 
 # Standing rank for quality tiers, sourced from driver_scoring.py's blended
 # 20/40/40 overall tier (Platinum down through Sawdust) -- fixed 2026-07-30,
@@ -434,7 +430,7 @@ def send_nightly_roster_reminder(shift_date: date, db: Session) -> dict:
     Deduped by date — safe to call repeatedly.
     Returns {"status": "sent"|"already_sent"|"inactive"|"no_schedule", ...}
     """
-    if not _ACTIVE:
+    if not get_flag("ROSTERING_ACTIVE"):
         return {"status": "inactive", "note": "Set ROSTERING_ACTIVE=true on Render to enable"}
 
     existing = db.query(NightlyRosterReminder).filter(
@@ -653,7 +649,7 @@ def send_driver_shift_dms(shift_date: date, db: Session) -> dict:
     Gated by DRIVER_DM_ACTIVE=true (independent of ROSTERING_ACTIVE, which
     gates the assignment matrix and stays live on its own schedule).
     """
-    if not _DM_ACTIVE:
+    if not get_flag("DRIVER_DM_ACTIVE"):
         return {"status": "inactive", "note": "Set DRIVER_DM_ACTIVE=true on Render to enable driver DMs"}
 
     scheduled = (
@@ -784,7 +780,7 @@ def post_mgt_summary(shift_date: date, db: Session, grounded_vans: Optional[list
     through the day) deliberately keeps force=False — editing in place
     there is the wanted behavior, not the bug.
     """
-    if not _ACTIVE:
+    if not get_flag("ROSTERING_ACTIVE"):
         return {"status": "inactive"}
 
     if force:
@@ -933,7 +929,6 @@ def post_mgt_summary(shift_date: date, db: Session, grounded_vans: Optional[list
 # why DRIVER_DM_ACTIVE was split out: don't let an unproven, publicly-
 # visible behavior go live just because another flag happens to be on).
 
-_ESCALATION_ACTIVE = os.getenv("SCHEDULE_ESCALATION_ACTIVE", "false").lower() == "true"
 
 
 def _tomorrow_schedule_landed(shift_date: date, db: Session) -> bool:
@@ -951,7 +946,7 @@ def run_schedule_escalation_check(db: Session) -> dict:
     escalating nag to #nday-mgt: 15-min cadence 19:00-20:00 PT, then 5-min
     cadence with no upper bound — keeps firing until tomorrow's schedule
     has landed, even overnight, per explicit direction."""
-    if not _ESCALATION_ACTIVE:
+    if not get_flag("SCHEDULE_ESCALATION_ACTIVE"):
         return {"status": "inactive"}
 
     from zoneinfo import ZoneInfo as _ZI
@@ -1025,7 +1020,7 @@ def post_showtime_summary(shift_date: date, db: Session, force: bool = False) ->
     bottom of the channel (confirmed live 2026-07-20 — the Re-Publish
     button correctly found and updated an old ts from manual testing
     earlier the same day, invisibly, from the clicker's perspective)."""
-    if not _ACTIVE:
+    if not get_flag("ROSTERING_ACTIVE"):
         return {"status": "inactive"}
 
     if force:
@@ -1129,7 +1124,7 @@ def post_showtime_summary(shift_date: date, db: Session, force: bool = False) ->
     try:
         mgt_ts = _post_or_update(MGT_CHANNEL, "mgt_slack_ts")
         team_ts = None
-        if TEAM_ROOM_MESSAGES_ACTIVE:
+        if get_flag("TEAM_ROOM_MESSAGES_ACTIVE"):
             try:
                 team_ts = _post_or_update(TEAM_CHANNEL, "team_slack_ts")
             except Exception as exc:
@@ -1151,7 +1146,7 @@ def send_schedule_gap_alert(shift_date: date, db: Session) -> dict:
     hook, when ready, is attendance.py's queue_callout_notification()
     after creating an AttendanceEvent row with a new reason_code — not
     built now."""
-    if not _ESCALATION_ACTIVE:
+    if not get_flag("SCHEDULE_ESCALATION_ACTIVE"):
         return {"status": "inactive"}
 
     scheduled = (
@@ -1354,7 +1349,7 @@ def post_assignment_matrix(shift_date: date, db: Session, force: bool = False) -
     safe to call from multiple trigger points (post-Cortex-ingest, post-finalize)
     without double-posting.
     """
-    if not _ACTIVE:
+    if not get_flag("ROSTERING_ACTIVE"):
         return {"status": "inactive", "note": "Set ROSTERING_ACTIVE=true on Render to enable"}
 
     fake_id = f"assignment_matrix_{shift_date.isoformat()}"
@@ -1393,7 +1388,7 @@ def post_assignment_matrix(shift_date: date, db: Session, force: bool = False) -
         # added 2026-07-24 per explicit request. Best-effort: a team-room
         # failure here must not affect the #nday-mgt post already sent above.
         team_posted = False
-        if TEAM_ROOM_MESSAGES_ACTIVE:
+        if get_flag("TEAM_ROOM_MESSAGES_ACTIVE"):
             try:
                 client.chat_postMessage(
                     channel=TEAM_CHANNEL,
@@ -1488,7 +1483,7 @@ def post_driver_summary_matrix(shift_date: date, db: Session, force: bool = Fals
     Idempotent per shift_date via a synthetic SlackIngestLog entry, same
     pattern as post_assignment_matrix().
     """
-    if not _ACTIVE:
+    if not get_flag("ROSTERING_ACTIVE"):
         return {"status": "inactive", "note": "Set ROSTERING_ACTIVE=true on Render to enable"}
 
     fake_id = f"driver_summary_matrix_{shift_date.isoformat()}"
@@ -1636,7 +1631,7 @@ def send_wave_lead_pre_wave_dm(shift_date: date, wave_time_str: str, db: Session
     Deduped — fires once per wave per day.
     Gated by ROSTERING_ACTIVE=true.
     """
-    if not _ACTIVE:
+    if not get_flag("ROSTERING_ACTIVE"):
         return False
 
     # Dedup check
@@ -1738,7 +1733,7 @@ def notify_wave_lead_driver_arrived(
     Not deduped — each arrival is a distinct event.
     Gated by ROSTERING_ACTIVE=true.
     """
-    if not _ACTIVE:
+    if not get_flag("ROSTERING_ACTIVE"):
         return
 
     _, wave_lead_id = _wave_lead_name(shift_date)
@@ -1798,7 +1793,7 @@ def send_missing_drivers_summary(shift_date: date, wave_time_str: str, db: Sessi
     Deduped — fires once per wave per day.
     Gated by ROSTERING_ACTIVE=true.
     """
-    if not _ACTIVE:
+    if not get_flag("ROSTERING_ACTIVE"):
         return False
 
     already = db.query(WaveLeadNotification).filter(
@@ -1953,7 +1948,7 @@ def _resolve_wave_lead_for_driver(a: DailyRouteAssignment, shift_date: date, db:
     2026-07-29 from an earlier per-individual-wave "Standing Wave Lead"
     model that was never a real feature. Still gated by
     LEAD_ROUTING_ACTIVE, same as before."""
-    from api.src.routes.driver_lead_schedule import get_current_wave_lead, LEAD_ROUTING_ACTIVE
+    from api.src.routes.driver_lead_schedule import get_current_wave_lead
     from api.src.routes.wave_lead import wave_number_for_assignment, get_team_for_driver
 
     wave_number = wave_number_for_assignment(a.wave, getattr(a, "service_type", None))
@@ -1962,7 +1957,7 @@ def _resolve_wave_lead_for_driver(a: DailyRouteAssignment, shift_date: date, db:
         team = get_team_for_driver(a.roster_id, db)
         half = team.half if team else None
     wave_lead_name, wave_lead_slack_id, _source = get_current_wave_lead(shift_date, wave_number, half, db)
-    if not LEAD_ROUTING_ACTIVE:
+    if not get_flag("LEAD_ROUTING_ACTIVE"):
         wave_lead_slack_id = None  # keep the legacy Zello-text DM until the flag is flipped on
     return wave_lead_name, wave_lead_slack_id
 
@@ -2123,7 +2118,7 @@ def _build_driver_dm(a: DailyRouteAssignment, wave_lead_name: str, date_str: str
         hint_blocks = get_driver_dm_hint_block(a.roster_id, a.driver_name, a.assignment_date, db) or []
 
     coaching_blocks: list = []
-    if db is not None and DM_COACHING_HIGHLIGHTS_ACTIVE:
+    if db is not None and get_flag("DM_COACHING_HIGHLIGHTS_ACTIVE"):
         coaching_blocks = _coaching_highlights_block(a.driver_name, db)
 
     blocks = [
@@ -2232,7 +2227,7 @@ def send_day_of_dms(shift_date: date, db: Session, bypass_outstanding_items: boo
     Explicit per-call opt-in only (never the default, never automatic) —
     the gate itself stays on for every future day.
     """
-    if not _DM_ACTIVE:
+    if not get_flag("DRIVER_DM_ACTIVE"):
         return {"status": "inactive", "note": "Set DRIVER_DM_ACTIVE=true on Render to enable driver DMs"}
 
     assignments = (
@@ -2355,7 +2350,7 @@ def send_single_day_of_dm(assignment_id: int, db: Session) -> dict:
     Same content builder as send_day_of_dms() (_build_driver_dm), so this
     can never drift from the batch send's format. Gated by
     DRIVER_DM_ACTIVE like every other driver-facing send here."""
-    if not _DM_ACTIVE:
+    if not get_flag("DRIVER_DM_ACTIVE"):
         return {"status": "inactive", "note": "Set DRIVER_DM_ACTIVE=true on Render to enable driver DMs"}
 
     a = db.query(DailyRouteAssignment).filter(DailyRouteAssignment.id == assignment_id).first()
@@ -2921,7 +2916,7 @@ def send_eod_checklist_dms(shift_date: date, db: Session) -> dict:
     Gated by DRIVER_DM_ACTIVE=true (independent of ROSTERING_ACTIVE, which
     gates the assignment matrix and stays live on its own schedule).
     """
-    if not _DM_ACTIVE:
+    if not get_flag("DRIVER_DM_ACTIVE"):
         return {"status": "inactive"}
 
     assignments = (
@@ -3183,7 +3178,7 @@ def refresh_shift_response_summary(shift_date: date, db: Session) -> dict:
     """Consolidated #nday-mgt summary of Showtime DM responses: 🟢
     acknowledged / 🟡 no reply / 🔴 declined. One message per
     shift_date, updated in place."""
-    if not _ACTIVE:
+    if not get_flag("ROSTERING_ACTIVE"):
         return {"status": "inactive"}
 
     scheduled = (
@@ -3244,7 +3239,7 @@ def refresh_arrival_response_summary(shift_date: date, db: Session) -> dict:
     """Consolidated #nday-mgt summary of Route Assignment DM responses:
     🟢 arrived / 🟡 not yet arrived / 🔴 called out. One message per
     shift_date, updated in place."""
-    if not _ACTIVE:
+    if not get_flag("ROSTERING_ACTIVE"):
         return {"status": "inactive"}
 
     assignments = (

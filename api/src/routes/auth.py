@@ -17,6 +17,7 @@ from api.src.database import (
     get_db, User, UserSlackAlias, get_user_by_username, get_user_by_reset_token,
     get_reminder_state, set_reminder_state,
 )
+from api.src.feature_flags import get_flag
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -154,7 +155,6 @@ def ensure_owner_slack_link(db: Session) -> None:
 # account that happens to have a slack_user_id set for some other reason.
 # ─────────────────────────────────────────────────────────────────────────────
 
-WEBSITE_USER_SYNC_ACTIVE = os.getenv("WEBSITE_USER_SYNC_ACTIVE", "false").lower() == "true"
 _WEBSITE_USER_SYNC_KEY = "website_user_sync"
 _WEBSITE_USER_SYNC_INTERVAL_MINUTES = 60
 _SYNCED_ROLES = ("owner", "manager")
@@ -191,7 +191,7 @@ def _fetch_channel_member_ids(client, channel_id: str) -> set:
 def run_website_user_sync(db: Session, force: bool = False) -> dict:
     """Idempotent, safe to call repeatedly — throttled to once an hour
     unless force=True."""
-    if not WEBSITE_USER_SYNC_ACTIVE:
+    if not get_flag("WEBSITE_USER_SYNC_ACTIVE"):
         return {"status": "inactive"}
 
     if not force:

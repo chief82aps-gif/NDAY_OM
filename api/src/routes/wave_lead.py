@@ -43,6 +43,7 @@ from api.src.database import (
 )
 from api.src.authorization import require_any_role
 from api.src.routes.auth import JWT_SECRET, JWT_ALGORITHM
+from api.src.feature_flags import get_flag
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/wave-lead", tags=["wave-lead"])
@@ -56,7 +57,6 @@ HALVES = ("front", "back")            # Front Half: Sun-Wed: Back Half: Wed-Sun 
 
 # Feature gate — same pattern as every other new automated send this
 # session: off until confirmed working, then flipped on deliberately.
-WAVE_COMPETITION_ACTIVE = os.getenv("WAVE_COMPETITION_ACTIVE", "false").lower() == "true"
 _COMPETITION_MESSAGE_KEY = "wave_competition_daily_message"
 _COMPETITION_SEND_HOUR = 7  # 7 AM Pacific
 
@@ -69,7 +69,6 @@ _COMPETITION_SEND_HOUR = 7  # 7 AM Pacific
 # to whoever's ACTUALLY working that wave today (operational, not standing
 # team -- same distinction as _resolve_wave_lead_for_driver() in
 # rostering.py), including that wave's lead(s).
-WAVE_PTT_CHANNELS_ACTIVE = os.getenv("WAVE_PTT_CHANNELS_ACTIVE", "false").lower() == "true"
 _WAVE_CHANNEL_SYNC_KEY_PREFIX = "wave_ptt_channel_"
 
 
@@ -734,7 +733,7 @@ def send_wave_competition_standings(db: Session, force: bool = False) -> dict:
     """Once per day: post the team standings to #nday-mgt. force=True
     bypasses the hour gate and already-sent guard for manual testing/
     an ad-hoc re-send."""
-    if not WAVE_COMPETITION_ACTIVE:
+    if not get_flag("WAVE_COMPETITION_ACTIVE"):
         return {"status": "inactive", "note": "Set WAVE_COMPETITION_ACTIVE=true on Render to enable"}
 
     now_pt = datetime.now(PACIFIC)
@@ -1071,7 +1070,7 @@ def sync_wave_channels(db: Session) -> dict:
     exactly who's actually working that wave today (operational, via
     wave_number_for_assignment() on real DailyRouteAssignment rows), plus
     that wave's standing lead(s). Gated by WAVE_PTT_CHANNELS_ACTIVE."""
-    if not WAVE_PTT_CHANNELS_ACTIVE:
+    if not get_flag("WAVE_PTT_CHANNELS_ACTIVE"):
         return {"status": "inactive", "note": "Set WAVE_PTT_CHANNELS_ACTIVE=true on Render to enable"}
 
     client = _slack_client()

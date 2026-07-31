@@ -16,6 +16,7 @@ from api.src.database import (
     get_reminder_state, set_reminder_state,
 )
 from api.src.driver_identity import resolve_roster_entry
+from api.src.feature_flags import get_flag
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/rescue", tags=["rescue"])
@@ -806,7 +807,6 @@ def payroll_report(
 # while (payroll_report()/rescue/payroll.tsx), but this is the first time
 # it gets pushed to a real person automatically rather than pulled on
 # demand, so it needs an explicit go-ahead before it's turned on for real.
-RESCUE_PAYROLL_REPORT_ACTIVE = os.getenv("RESCUE_PAYROLL_REPORT_ACTIVE", "false").lower() == "true"
 _HR_REPORT_KEY = "rescue_payroll_hr_report"
 
 
@@ -818,7 +818,7 @@ def send_weekly_hr_report(db: Session, force: bool = False) -> dict:
     weekly-totals framing now that bonuses bank persistently instead of
     resetting each week (2026-07-27). force=True bypasses the day-of-week/
     already-sent guards for manual testing/recovery; still safe to call any time."""
-    if not RESCUE_PAYROLL_REPORT_ACTIVE:
+    if not get_flag("RESCUE_PAYROLL_REPORT_ACTIVE"):
         return {"status": "inactive", "note": "Set RESCUE_PAYROLL_REPORT_ACTIVE=true on Render to enable"}
 
     import zoneinfo

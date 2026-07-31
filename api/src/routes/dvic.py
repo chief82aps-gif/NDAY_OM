@@ -46,6 +46,7 @@ from api.src.database import (
 from api.src.ingest.dvic import parse_dvic_xlsx, extract_week
 from api.src.driver_identity import resolve_roster_entry
 from api.src.authorization import require_any_role
+from api.src.feature_flags import get_flag
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/dvic", tags=["dvic"])
@@ -58,7 +59,6 @@ APP_URL          = os.getenv("APP_URL", "https://nday-om.vercel.app")
 # used for driver DMs in rostering.py (api/src/routes/rostering.py). Advancing
 # a driver's counseling stage is coupled to actually sending the DM (see
 # _process_week below), so the ladder can't silently advance while this is off.
-_DM_ACTIVE = os.getenv("DRIVER_DM_ACTIVE", "false").lower() == "true"
 
 # Forced-training-video gate for repeat (Stage 2+) DVIC violations — added
 # 2026-07-23. Hard off-switch, same pattern as DRIVER_DM_ACTIVE/
@@ -66,7 +66,6 @@ _DM_ACTIVE = os.getenv("DRIVER_DM_ACTIVE", "false").lower() == "true"
 # on the real DM/acknowledgment flow until explicitly turned on. Do not
 # flip on until a real training video has been uploaded via
 # POST /dvic/training-video — see CLAUDE.md.
-DVIC_TRAINING_VIDEO_ACTIVE = os.getenv("DVIC_TRAINING_VIDEO_ACTIVE", "false").lower() == "true"
 DVIC_VIDEO_GATE_MIN_STAGE = 2
 DVIC_VIDEO_TOKEN_TTL_HOURS = 72
 DVIC_TRAINING_VIDEO_STATE_KEY = "dvic_training_video"
@@ -216,7 +215,7 @@ def _dm_blocks(violation: "DvicViolation", stage: int, name: str) -> list:
     text = _counseling_message(stage, name, violation)
     value = json.dumps({"violation_id": violation.id})
 
-    needs_video = DVIC_TRAINING_VIDEO_ACTIVE and stage >= DVIC_VIDEO_GATE_MIN_STAGE and not violation.video_watched_at
+    needs_video = get_flag("DVIC_TRAINING_VIDEO_ACTIVE") and stage >= DVIC_VIDEO_GATE_MIN_STAGE and not violation.video_watched_at
     if needs_video:
         # Baked in at send-time (not issued fresh on click) so this is a
         # genuine one-click button straight to the video page — same
@@ -271,7 +270,7 @@ def _action_new_violations(week: str, db: Session, only_tid: Optional[str] = Non
     single-driver preview/resend) — it does not affect the prior-action
     lookups, which always consider the driver's full history regardless.
     """
-    if not _DM_ACTIVE:
+    if not get_flag("DRIVER_DM_ACTIVE"):
         return {"status": "inactive", "note": "Set DRIVER_DM_ACTIVE=true on Render to enable driver DMs"}
 
     snap = (

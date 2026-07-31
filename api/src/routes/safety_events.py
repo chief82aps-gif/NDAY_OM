@@ -29,6 +29,7 @@ from api.src.database import get_db, SessionLocal, SafetyEvent, get_reminder_sta
 from api.src.ingest.safety_events import parse_safety_events
 from api.src.driver_identity import resolve_roster_entry
 from api.src.routes.document_routing import is_dispatch_staff
+from api.src.feature_flags import get_flag
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/safety-events", tags=["safety-events"])
@@ -38,11 +39,9 @@ SAFETY_EVENTS_CHANNEL = os.getenv("SAFETY_EVENTS_CHANNEL_ID", "C0ADM0M5UNQ")   #
 # Safety Violation Review/Dispute workflow — added 2026-07-23
 # (BUILD_QUEUE.md #6). Hard off-switch, same pattern as DRIVER_DM_ACTIVE/
 # DVIC_TRAINING_VIDEO_ACTIVE: fully built, zero effect until turned on.
-SAFETY_VIOLATION_REVIEW_ACTIVE = os.getenv("SAFETY_VIOLATION_REVIEW_ACTIVE", "false").lower() == "true"
 # Stub for a future forced training video on confirmed violations — no
 # video exists yet, column/gate shape mirrors DVIC's but isn't wired to
 # anything beyond existing. Do not flip on without a real video.
-SAFETY_VIOLATION_VIDEO_ACTIVE = os.getenv("SAFETY_VIOLATION_VIDEO_ACTIVE", "false").lower() == "true"
 
 
 def _client():
@@ -187,7 +186,7 @@ def post_pending_safety_violations(db: Session) -> dict:
     this call" — the query matches any already-ingested, not-yet-posted
     row, so this also picks up historical rows (e.g. this morning's
     violations) for on-demand testing/backfill, not just future ingests."""
-    if not SAFETY_VIOLATION_REVIEW_ACTIVE:
+    if not get_flag("SAFETY_VIOLATION_REVIEW_ACTIVE"):
         return {"status": "inactive", "note": "Set SAFETY_VIOLATION_REVIEW_ACTIVE=true on Render to enable"}
 
     events = (
@@ -301,7 +300,7 @@ def record_safety_violation_ack(event_id: int, signature_name: str, db: Session)
     # Belt-and-suspenders stub for the future video gate — inert today
     # since SAFETY_VIOLATION_VIDEO_ACTIVE is off, same shape as DVIC's
     # record_acknowledgment() check.
-    if SAFETY_VIOLATION_VIDEO_ACTIVE and event.video_watched_at is None:
+    if get_flag("SAFETY_VIOLATION_VIDEO_ACTIVE") and event.video_watched_at is None:
         return {"status": "video_not_watched"}
 
     event.ack_status = "acknowledged"

@@ -47,6 +47,7 @@ from api.src.database import (
     get_latest_route_sheet_rows,
 )
 from api.src.driver_identity import resolve_roster_id, resolve_roster_entry
+from api.src.feature_flags import get_flag
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -62,8 +63,9 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "https://nday-om.vercel.app")
 # own and would fire real driver DMs any time check_and_notify() ran, as
 # soon as the master SLACK_NOTIFICATIONS_ACTIVE switch was on, regardless
 # of rostering.py's DRIVER_DM_ACTIVE flag. Same env var, same semantics,
-# now actually checked here too.
-_DM_ACTIVE = os.getenv("DRIVER_DM_ACTIVE", "false").lower() == "true"
+# now actually checked here too. Live-checked via get_flag()
+# (feature_flags.py) so it can be toggled from the admin page without a
+# redeploy.
 
 # Ops managers who receive DMs after DOP is detected each morning
 OPS_MANAGER_IDS = [
@@ -887,7 +889,7 @@ def send_sweeper_notifications(for_date: date, db: Session) -> Dict:
     Only runs once per day — idempotent via SlackIngestLog synthetic entry.
     Gated by DRIVER_DM_ACTIVE (default false).
     """
-    if not _DM_ACTIVE:
+    if not get_flag("DRIVER_DM_ACTIVE"):
         return {"status": "inactive", "sent": 0}
 
     fake_id = f"sweeper_notify_{for_date.isoformat()}"
@@ -1397,7 +1399,7 @@ def rerun_route_assignments(for_date: date, db: Session) -> Dict:
             continue  # never notified yet -> not a "change", handled as "new" above
         if _tracked_fields(a) == a.notified_snapshot:
             continue  # nothing actually changed
-        if _DM_ACTIVE:
+        if get_flag("DRIVER_DM_ACTIVE"):
             if send_driver_dm_update(a, a.notified_snapshot, db):
                 changed_sent += 1
             else:
@@ -1416,7 +1418,7 @@ def rerun_route_assignments(for_date: date, db: Session) -> Dict:
             .all()
         )
         for a in removed_rows:
-            if _DM_ACTIVE:
+            if get_flag("DRIVER_DM_ACTIVE"):
                 if send_driver_removal_dm(a, db):
                     removed_sent += 1
                 else:
@@ -1433,7 +1435,7 @@ def rerun_route_assignments(for_date: date, db: Session) -> Dict:
     return {
         "status": "ok",
         "date": for_date.isoformat(),
-        "dm_active": _DM_ACTIVE,
+        "dm_active": get_flag("DRIVER_DM_ACTIVE"),
         "initial_check": check_result,
         "changed_dms": {"sent": changed_sent, "skipped": changed_skipped},
         "removed_dms": {"sent": removed_sent, "skipped": removed_skipped},

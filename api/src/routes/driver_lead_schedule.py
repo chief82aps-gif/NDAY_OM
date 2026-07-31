@@ -38,7 +38,6 @@ router = APIRouter(prefix="/driver-lead-schedule", tags=["driver-lead-schedule"]
 # Feature gate — the driver DM keeps its existing "contact your wave lead on
 # Zello" text until this is flipped on. Set LEAD_ROUTING_ACTIVE=true on
 # Render to enable the "Talk to My Lead" button in rostering.py's day-of DM.
-LEAD_ROUTING_ACTIVE = os.getenv("LEAD_ROUTING_ACTIVE", "false").lower() == "true"
 
 
 def _resolve_slack_id(driver_name: str, db: Session) -> Optional[str]:

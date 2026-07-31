@@ -43,6 +43,7 @@ from api.src.database import (
     get_db, DriverRosterEntry, DailyRouteAssignment, SafetyEvent,
     NdayPointsLedger, NdayPointsTransaction, SwagCatalogItem, SwagRedemptionRequest,
 )
+from api.src.feature_flags import get_flag
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/nday-points", tags=["nday-points"])
@@ -50,7 +51,6 @@ router = APIRouter(prefix="/nday-points", tags=["nday-points"])
 # Off by default like every other new automated award this session --
 # confirm perfect-day detection is correct before it silently changes
 # driver balances.
-NDAY_POINTS_ACTIVE = os.getenv("NDAY_POINTS_ACTIVE", "false").lower() == "true"
 
 # Placeholder value -- no real point economy has been defined yet
 # (how much a perfect day is "worth" relative to catalog item costs).
@@ -59,7 +59,6 @@ POINTS_PER_PERFECT_DAY = int(os.getenv("NDAY_POINTS_PER_PERFECT_DAY", "10"))
 
 # Hard off pending legal review -- see module docstring. Do not enable
 # without confirming wage/tax treatment of a points-to-cash conversion.
-NDAY_POINTS_CASH_OUT_ACTIVE = os.getenv("NDAY_POINTS_CASH_OUT_ACTIVE", "false").lower() == "true"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -129,7 +128,7 @@ def award_perfect_day_points(report_date: date, db: Session) -> dict:
     """Any driver with a confirmed route assignment for report_date and
     zero SafetyEvent rows that date earns POINTS_PER_PERFECT_DAY. No-ops
     entirely if NDAY_POINTS_ACTIVE is off."""
-    if not NDAY_POINTS_ACTIVE:
+    if not get_flag("NDAY_POINTS_ACTIVE"):
         return {"status": "inactive", "note": "Set NDAY_POINTS_ACTIVE=true on Render to enable"}
 
     worked = {
@@ -292,7 +291,7 @@ def do_redeem_cash_out(roster_id: int, points: int, db: Session) -> SwagRedempti
     """Gated by NDAY_POINTS_CASH_OUT_ACTIVE -- see module docstring. No
     point-to-dollar conversion rate is defined yet; this records the
     point amount only, not a dollar figure, until that's decided."""
-    if not NDAY_POINTS_CASH_OUT_ACTIVE:
+    if not get_flag("NDAY_POINTS_CASH_OUT_ACTIVE"):
         raise ValueError("Cash-out is not currently available.")
     if points <= 0:
         raise ValueError("points must be positive")

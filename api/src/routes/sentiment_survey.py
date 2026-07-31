@@ -42,11 +42,11 @@ from api.src.database import (
     get_reminder_state, set_reminder_state,
 )
 from api.src.authorization import require_any_role
+from api.src.feature_flags import get_flag
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sentiment-survey", tags=["sentiment-survey"])
 
-SENTIMENT_SURVEY_ACTIVE = os.getenv("SENTIMENT_SURVEY_ACTIVE", "false").lower() == "true"
 _DAILY_REPORT_KEY = "sentiment_survey_daily_report"
 APP_URL = os.getenv("APP_URL", "https://nday-om.vercel.app")
 
@@ -56,7 +56,6 @@ APP_URL = os.getenv("APP_URL", "https://nday-om.vercel.app")
 # (not owner/hr DMs), and includes the quantitative rating stats alongside
 # the AI-flagged qualitative themes -- the daily report predates the 6
 # rating questions and never mentions them.
-SENTIMENT_SURVEY_WEEKLY_SUMMARY_ACTIVE = os.getenv("SENTIMENT_SURVEY_WEEKLY_SUMMARY_ACTIVE", "false").lower() == "true"
 _WEEKLY_SUMMARY_KEY_PREFIX = "sentiment_survey_weekly_summary_"
 _WEEKLY_SUMMARY_SEND_WEEKDAY = 0   # Monday (Python weekday(): Monday=0)
 _WEEKLY_SUMMARY_SEND_HOUR = 8      # 8 AM Pacific
@@ -64,13 +63,11 @@ _WEEKLY_SUMMARY_SEND_HOUR = 8      # 8 AM Pacific
 # Morning shift-DM hints — added 2026-07-29, gated separately from the
 # survey send itself since it touches rostering.py's DM, not this module's
 # own send path.
-SENTIMENT_SURVEY_DM_HINTS_ACTIVE = os.getenv("SENTIMENT_SURVEY_DM_HINTS_ACTIVE", "false").lower() == "true"
 _NUDGE_THRESHOLD_DAYS = 3  # shortened from 5 (2026-07-29) -- "I really want them to know we want their input"
 
 # Monthly proactive push — added 2026-07-29. Sent ahead of Amazon's own
 # survey window (first two weeks of the month) so drivers' sentiment is
 # already positively primed by the time Amazon asks.
-SENTIMENT_SURVEY_MONTHLY_PUSH_ACTIVE = os.getenv("SENTIMENT_SURVEY_MONTHLY_PUSH_ACTIVE", "false").lower() == "true"
 _MONTHLY_PUSH_KEY_PREFIX = "sentiment_survey_monthly_push_"
 PACIFIC = ZoneInfo("America/Los_Angeles")
 
@@ -184,7 +181,7 @@ def get_driver_dm_hint_block(roster_id: Optional[int], driver_name: str, today: 
       - Everyone else gets a rotating category hint instead, cycling by
         day-of-year, each one directly addressing what that survey
         question asks about."""
-    if not SENTIMENT_SURVEY_DM_HINTS_ACTIVE or not roster_id:
+    if not get_flag("SENTIMENT_SURVEY_DM_HINTS_ACTIVE") or not roster_id:
         return None
 
     token = _issue_sentiment_token(roster_id, driver_name, today)
@@ -361,7 +358,7 @@ def run_monthly_sentiment_survey_push(db: Session, force: bool = False) -> dict:
     """Once a month: auto-send the full survey to every active, linked
     driver on the Sunday of the last full week of the month. force=True
     bypasses the day-gate and already-sent guard for manual testing."""
-    if not SENTIMENT_SURVEY_MONTHLY_PUSH_ACTIVE:
+    if not get_flag("SENTIMENT_SURVEY_MONTHLY_PUSH_ACTIVE"):
         return {"status": "inactive", "note": "Set SENTIMENT_SURVEY_MONTHLY_PUSH_ACTIVE=true on Render to enable"}
 
     today = _pacific_today()
@@ -714,7 +711,7 @@ def send_daily_sentiment_report(db: Session, force: bool = False) -> dict:
     """Once per day: AI-summarize yesterday's responses (the day that just
     fully closed out) and DM the summary to owner/hr only. force=True bypasses
     the once-per-day guard for manual testing/recovery."""
-    if not SENTIMENT_SURVEY_ACTIVE:
+    if not get_flag("SENTIMENT_SURVEY_ACTIVE"):
         return {"status": "inactive"}
 
     import zoneinfo
@@ -784,7 +781,7 @@ def send_weekly_sentiment_summary(db: Session, force: bool = False) -> dict:
     report (which nobody's prompted to go check). force=True bypasses
     the day/hour gate and the already-sent-this-week guard for manual
     testing/recovery."""
-    if not SENTIMENT_SURVEY_WEEKLY_SUMMARY_ACTIVE:
+    if not get_flag("SENTIMENT_SURVEY_WEEKLY_SUMMARY_ACTIVE"):
         return {"status": "inactive", "note": "Set SENTIMENT_SURVEY_WEEKLY_SUMMARY_ACTIVE=true on Render to enable"}
 
     now_pt = datetime.now(PACIFIC)

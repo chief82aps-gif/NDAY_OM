@@ -39,6 +39,7 @@ from api.src.database import (
 )
 from api.src.driver_identity import resolve_roster_entry
 from api.src.authorization import require_any_role
+from api.src.feature_flags import get_flag
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/attendance", tags=["attendance"])
@@ -1592,7 +1593,6 @@ def send_morning_callout_digest(shift_date: date, db: Session) -> int:
 # per-callout digest to #nday-mgt only -- this is an always-current
 # rolling summary of the whole day so far, reposted every 15 minutes.
 
-CALLOUT_SUMMARY_ACTIVE = os.getenv("CALLOUT_SUMMARY_ACTIVE", "false").lower() == "true"
 _CALLOUT_SUMMARY_WINDOW_START = (9, 30)    # 9:30 AM Pacific
 _CALLOUT_SUMMARY_WINDOW_END = (12, 30)     # 12:30 PM Pacific -- "roughly when everybody is on the road"
 _CALLOUT_SUMMARY_INTERVAL_MINUTES = 15
@@ -1603,7 +1603,7 @@ def send_recurring_callout_summary(db: Session, force: bool = False) -> dict:
     """Repeating summary of today's callouts, posted to BOTH #nday-mgt and
     #nday-hr. force=True bypasses the time window and the 15-minute
     throttle for manual testing/recovery."""
-    if not CALLOUT_SUMMARY_ACTIVE:
+    if not get_flag("CALLOUT_SUMMARY_ACTIVE"):
         return {"status": "inactive", "note": "Set CALLOUT_SUMMARY_ACTIVE=true on Render to enable"}
 
     now = datetime.now(PACIFIC)

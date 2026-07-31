@@ -48,6 +48,7 @@ from api.src.database import (
     get_db, SessionLocal, OpsIngestJob, get_reminder_state, set_reminder_state,
     get_latest_dop_rows, get_latest_route_sheet_rows, get_latest_cortex_rows,
 )
+from api.src.feature_flags import get_flag
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/mgt-reminders", tags=["mgt-reminders"])
@@ -319,7 +320,6 @@ def manual_check():
 # ─────────────────────────────────────────────────────────────────────────────
 
 OPS_MGMT_CHANNEL = os.getenv("SLACK_OPS_MGMT_CHANNEL", "C0BE4ALL1EX")   # #nday-operations-management
-TIMECARD_REPORT_NUDGE_ACTIVE = os.getenv("TIMECARD_REPORT_NUDGE_ACTIVE", "false").lower() == "true"
 TIMECARD_REPORT_NUDGE_HOUR = int(os.getenv("TIMECARD_REPORT_NUDGE_HOUR", "10"))  # confirmed with Amanda: audits finish 9-10 AM
 _TIMECARD_NUDGE_KEY_PREFIX = "timecard_report_nudge_"
 
@@ -328,7 +328,7 @@ def run_timecard_report_nudge(db: Session, force: bool = False) -> dict:
     """Once a day: post a reminder to #nday-operations-management asking
     HR to drop today's timecard audit report there. force=True bypasses
     the hour gate and already-sent guard for manual testing."""
-    if not TIMECARD_REPORT_NUDGE_ACTIVE:
+    if not get_flag("TIMECARD_REPORT_NUDGE_ACTIVE"):
         return {"status": "inactive", "note": "Set TIMECARD_REPORT_NUDGE_ACTIVE=true on Render to enable"}
 
     now_pt = datetime.now(PT)
@@ -382,7 +382,6 @@ def trigger_timecard_nudge(force: bool = True, db: Session = Depends(get_db)):
 # rostering must be complete by 7:00 PM regardless.
 # ─────────────────────────────────────────────────────────────────────────────
 
-ECP_SCREENSHOT_REMINDER_ACTIVE = os.getenv("ECP_SCREENSHOT_REMINDER_ACTIVE", "false").lower() == "true"
 ECP_SCREENSHOT_CHECK_START_HOUR = 17  # don't bother scanning before ~5 PM
 _ECP_SCREENSHOT_KEY_PREFIX = "ecp_screenshot_reminder_"
 
@@ -391,7 +390,7 @@ def run_ecp_screenshot_reminder(db: Session, force: bool = False) -> dict:
     """Checked every ~60s from 5 PM Pacific onward. Fires once per day, the
     moment Amazon's ECP message shows up in #dlv3-nday-info. force=True
     bypasses the hour gate/already-sent guard for manual testing."""
-    if not ECP_SCREENSHOT_REMINDER_ACTIVE:
+    if not get_flag("ECP_SCREENSHOT_REMINDER_ACTIVE"):
         return {"status": "inactive", "note": "Set ECP_SCREENSHOT_REMINDER_ACTIVE=true on Render to enable"}
 
     now_pt = datetime.now(PT)

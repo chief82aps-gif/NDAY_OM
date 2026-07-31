@@ -65,6 +65,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from api.src.database import get_db, OkamiCapacityLog, OkamiSettings, Vehicle, get_reminder_state, set_reminder_state
+from api.src.feature_flags import get_flag
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/okami-capacity", tags=["okami-capacity"])
@@ -81,7 +82,6 @@ PT = ZoneInfo("America/Los_Angeles")
 # ECP — dispatch can only finalize once Amazon reports the ECP has run,
 # and it MUST be finalized by 1700 local (5 PM) regardless, per explicit
 # 2026-07-20 direction (confirmed 1700, not the initially-stated 1600).
-OKAMI_FINALIZE_REMINDER_ACTIVE = os.getenv("OKAMI_FINALIZE_REMINDER_ACTIVE", "false").lower() == "true"
 OKAMI_NAG_START_HOUR = 15
 OKAMI_NAG_START_MINUTE = 30    # nagging starts 3:30 PM
 OKAMI_DEADLINE_HOUR = 17       # hard deadline 5:00 PM ("aka ECP")
@@ -185,7 +185,7 @@ def run_okami_finalize_reminder(db: Session) -> dict:
     yet at all. Reminder only — never auto-finalizes (finalize() does
     real work against live settings/grounded-vans that shouldn't happen
     unattended)."""
-    if not OKAMI_FINALIZE_REMINDER_ACTIVE:
+    if not get_flag("OKAMI_FINALIZE_REMINDER_ACTIVE"):
         return {"status": "inactive"}
 
     now = datetime.now(PT)

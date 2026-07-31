@@ -29,6 +29,7 @@ from api.src.driver_matching import (
     load_ssn, load_slack, load_associates,
     best_ssn_match, best_slack_match, best_slack_match_via_associates,
 )
+from api.src.feature_flags import get_flag
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/drivers", tags=["drivers"])
@@ -49,7 +50,6 @@ def _slack_client():
 # (best_slack_match_via_associates) keeps working for new hires — added
 # 2026-07-21 per explicit request. Gated off by default like the other
 # reminder loops (Okami finalize) until confirmed working.
-ASSOCIATE_DATA_REMINDER_ACTIVE = os.getenv("ASSOCIATE_DATA_REMINDER_ACTIVE", "false").lower() == "true"
 ASSOCIATE_DATA_STALE_DAYS = 7
 LAST_ASSOCIATE_UPLOAD_KEY = "associate_data_last_upload"
 ASSOCIATE_DATA_REMINDER_KEY = "associate_data_weekly_reminder"
@@ -59,7 +59,6 @@ ASSOCIATE_DATA_REMINDER_KEY = "associate_data_weekly_reminder"
 # ops_ingest.py) — a brand-new driver can never already have a Slack
 # link at creation time (linking is a separate backfill process), so
 # "new driver created" and "new unlinked driver" are the same event.
-UNLINKED_DRIVER_ALERT_ACTIVE = os.getenv("UNLINKED_DRIVER_ALERT_ACTIVE", "false").lower() == "true"
 
 
 def notify_new_unlinked_drivers(names: list[str]) -> None:
@@ -67,7 +66,7 @@ def notify_new_unlinked_drivers(names: list[str]) -> None:
     from a schedule upload — they won't be Slack-linked until the next
     associate-data import. Best-effort: never raises into the caller's
     ingest path."""
-    if not UNLINKED_DRIVER_ALERT_ACTIVE or not names:
+    if not get_flag("UNLINKED_DRIVER_ALERT_ACTIVE") or not names:
         return
     try:
         client = _slack_client()
@@ -93,7 +92,7 @@ def run_associate_data_reminder(db: Session) -> dict:
     hasn't been re-uploaded via /drivers/import-ssn-slack in
     ASSOCIATE_DATA_STALE_DAYS+ days. Reminder-only — never re-runs the
     import itself. Call on a periodic loop (see main.py)."""
-    if not ASSOCIATE_DATA_REMINDER_ACTIVE:
+    if not get_flag("ASSOCIATE_DATA_REMINDER_ACTIVE"):
         return {"status": "inactive"}
 
     upload_state = get_reminder_state(db, LAST_ASSOCIATE_UPLOAD_KEY)
@@ -336,7 +335,6 @@ def recompute_stale(days: int = 30, db: Session = Depends(get_db)):
 # named assignment to #nday-hr instead of silently sitting unlinked.
 # ─────────────────────────────────────────────────────────────────────────────
 
-WEEKLY_SLACK_RELINK_ACTIVE = os.getenv("WEEKLY_SLACK_RELINK_ACTIVE", "false").lower() == "true"
 _WEEKLY_RELINK_KEY = "weekly_slack_relink"
 
 
@@ -367,7 +365,7 @@ def run_weekly_slack_relink(db: Session, force: bool = False) -> dict:
     """Monday-only (unless force=True): re-match every active, unlinked
     driver against the live Slack member list; anyone still unmatched
     gets posted to #nday-hr by name."""
-    if not WEEKLY_SLACK_RELINK_ACTIVE:
+    if not get_flag("WEEKLY_SLACK_RELINK_ACTIVE"):
         return {"status": "inactive", "note": "Set WEEKLY_SLACK_RELINK_ACTIVE=true on Render to enable"}
 
     import zoneinfo

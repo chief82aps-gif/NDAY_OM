@@ -317,6 +317,26 @@ async def _timecard_report_nudge_loop():
         await asyncio.sleep(60)
 
 
+async def _ecp_screenshot_reminder_loop():
+    """Every 60 s — delegates to mgt_reminders.run_ecp_screenshot_reminder(),
+    which no-ops before 5 PM Pacific, scans #dlv3-nday-info for Amazon's ECP
+    message, and posts to #nday-mgt asking for the Scheduling-page
+    screenshot once seen. Gated by ECP_SCREENSHOT_REMINDER_ACTIVE
+    (default false)."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(mgt_reminders.run_ecp_screenshot_reminder, db)
+            except Exception as exc:
+                logger.warning("ECP screenshot reminder loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("ECP screenshot reminder loop outer error: %s", exc)
+        await asyncio.sleep(60)
+
+
 async def _okami_finalize_reminder_loop():
     """Every 60 s — delegates to okami_capacity.run_okami_finalize_reminder(),
     which nags #nday-mgt every 5 min from 3:30 PM until Okami is finalized
@@ -701,6 +721,7 @@ async def startup():
     asyncio.create_task(_wave_lead_watcher_loop())
     asyncio.create_task(_mgt_reminders_loop())
     asyncio.create_task(_timecard_report_nudge_loop())
+    asyncio.create_task(_ecp_screenshot_reminder_loop())
     asyncio.create_task(_okami_finalize_reminder_loop())
     asyncio.create_task(_associate_data_reminder_loop())
     asyncio.create_task(_dm_response_summary_loop())

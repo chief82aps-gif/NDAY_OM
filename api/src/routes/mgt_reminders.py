@@ -365,3 +365,76 @@ def run_timecard_report_nudge(db: Session, force: bool = False) -> dict:
 def trigger_timecard_nudge(force: bool = True, db: Session = Depends(get_db)):
     """Manual trigger for testing/recovery — same function the daily loop calls."""
     return run_timecard_report_nudge(db, force=force)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ECP screenshot reminder — added 2026-07-31. Once Amazon's ECP message
+# lands in #dlv3-nday-info (same detection daily_notify.py already uses to
+# prompt the Cortex-upload message), post to #nday-mgt asking someone to
+# grab a screenshot of Amazon's Scheduling page's Unassigned section
+# before dispatch rosters. At that exact moment nothing's rostered yet, so
+# Unassigned shows every block for the day broken out by wave time — the
+# raw per-wave capacity data the wave/rank rostering suggestion needs.
+# Reuses daily_notify.py's scan_for_ecp_message() for detection rather
+# than re-implementing the same #dlv3-nday-info ECP+"roster" keyword scan.
+# Fires once the message is seen, not on a fixed clock time (Amazon
+# typically posts it around 5 PM, but not at a guaranteed minute) —
+# rostering must be complete by 7:00 PM regardless.
+# ─────────────────────────────────────────────────────────────────────────────
+
+ECP_SCREENSHOT_REMINDER_ACTIVE = os.getenv("ECP_SCREENSHOT_REMINDER_ACTIVE", "false").lower() == "true"
+ECP_SCREENSHOT_CHECK_START_HOUR = 17  # don't bother scanning before ~5 PM
+_ECP_SCREENSHOT_KEY_PREFIX = "ecp_screenshot_reminder_"
+
+
+def run_ecp_screenshot_reminder(db: Session, force: bool = False) -> dict:
+    """Checked every ~60s from 5 PM Pacific onward. Fires once per day, the
+    moment Amazon's ECP message shows up in #dlv3-nday-info. force=True
+    bypasses the hour gate/already-sent guard for manual testing."""
+    if not ECP_SCREENSHOT_REMINDER_ACTIVE:
+        return {"status": "inactive", "note": "Set ECP_SCREENSHOT_REMINDER_ACTIVE=true on Render to enable"}
+
+    now_pt = datetime.now(PT)
+    today = now_pt.date()
+
+    if not force and now_pt.hour < ECP_SCREENSHOT_CHECK_START_HOUR:
+        return {"status": "before_window", "date": today.isoformat()}
+
+    state_key = f"{_ECP_SCREENSHOT_KEY_PREFIX}{today.isoformat()}"
+    if not force and get_reminder_state(db, state_key).get("sent_at"):
+        return {"status": "already_sent", "date": today.isoformat()}
+
+    from api.src.routes.daily_notify import scan_for_ecp_message
+    msg = scan_for_ecp_message()
+    if not msg:
+        return {"status": "no_ecp_message", "date": today.isoformat()}
+
+    client = _client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    try:
+        client.chat_postMessage(
+            channel=MGT_CHANNEL,
+            text=(
+                ":camera: *ECP has run — grab the Scheduling screenshot for Blake*\n\n"
+                "Amazon's ECP message just landed in #dlv3-nday-info. Before rostering "
+                "starts, grab a screenshot of the *Scheduling* page's Unassigned section "
+                "(nothing's rostered yet, so it'll show every block for today broken out "
+                "by wave time) and upload it — that's the per-wave capacity data needed "
+                "for today's ranked roster suggestion.\n\n"
+                "Roster needs to be complete by 7:00 PM."
+            ),
+        )
+    except Exception as exc:
+        logger.warning("ECP screenshot reminder post failed: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+    set_reminder_state(db, state_key, {"sent_at": datetime.utcnow().isoformat()})
+    return {"status": "sent", "date": today.isoformat()}
+
+
+@router.post("/ecp-screenshot/trigger")
+def trigger_ecp_screenshot_reminder(force: bool = True, db: Session = Depends(get_db)):
+    """Manual trigger for testing/recovery — same function the daily loop calls."""
+    return run_ecp_screenshot_reminder(db, force=force)

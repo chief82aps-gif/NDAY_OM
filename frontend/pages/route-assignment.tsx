@@ -68,7 +68,8 @@ function resolveApi(): string {
 }
 
 const STANDING_COLOR: Record<string, string> = {
-  Platinum: '#60a5fa', Gold: '#f59e0b', Silver: '#94a3b8', Bronze: '#b45309', Unknown: '#6b7280',
+  Platinum: '#60a5fa', Gold: '#f59e0b', Silver: '#94a3b8', Bronze: '#b45309',
+  Tin: '#94a3b8', Lead: '#64748b', Sawdust: '#f87171', Unknown: '#6b7280',
 };
 
 function standingChip(s: string | null) {

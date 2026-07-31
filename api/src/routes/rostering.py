@@ -38,8 +38,6 @@ from api.src.database import (
     NightlyRosterReminder,
     DriverShiftDM,
     MgtSummaryPost,
-    QualityMetricDriver,
-    QualityMetricSnapshot,
     AttendanceEvent,
     DailyRouteAssignment,
     WaveLeadNotification,
@@ -98,8 +96,16 @@ _ACTIVE = os.getenv("ROSTERING_ACTIVE", "false").lower() == "true"
 # Set DRIVER_DM_ACTIVE=true on Render to enable.
 _DM_ACTIVE = os.getenv("DRIVER_DM_ACTIVE", "false").lower() == "true"
 
-# Standing rank for quality tiers
-_STANDING_RANK = {"Platinum": 4, "Gold": 3, "Silver": 2, "Bronze": 1}
+# Standing rank for quality tiers, sourced from driver_scoring.py's blended
+# 20/40/40 overall tier (Platinum down through Sawdust) -- fixed 2026-07-30,
+# same ranking-unification already applied to route_assignment.py's
+# _load_quality_map() (2026-07-29) and quality.py's get_rankings()
+# (2026-07-30). This used to be its own separate 4-tier rank off Amazon's
+# raw overall_standing string, which never had Tin/Lead/Sawdust at all --
+# a real, pre-existing disagreement with driver_scoring.py documented as an
+# architecture violation in Governance/SRD_MODULE_ARCHITECTURE_v3.md.
+_STANDING_RANK = {"Platinum": 7, "Gold": 6, "Silver": 5, "Bronze": 4, "Tin": 3, "Lead": 2, "Sawdust": 1}
+_TIER_DISPLAY = {"gray": "Unknown"}
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -176,30 +182,26 @@ def _resolve_showtime(night_prior: Optional[str], day_of: Optional[str]) -> Opti
 
 
 def _latest_quality_map(db: Session) -> dict[str, dict]:
-    """Return {driver_name: {standing, score}} from the most recent quality snapshot."""
-    latest = (
-        db.query(QualityMetricSnapshot)
-        .order_by(QualityMetricSnapshot.id.desc())
-        .first()
-    )
-    if not latest:
-        return {}
-    rows = (
-        db.query(QualityMetricDriver)
-        .filter(QualityMetricDriver.snapshot_id == latest.id)
-        .all()
-    )
+    """Return {driver_name: {standing, score}}, sourced from
+    driver_scoring.py's blended 20/40/40 overall score/tier (fixed
+    2026-07-30 -- see _STANDING_RANK comment above)."""
+    from api.src.routes.driver_scoring import compute_driver_scores
+
     return {
-        r.driver_name: {
-            "standing": r.overall_standing or "Bronze",
-            "score": float(r.overall_score or 0),
+        s["driver_name"]: {
+            "standing": _TIER_DISPLAY.get(s["overall_tier"], s["overall_tier"].capitalize()),
+            "score": s["overall"] if s["overall"] is not None else 0.0,
         }
-        for r in rows
+        for s in compute_driver_scores(db)
+        if s["driver_name"]
     }
 
 
 def _standing_emoji(st: str) -> str:
-    return {"Platinum": "💎", "Gold": "🥇", "Silver": "🥈", "Bronze": "🥉"}.get(st, "❔")
+    return {
+        "Platinum": "💎", "Gold": "🥇", "Silver": "🥈", "Bronze": "🥉",
+        "Tin": "🔩", "Lead": "✏️", "Sawdust": "🪵",
+    }.get(st, "❔")
 
 
 def _called_out_today(shift_date: date, db: Session) -> tuple[set[str], set[int]]:

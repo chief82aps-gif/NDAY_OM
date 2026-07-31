@@ -4,7 +4,7 @@ Route Assignment Board — daily assignment management combining Cortex + DOP + 
 Workflow:
   1. Load Cortex routes for the date (Amazon's initial driver assignments)
   2. Overlay DOP data for staging location, wave, and planned packages
-  3. Rank drivers by quality score (Platinum > Gold > Silver > Bronze, then by score)
+  3. Rank drivers by driver_scoring.py's blended overall tier (Platinum down through Sawdust, then by score)
   4. Apply callout rule: called-out drivers drop to priority tier 3 (last resort)
   5. Auto-assign vans using service-type fallback chain and 7-day driver affinity
   6. Finalize → write to daily_route_assignments → trigger DM notifications

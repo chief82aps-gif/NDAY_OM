@@ -34,8 +34,17 @@ router = APIRouter(prefix="/quality", tags=["quality"])
 
 CORTEX_CHANNEL = os.getenv("CORTEX_NOTIFY_CHANNEL", "C0BE4ALL1EX")
 
-# Tier ordering for rostering priority (higher = better)
-_STANDING_RANK = {"Platinum": 4, "Gold": 3, "Silver": 2, "Bronze": 1}
+# Tier display/ordering, sourced from driver_scoring.py's blended 20/40/40
+# overall tier (Platinum down through Sawdust) -- fixed 2026-07-30, same
+# ranking-unification already applied to route_assignment.py's
+# _load_quality_map() on 2026-07-29. This used to be its own separate
+# _STANDING_RANK off Amazon's raw overall_standing string, which never had
+# Tin/Lead/Sawdust at all -- a real, pre-existing disagreement with
+# driver_scoring.py documented as an architecture violation in
+# Governance/SRD_MODULE_ARCHITECTURE_v3.md.
+_TIER_DISPLAY = {"gray": "Unknown"}
+_TIER_ORDER = ["platinum", "gold", "silver", "bronze", "tin", "lead", "sawdust", "gray"]
+_TIER_RANK = {name: len(_TIER_ORDER) - i for i, name in enumerate(_TIER_ORDER)}
 
 # Human-readable labels for bottom-metric callouts
 _METRIC_LABELS: Dict[str, str] = {
@@ -189,14 +198,14 @@ def _focus_areas(driver: QualityMetricDriver, top_n: int = 3) -> List[str]:
     return [label for label, _ in sorted_asc[:top_n] if _ < 100]
 
 
-def _driver_to_dict(driver: QualityMetricDriver, rank: int) -> dict:
+def _driver_to_dict(driver: QualityMetricDriver, rank: int, tier: str = "gray") -> dict:
     return {
         "rank": rank,
         "driver_name": driver.driver_name,
         "transporter_id": driver.transporter_id,
-        "overall_standing": driver.overall_standing,
+        "overall_standing": _TIER_DISPLAY.get(tier, tier.capitalize()),
         "overall_score": float(driver.overall_score) if driver.overall_score is not None else None,
-        "standing_rank": _STANDING_RANK.get(driver.overall_standing or "", 0),
+        "standing_rank": _TIER_RANK.get(tier, 0),
         "focus_areas": _focus_areas(driver),
         "metrics": {
             "speeding_rate": float(driver.speeding_rate) if driver.speeding_rate is not None else None,
@@ -267,7 +276,17 @@ def list_snapshots(db: Session = Depends(get_db)):
 @router.get("/rankings")
 def get_rankings(week: Optional[str] = None, db: Session = Depends(get_db)):
     """
-    Return all drivers ranked for rostering: Platinum first, then by Overall Score desc.
+    Return all drivers ranked for rostering, sourced from driver_scoring.py's
+    blended 20/40/40 overall tier (Platinum down through Sawdust) -- same
+    ranking-unification fix already applied to route_assignment.py's
+    _load_quality_map() on 2026-07-29. This endpoint was the other place
+    still sorting by the old raw Amazon overall_standing/_STANDING_RANK,
+    which never had Tin/Lead/Sawdust at all.
+
+    Note: driver_scoring.compute_driver_scores() always reflects the latest
+    snapshot, so the tier/rank shown here always reflects current standing
+    even when a historical `week` is requested for the underlying raw
+    metrics below (same limitation _load_quality_map() already has).
     Defaults to the most recent snapshot week.
     """
     if not week:
@@ -286,10 +305,18 @@ def get_rankings(week: Optional[str] = None, db: Session = Depends(get_db)):
         .all()
     )
 
+    from api.src.routes.driver_scoring import compute_driver_scores
+
+    tier_by_tid = {
+        s["transporter_id"]: s["overall_tier"]
+        for s in compute_driver_scores(db)
+        if s["transporter_id"]
+    }
+
     ranked = sorted(
         drivers,
         key=lambda d: (
-            _STANDING_RANK.get(d.overall_standing or "", 0),
+            _TIER_RANK.get(tier_by_tid.get(d.transporter_id, "gray"), 0),
             float(d.overall_score) if d.overall_score is not None else 0,
         ),
         reverse=True,
@@ -299,7 +326,10 @@ def get_rankings(week: Optional[str] = None, db: Session = Depends(get_db)):
         "week": week,
         "snapshot_id": snap.id,
         "driver_count": len(ranked),
-        "drivers": [_driver_to_dict(d, i + 1) for i, d in enumerate(ranked)],
+        "drivers": [
+            _driver_to_dict(d, i + 1, tier_by_tid.get(d.transporter_id, "gray"))
+            for i, d in enumerate(ranked)
+        ],
     }
 
 

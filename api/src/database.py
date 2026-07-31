@@ -3830,6 +3830,41 @@ class AppGlitchReport(Base):
     resolved_by = Column(String(100))
 
 
+class DailyQualitySnapshot(Base):
+    """One row per ingested "Quality Overview" daily CSV -- added
+    2026-07-31. Amazon releases this ~30-48 hours after delivery
+    completion (per explicit user note), a narrower daily counterpart to
+    the weekly DSP Scorecard (QualityMetricSnapshot/QualityMetricDriver):
+    just packages/routes volume, RTS-controllable count, POD%, and DSB
+    count -- not the full safety/quality sub-metric set the weekly file
+    carries, so this does NOT replace or feed driver_scoring.py's blended
+    score. First real file: Quality_Overview_NDAY_DLV3_2026-07-29.csv."""
+    __tablename__ = "daily_quality_snapshots"
+
+    id = Column(Integer, primary_key=True)
+    report_date = Column(Date, nullable=False, index=True, unique=True)
+    source_file = Column(String(255))
+    slack_file_id = Column(String(50))
+    imported_at = Column(DateTime, default=datetime.utcnow)
+    driver_count = Column(Integer, default=0)
+
+
+class DailyQualityRecord(Base):
+    """One row per driver per DailyQualitySnapshot. See
+    DailyQualitySnapshot's docstring for context."""
+    __tablename__ = "daily_quality_records"
+
+    id = Column(Integer, primary_key=True)
+    snapshot_id = Column(Integer, ForeignKey("daily_quality_snapshots.id"), nullable=False, index=True)
+    driver_name = Column(String(150), index=True)          # "Delivery Associate "
+    transporter_id = Column(String(50), index=True)
+    packages_delivered = Column(Integer)
+    routes_completed = Column(Integer)
+    packages_rts_da_controllable = Column(Integer)          # "Packages Returned to Station - DA Controllable"
+    pod_pct = Column(DECIMAL(5, 4))                          # fraction, e.g. 0.9917 for "99.17%"
+    dsb_count = Column(Integer)                              # raw count, not a normalized score
+
+
 def get_db():
     """Get database session"""
     db = SessionLocal()

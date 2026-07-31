@@ -158,6 +158,7 @@ _TYPE_LABELS = {
     "dsp_scorecard":     "DSP Scorecard (PDF)",
     "pod_report":        "POD Report (PDF)",
     "safety_events":     "Safety Dashboard / Netradyne Events (CSV)",
+    "daily_quality":     "Quality Overview (Daily CSV)",
     "tenured_workforce": "Tenured Workforce DAs Report (CSV/Excel)",
     "unknown":           "Unknown — needs manual review",
 }
@@ -192,6 +193,16 @@ def _classify(filename: str, message: str, channel_id: str = "") -> str:
             return "safety_events"
         if any(k in combined for k in ("vehicledata", "vehiclesdata", "vehicle data", "vehicles data", "vehicle_data", "fleet", "daily fleet")):
             return "fleet"
+        # "Quality_Overview_NDAY_DLV3_2026-07-29.csv" -- Amazon's daily
+        # performance export (packages/routes volume, RTS-controllable,
+        # POD%, DSB count), released ~30-48h after delivery completion.
+        # Matched narrowly on the literal underscore form and checked
+        # BEFORE the generic "quality"/"overview" check below, since this
+        # filename would otherwise collide with the WEEKLY quality_csv
+        # classification (which expects a completely different column
+        # set) -- added 2026-07-31.
+        if any(k in combined for k in ("quality_overview", "quality overview")):
+            return "daily_quality"
         if any(k in combined for k in ("quality", "trailing", "overview", "scorecard")):
             return "quality_csv"
         if re.search(r"\bw\d{2}\b", combined):   # W27, W03, etc.
@@ -464,6 +475,11 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
     if t == "safety_events":
         from api.src.routes.safety_events import _store_safety_events
         return _store_safety_events(content, job.file_name, job.slack_file_id, db)
+
+    # ── Quality Overview (Daily CSV) ──────────────────────────────────────────
+    if t == "daily_quality":
+        from api.src.routes.daily_quality import _store_daily_quality
+        return _store_daily_quality(content, job.file_name, job.slack_file_id, db)
 
     # ── Tenured Workforce DAs Report (CSV/Excel) ─────────────────────────────
     if t == "tenured_workforce":
@@ -973,7 +989,7 @@ def manual_misrouted_scan(db: Session = Depends(get_db)):
 # ─────────────────────────────────────────────────────────────────────────────
 
 OPS_AUTO_INGEST_ACTIVE = os.getenv("OPS_AUTO_INGEST_ACTIVE", "true").lower() == "true"
-_AUTO_INGEST_TYPES = ("dvic", "driver_schedule", "fleet", "quality_csv", "safety_events", "dsp_scorecard", "tenured_workforce")
+_AUTO_INGEST_TYPES = ("dvic", "driver_schedule", "fleet", "quality_csv", "safety_events", "dsp_scorecard", "tenured_workforce", "daily_quality")
 
 
 def run_ops_auto_ingest(db: Session) -> dict:

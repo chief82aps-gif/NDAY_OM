@@ -42,7 +42,12 @@ CORTEX_CHANNEL = os.getenv("CORTEX_NOTIFY_CHANNEL", "C0BE4ALL1EX")
 # Tin/Lead/Sawdust at all -- a real, pre-existing disagreement with
 # driver_scoring.py documented as an architecture violation in
 # Governance/SRD_MODULE_ARCHITECTURE_v3.md.
-_TIER_DISPLAY = {"gray": "Unknown"}
+_TIER_DISPLAY = {
+    "gray": "Unknown",
+    "tin": "Does Not Meet Minimum",
+    "lead": "Does Not Meet Minimum",
+    "sawdust": "Does Not Meet Minimum",
+}
 _TIER_ORDER = ["platinum", "gold", "silver", "bronze", "tin", "lead", "sawdust", "gray"]
 _TIER_RANK = {name: len(_TIER_ORDER) - i for i, name in enumerate(_TIER_ORDER)}
 

@@ -104,8 +104,19 @@ _DM_ACTIVE = os.getenv("DRIVER_DM_ACTIVE", "false").lower() == "true"
 # raw overall_standing string, which never had Tin/Lead/Sawdust at all --
 # a real, pre-existing disagreement with driver_scoring.py documented as an
 # architecture violation in Governance/SRD_MODULE_ARCHITECTURE_v3.md.
-_STANDING_RANK = {"Platinum": 7, "Gold": 6, "Silver": 5, "Bronze": 4, "Tin": 3, "Lead": 2, "Sawdust": 1}
-_TIER_DISPLAY = {"gray": "Unknown"}
+#
+# Tin/Lead/Sawdust collapsed to one shared "Does Not Meet Minimum" display
+# string 2026-07-31 (per explicit request) -- they're indistinguishable to
+# a viewer now, so they share one rank too (below Bronze, same as the old
+# Sawdust floor) rather than three unreachable keys that would otherwise
+# silently fall through to the same default-0 rank as "Unknown"/no-data.
+_STANDING_RANK = {"Platinum": 7, "Gold": 6, "Silver": 5, "Bronze": 4, "Does Not Meet Minimum": 1}
+_TIER_DISPLAY = {
+    "gray": "Unknown",
+    "tin": "Does Not Meet Minimum",
+    "lead": "Does Not Meet Minimum",
+    "sawdust": "Does Not Meet Minimum",
+}
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -200,7 +211,7 @@ def _latest_quality_map(db: Session) -> dict[str, dict]:
 def _standing_emoji(st: str) -> str:
     return {
         "Platinum": "💎", "Gold": "🥇", "Silver": "🥈", "Bronze": "🥉",
-        "Tin": "🔩", "Lead": "✏️", "Sawdust": "🪵",
+        "Does Not Meet Minimum": "🚫",
     }.get(st, "❔")
 
 

@@ -37,7 +37,9 @@ const TIER_ICON: Record<string, string> = {
 };
 
 function tierLabel(tier: string): string {
-  return tier === 'gray' ? 'No Data' : tier.charAt(0).toUpperCase() + tier.slice(1);
+  if (tier === 'gray') return 'No Data';
+  if (tier === 'tin' || tier === 'lead' || tier === 'sawdust') return 'Does Not Meet Minimum';
+  return tier.charAt(0).toUpperCase() + tier.slice(1);
 }
 
 export default function WaveLeadFocusPage() {

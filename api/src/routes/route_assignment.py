@@ -140,7 +140,12 @@ def _load_dop_map(target: date, db: Session) -> dict[str, DOP]:
             rows = get_latest_dop_rows(db, latest)
     return {r.route_code: r for r in rows}
 
-_TIER_DISPLAY = {"gray": "Unknown"}
+_TIER_DISPLAY = {
+    "gray": "Unknown",
+    "tin": "Does Not Meet Minimum",
+    "lead": "Does Not Meet Minimum",
+    "sawdust": "Does Not Meet Minimum",
+}
 
 
 def _load_quality_map(db: Session) -> dict[str, dict]:

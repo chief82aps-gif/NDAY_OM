@@ -42,9 +42,9 @@ const TIER_LABEL: Record<string, string> = {
   gold:     'Gold',
   silver:   'Silver',
   bronze:   'Bronze',
-  tin:      'Tin',
-  lead:     'Lead',
-  sawdust:  'Sawdust',
+  tin:      'Does Not Meet Minimum',
+  lead:     'Does Not Meet Minimum',
+  sawdust:  'Does Not Meet Minimum',
   gray:     'No Data',
 };
 

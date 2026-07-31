@@ -2,13 +2,14 @@
 
 Use this index to quickly locate governing standards, ingest rules, audit rules, and technical governance references.
 
-> **Latest snapshot:** [WHERE_WE_LEFT_OFF_2026-07-30.md](WHERE_WE_LEFT_OFF_2026-07-30.md) — login architecture fix, sentiment survey rebuild, callout tightening, DVIC fixes, Wave Lead correction, "Blake" rename, outstanding items.
+> **Latest snapshot:** [WHERE_WE_LEFT_OFF_2026-07-31.md](WHERE_WE_LEFT_OFF_2026-07-31.md) — tier calibration fix, ECP screenshot reminder, full Wave/Rank Rostering design (not yet built — read before scoping that work).
 
 ---
 
 ## System State & Progress
 
-- [Where We Left Off — 2026-07-30](WHERE_WE_LEFT_OFF_2026-07-30.md) — most recent session recap; **read this first**
+- [Where We Left Off — 2026-07-31](WHERE_WE_LEFT_OFF_2026-07-31.md) — most recent session recap; **read this first**
+- [Where We Left Off — 2026-07-30](WHERE_WE_LEFT_OFF_2026-07-30.md) — prior session recap
 - [Progress Snapshot 2026-07-03](Archive/PROGRESS_SNAPSHOT_2026-07-03.md) — Full system state at session close; modules, tables, deployment config, outstanding items
 
 ---

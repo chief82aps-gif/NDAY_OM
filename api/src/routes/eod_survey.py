@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -429,7 +429,7 @@ def submit_survey(req: EodSubmitRequest, db: Session = Depends(get_db)):
     # or injury. This fires unconditionally on submission (not from the
     # frontend's own report-creation calls), so it can't be missed by a
     # dropped network call mid-flow.
-    _alert_mgt_on_serious_flags(req, display_name, survey_date)
+    _alert_mgt_on_serious_flags(req, display_name, survey_date, resp.submitted_at, db)
 
     # Offer the optional sentiment follow-up right after EOD submission —
     # added 2026-07-26, bundled here rather than as its own separate DM/
@@ -446,7 +446,18 @@ def submit_survey(req: EodSubmitRequest, db: Session = Depends(get_db)):
     return {"status": "submitted", "driver": display_name, "flags": flags, "sentiment_token": sentiment_token}
 
 
-def _alert_mgt_on_serious_flags(req: "EodSubmitRequest", driver_name: str, survey_date: date) -> None:
+def _alert_mgt_on_serious_flags(req: "EodSubmitRequest", driver_name: str, survey_date: date, submitted_at: Optional[datetime] = None, db: Optional[Session] = None) -> None:
+    # Timestamp shown on every alert below, added 2026-08-01 per explicit
+    # request ("reviewers can see what time it was completed") -- these
+    # alerts previously only showed the survey_date (day), no time.
+    # submitted_at is naive UTC (EodSurveyResponse's own default), so
+    # convert to Pacific for display, matching this file's other
+    # Pacific-local-time formatting.
+    time_str = ""
+    if submitted_at:
+        local = submitted_at.replace(tzinfo=timezone.utc).astimezone(PACIFIC)
+        time_str = f" at {local.strftime('%-I:%M %p')}"
+
     # Van issues get their own immediate, unconditional (no feature flag)
     # alert straight to #nday-fleet -- added 2026-07-30 per explicit
     # request ("make sure all van reports are reaching #nday-fleet").
@@ -464,16 +475,43 @@ def _alert_mgt_on_serious_flags(req: "EodSubmitRequest", driver_name: str, surve
                 text=(
                     f"🔧 *Van Issue* reported via EOD Survey — *{driver_name}*"
                     + (f" (Van {req.van_number})" if req.van_number else "")
-                    + f" ({survey_date.isoformat()}).\n{req.van_issue_description or 'See survey for details.'}"
+                    + f" ({survey_date.isoformat()}{time_str}).\n{req.van_issue_description or 'See survey for details.'}"
                 ),
             )
         except Exception as exc:
             logger.warning("EOD van-issue fleet alert failed: %s", exc)
 
+    # Management-contact requests get an immediate DM straight to HR --
+    # added 2026-08-01 per explicit request. HR is the only destination
+    # (confirmed: "hr only they will notify the appropriate parties"),
+    # not #nday-mgt. Previously this flag only surfaced in the once-daily
+    # digest (send_daily_eod_category_digests(), gated behind
+    # EOD_CATEGORY_DIGEST_ACTIVE) -- unconditional here, same pattern as
+    # the van-issue alert above, so a request to speak with management
+    # can't sit unseen until the next digest run.
+    if req.needs_management_contact:
+        try:
+            from api.src.routes.document_routing import get_role_slack_ids
+            client = _slack()
+            for sid in get_role_slack_ids(db, "hr"):
+                try:
+                    client.chat_postMessage(
+                        channel=sid,
+                        text=(
+                            f"👔 *Management Contact Requested* via EOD Survey — *{driver_name}* "
+                            f"({survey_date.isoformat()}{time_str}). Please follow up and notify the "
+                            f"appropriate parties."
+                        ),
+                    )
+                except Exception as exc:
+                    logger.warning("EOD management-contact HR DM failed for %s: %s", sid, exc)
+        except Exception as exc:
+            logger.warning("EOD management-contact HR alert failed: %s", exc)
+
     if not (req.crash_occurred or req.injury_occurred or req.incident_occurred):
         return
     lines = []
-    date_str = survey_date.isoformat()
+    date_str = f"{survey_date.isoformat()}{time_str}"
     if req.crash_occurred:
         if req.crash_report_id:
             lines.append(

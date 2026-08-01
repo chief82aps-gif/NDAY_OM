@@ -3983,6 +3983,59 @@ class FeatureFlag(Base):
     updated_by = Column(String(100))
 
 
+class CoachingNotification(Base):
+    """One row per DA/case from Amazon's weekly "Coaching Notifications
+    Weekly Digest" email -- added 2026-08-01. No attachment; the source
+    data is an inline HTML table in the email body (Behavior/Coaching
+    Tip columns are blank on some rows in the real export -- only rows
+    with a populated behavior are DMed, per explicit scoping; blank rows
+    are still stored for completeness).
+
+    Kept deliberately low-key/positive in tone throughout (see
+    coaching_notifications.py's DM copy) -- this is mentoring, not
+    discipline, per explicit direction."""
+    __tablename__ = "coaching_notifications"
+
+    id = Column(Integer, primary_key=True)
+    week = Column(String(20), index=True)                  # e.g. "2026-30"
+    da_name = Column(String(150), index=True)
+    transporter_id = Column(String(50), index=True)
+    station = Column(String(20))
+    case_number = Column(String(30), unique=True, index=True)   # Amazon's own case number -- natural dedup key
+    occurrence_info = Column(Text)                          # raw "date: TBA...; date: TBA..." text
+    behavior = Column(String(200))                          # e.g. "Delivered to Incorrect Address"; blank on some rows
+    coaching_tip = Column(Text)                              # Amazon's own tip text; blank on some rows
+    source_email_id = Column(String(255))                    # internetMessageId of the source email, for dedup/reference
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    roster_id = Column(Integer, ForeignKey("driver_roster.id"), nullable=True, index=True)
+
+
+class CoachingNotificationApproval(Base):
+    """One row per stage of a coaching notification's sequential
+    approval chain (driver acknowledgment -> ops_manager/Luis -> hr) --
+    added 2026-08-01, same shape as CrashReportApproval, except all
+    three stages gate here (HR is a required sign-off, not just an FYI,
+    per explicit direction -- the one deliberate difference from the
+    crash-report pattern)."""
+    __tablename__ = "coaching_notification_approvals"
+
+    id = Column(Integer, primary_key=True)
+    notification_id = Column(Integer, ForeignKey("coaching_notifications.id", ondelete="CASCADE"), nullable=False, index=True)
+    stage_order = Column(Integer, nullable=False)   # 1=driver, 2=ops_manager, 3=hr
+    role = Column(String(30), nullable=False)        # "driver" | "ops_manager" | "hr"
+    status = Column(String(20), default="pending")   # pending | notified | approved
+    notified_at = Column(DateTime)
+    approved_at = Column(DateTime)
+    approved_by = Column(String(100))                # Slack user id
+    slack_channel = Column(String(50))
+    slack_ts = Column(String(50))
+
+    __table_args__ = (
+        Index("idx_coaching_notif_approval_notif_stage", "notification_id", "stage_order", unique=True),
+    )
+
+
 def get_db():
     """Get database session"""
     db = SessionLocal()

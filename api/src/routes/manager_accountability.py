@@ -373,7 +373,7 @@ def discipline_tracker(db: Session = Depends(get_db)):
     ops-manager-signed and crash's per-stage role; None for crash rows
     since those aren't signable from here).
     """
-    from api.src.database import DvicCounselingRecord, DvicViolation, AttendanceEvent, InjuryReport, CrashReport, CrashReportApproval, SafetyEvent
+    from api.src.database import DvicCounselingRecord, DvicViolation, AttendanceEvent, InjuryReport, CrashReport, CrashReportApproval, SafetyEvent, CoachingNotification, CoachingNotificationApproval
 
     # unsigned_callout/dvic_repeat_violation are now fully covered by the
     # direct attendance/dvic queries below (with real occurrence counts
@@ -448,6 +448,30 @@ def discipline_tracker(db: Session = Depends(get_db)):
         )
         for a in approvals:
             crash_approvals_by_report.setdefault(a.report_id, []).append(a)
+
+    # Coaching Notifications (2026-08-01) — Amazon's weekly digest,
+    # driver-ack -> ops_manager -> hr approval chain. Only notifications
+    # with a populated behavior ever get an approval chain at all (see
+    # coaching_notifications.py) -- join against those, not every row.
+    coaching_items = (
+        db.query(CoachingNotification)
+        .join(CoachingNotificationApproval, CoachingNotificationApproval.notification_id == CoachingNotification.id)
+        .filter(CoachingNotificationApproval.status != "approved")
+        .distinct()
+        .order_by(CoachingNotification.created_at.desc())
+        .all()
+    )
+    coaching_approvals_by_notification: dict[int, list] = {}
+    if coaching_items:
+        notification_ids = [n.id for n in coaching_items]
+        approvals = (
+            db.query(CoachingNotificationApproval)
+            .filter(CoachingNotificationApproval.notification_id.in_(notification_ids))
+            .order_by(CoachingNotificationApproval.stage_order)
+            .all()
+        )
+        for a in approvals:
+            coaching_approvals_by_notification.setdefault(a.notification_id, []).append(a)
 
     items = [
         {
@@ -556,6 +580,26 @@ def discipline_tracker(db: Session = Depends(get_db)):
             "occurrence_count": 1,
         }
         for v in safety_violation_items
+    ] + [
+        {
+            "source": "coaching_notification",
+            "id": n.id,
+            "shift_date": n.created_at.date().isoformat() if n.created_at else None,
+            "driver_name": n.da_name,
+            "manager_name": None,
+            "writeup_type": "coaching_notification",
+            "source_detail": f"{n.da_name} — {n.behavior} (Case {n.case_number}, Week {n.week})",
+            "dm_sent_at": next(
+                (a.notified_at.isoformat() for a in coaching_approvals_by_notification.get(n.id, []) if a.stage_order == 1 and a.notified_at),
+                None,
+            ),
+            "needs_sign_role": next(
+                (a.role for a in coaching_approvals_by_notification.get(n.id, []) if a.status != "approved"),
+                None,
+            ),
+            "occurrence_count": None,
+        }
+        for n in coaching_items
     ]
     return {"total_pending": len(items), "items": items}
 

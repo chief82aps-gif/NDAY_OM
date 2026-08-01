@@ -512,6 +512,14 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
         from api.src.routes.dvic import _handle_dvic_pin_button
         _handle_dvic_pin_button(payload, db)
 
+    elif action_id == "coaching_notification_ack":
+        from api.src.routes.coaching_notifications import _handle_coaching_notification_ack
+        _handle_coaching_notification_ack(payload, db)
+
+    elif action_id == "coaching_notification_approve":
+        from api.src.routes.coaching_notifications import _handle_coaching_notification_approve
+        _handle_coaching_notification_approve(payload, db)
+
     elif action_id == "safety_event_confirm":
         from api.src.routes.safety_events import _handle_safety_event_confirm
         _handle_safety_event_confirm(payload, db)

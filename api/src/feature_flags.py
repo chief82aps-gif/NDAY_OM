@@ -146,6 +146,11 @@ FLAG_REGISTRY: dict[str, dict] = {
         "description": "Once Amazon's ECP message lands, asks #nday-mgt for the Scheduling-page screenshot.",
         "category": "Reminders",
     },
+    "COACHING_NOTIFICATIONS_ACTIVE": {
+        "label": "Coaching Notifications",
+        "description": "Scans for Amazon's weekly Coaching Notifications digest (forwarded into Slack) and runs the driver-ack -> ops_manager -> HR approval chain.",
+        "category": "Coaching Notifications",
+    },
     "RESCUE_PAYROLL_REPORT_ACTIVE": {
         "label": "Rescue Payroll Report",
         "description": "Weekly rescue bonus payroll report send.",

@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.src.routes import uploads, auth, audit, enhanced_audit, weekly_audit, weekly_audit_upload, rescue
 from api.src.routes import daily_notify, quality, attendance, attendance_reports, ops_ingest, dvic, dsp_scorecard_weekly, eod_survey, route_assignment, slack_interactions, slack_home, manager_accountability
-from api.src.routes import rostering, cortex_tracking, adp, rts, mgt_reminders, document_routing, crash_report, drivers, candidates, safety_events, okami_capacity, driver_scoring, route_bands, driver_lead_schedule, injury_report, sentiment_survey, wave_lead, glitch_reports, daily_quality, nday_points, feature_flags
+from api.src.routes import rostering, cortex_tracking, adp, rts, mgt_reminders, document_routing, crash_report, drivers, candidates, safety_events, okami_capacity, driver_scoring, route_bands, driver_lead_schedule, injury_report, sentiment_survey, wave_lead, glitch_reports, daily_quality, nday_points, feature_flags, coaching_notifications
 from api.src.routes.daily_notify import check_and_notify, check_ecp_and_prompt
 from api.src.routes.rostering import send_nightly_roster_reminder, send_wave_lead_pre_wave_dm, send_missing_drivers_summary
 from api.src.schedule_config import SCHEDULE_GAP_CHECK_HOUR
@@ -62,6 +62,23 @@ async def _dvic_reminder_loop():
         except Exception as exc:
             logger.warning("DVIC reminder loop error: %s", exc)
         await asyncio.sleep(60)
+
+
+async def _coaching_notifications_scan_loop():
+    """Every 10 min — delegates to coaching_notifications.scan_for_coaching_notifications(),
+    which no-ops entirely unless COACHING_NOTIFICATIONS_ACTIVE is on."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(coaching_notifications.scan_for_coaching_notifications, db)
+            except Exception as exc:
+                logger.warning("Coaching notifications scan loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("Coaching notifications scan loop outer error: %s", exc)
+        await asyncio.sleep(600)
 
 
 async def _eod_survey_loop():
@@ -710,6 +727,7 @@ async def startup():
     asyncio.create_task(_ops_ingest_scan_loop())
     asyncio.create_task(_ops_auto_ingest_loop())
     asyncio.create_task(_dvic_reminder_loop())
+    asyncio.create_task(_coaching_notifications_scan_loop())
     asyncio.create_task(_dsp_scorecard_reminder_loop())
     asyncio.create_task(_eod_survey_loop())
     asyncio.create_task(manager_accountability.manager_accountability_loop())
@@ -803,6 +821,7 @@ app.include_router(glitch_reports.router)
 app.include_router(daily_quality.router)
 app.include_router(nday_points.router)
 app.include_router(feature_flags.router)
+app.include_router(coaching_notifications.router)
 
 @app.get("/")
 def root():

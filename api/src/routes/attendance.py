@@ -47,6 +47,22 @@ router = APIRouter(prefix="/attendance", tags=["attendance"])
 PACIFIC = ZoneInfo("America/Los_Angeles")
 
 
+def _pin_matches(roster_entry: Optional["DriverRosterEntry"], submitted_pin: Optional[str], db: Session) -> bool:
+    """True if submitted_pin is either the driver's own ssn_last4 PIN or
+    today's shared daily fallback PIN (mgt_reminders.py) -- the fallback is
+    additive, checked only when the driver's own PIN doesn't match, never a
+    replacement for it. Added 2026-08-01 alongside the daily fallback PIN
+    feature so dispatch has a way to unlock a driver who's forgotten theirs."""
+    if not roster_entry or not submitted_pin:
+        return False
+    submitted = submitted_pin.strip()
+    if roster_entry.ssn_last4 and roster_entry.ssn_last4 == submitted:
+        return True
+    from api.src.routes.mgt_reminders import get_daily_fallback_pin
+    fallback = get_daily_fallback_pin(db)
+    return bool(fallback and fallback == submitted)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Pattern Detection Helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -885,7 +901,7 @@ def driver_status(driver_name: str, ssn_last4: str, db: Session = Depends(get_db
         DriverRosterEntry.is_active == True,
     ).first()
 
-    if not roster_entry or not roster_entry.ssn_last4 or roster_entry.ssn_last4 != ssn_last4.strip():
+    if not _pin_matches(roster_entry, ssn_last4, db):
         raise HTTPException(401, "Name or PIN is incorrect.")
 
     return _build_driver_status_response(roster_entry, db)
@@ -944,7 +960,7 @@ def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
         except Exception:
             raise HTTPException(401, "Invalid callout token.")
     else:
-        if not roster_entry.ssn_last4 or not req.ssn_last4 or roster_entry.ssn_last4 != req.ssn_last4.strip():
+        if not _pin_matches(roster_entry, req.ssn_last4, db):
             raise HTTPException(401, "Name or PIN is incorrect.")
 
     today = datetime.now(PACIFIC).date()
@@ -1076,7 +1092,7 @@ def change_driver_pin(req: ChangePinRequest, db: Session = Depends(get_db)):
         DriverRosterEntry.is_active == True,
     ).first()
 
-    if not roster_entry or not roster_entry.ssn_last4 or roster_entry.ssn_last4 != req.current_pin.strip():
+    if not _pin_matches(roster_entry, req.current_pin, db):
         raise HTTPException(401, "Name or PIN is incorrect.")
 
     if not req.new_pin.isdigit() or len(req.new_pin) != 4:
@@ -1106,7 +1122,7 @@ def family_pattern_check(
         func.lower(DriverRosterEntry.payroll_name) == driver_name.lower(),
         DriverRosterEntry.is_active == True,
     ).first()
-    if not roster_entry or not roster_entry.ssn_last4 or roster_entry.ssn_last4 != ssn_last4.strip():
+    if not _pin_matches(roster_entry, ssn_last4, db):
         raise HTTPException(401, "Name or PIN is incorrect.")
 
     since_60 = datetime.now(PACIFIC).date() - timedelta(days=60)

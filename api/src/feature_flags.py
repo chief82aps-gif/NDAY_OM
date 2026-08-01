@@ -186,6 +186,11 @@ FLAG_REGISTRY: dict[str, dict] = {
         "description": "Automatically processes detected ingest files instead of requiring manual confirmation. On by default.",
         "category": "Ingest",
     },
+    "DAILY_FALLBACK_PIN_ACTIVE": {
+        "label": "Daily Fallback PIN",
+        "description": "Generates one shared PIN per day, posted to #nday-mgt, accepted alongside (not instead of) each driver's own PIN everywhere it's checked.",
+        "category": "Attendance",
+    },
 }
 
 

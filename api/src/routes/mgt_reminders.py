@@ -437,3 +437,88 @@ def run_ecp_screenshot_reminder(db: Session, force: bool = False) -> dict:
 def trigger_ecp_screenshot_reminder(force: bool = True, db: Session = Depends(get_db)):
     """Manual trigger for testing/recovery — same function the daily loop calls."""
     return run_ecp_screenshot_reminder(db, force=force)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Daily fallback PIN — added 2026-08-01. A driver's personal callout/EOD PIN
+# (DriverRosterEntry.ssn_last4) is the only way in today, and dispatchers have
+# no way to get someone back in when it's forgotten short of an admin PIN
+# reset. This is a single shared code, regenerated once per day and posted to
+# #nday-mgt, that dispatch can hand out face-to-face to anyone locked out that
+# day — it supplements each driver's own PIN everywhere it's checked
+# (attendance.py's driver_status/submit_callout/change_driver_pin/
+# family_pattern_check), it never replaces it. Gated by
+# DAILY_FALLBACK_PIN_ACTIVE (default false) -- off means no code is ever
+# generated or accepted, today's individual-PIN-only behavior is unchanged.
+# Explicit, acknowledged tradeoff from the person who asked for this: if
+# dispatchers can't be trusted to keep it from spreading past whoever
+# actually needs it that day, this goes away in favor of one-off individual
+# resets instead.
+# ─────────────────────────────────────────────────────────────────────────────
+
+import random as _random
+
+_DAILY_FALLBACK_PIN_KEY = "daily_fallback_pin"
+_DAILY_FALLBACK_PIN_POST_KEY_PREFIX = "daily_fallback_pin_posted_"
+DAILY_FALLBACK_PIN_POST_HOUR = int(os.getenv("DAILY_FALLBACK_PIN_POST_HOUR", "6"))  # early, ahead of showtimes/callouts
+
+
+def get_daily_fallback_pin(db: Session) -> Optional[str]:
+    """Returns today's shared fallback PIN, generating one on first use each
+    day if none exists yet -- so a PIN check that happens before the morning
+    announcement job runs still works off the same code the announcement
+    will post. Returns None when the feature is off."""
+    if not get_flag("DAILY_FALLBACK_PIN_ACTIVE", db):
+        return None
+    today = datetime.now(PT).date().isoformat()
+    state = get_reminder_state(db, _DAILY_FALLBACK_PIN_KEY)
+    if state.get("date") == today and state.get("code"):
+        return state["code"]
+    code = f"{_random.randint(1000, 9999)}"
+    set_reminder_state(db, _DAILY_FALLBACK_PIN_KEY, {"date": today, "code": code})
+    return code
+
+
+def run_daily_fallback_pin_post(db: Session, force: bool = False) -> dict:
+    """Once a day: posts today's shared fallback PIN to #nday-mgt. force=True
+    bypasses the already-sent guard for manual testing."""
+    if not get_flag("DAILY_FALLBACK_PIN_ACTIVE"):
+        return {"status": "inactive", "note": "Set DAILY_FALLBACK_PIN_ACTIVE=true on Render to enable"}
+
+    now_pt = datetime.now(PT)
+    today = now_pt.date()
+
+    if not force and now_pt.hour != DAILY_FALLBACK_PIN_POST_HOUR:
+        return {"status": "not_send_hour", "date": today.isoformat()}
+
+    state_key = f"{_DAILY_FALLBACK_PIN_POST_KEY_PREFIX}{today.isoformat()}"
+    if not force and get_reminder_state(db, state_key).get("sent_at"):
+        return {"status": "already_sent", "date": today.isoformat()}
+
+    code = get_daily_fallback_pin(db)
+    client = _client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    try:
+        client.chat_postMessage(
+            channel=MGT_CHANNEL,
+            text=(
+                f":key: *Today's fallback PIN: {code}*\n\n"
+                "Give this to any driver locked out of the callout page, EOD survey PIN "
+                "prompt, or their own PIN today — it works alongside their personal PIN, "
+                "not instead of it. Only hand it out to the driver who actually needs it."
+            ),
+        )
+    except Exception as exc:
+        logger.warning("Daily fallback PIN post failed: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+    set_reminder_state(db, state_key, {"sent_at": datetime.utcnow().isoformat()})
+    return {"status": "sent", "date": today.isoformat(), "code": code}
+
+
+@router.post("/daily-fallback-pin/trigger")
+def trigger_daily_fallback_pin_post(force: bool = True, db: Session = Depends(get_db)):
+    """Manual trigger for testing/recovery — same function the daily loop calls."""
+    return run_daily_fallback_pin_post(db, force=force)

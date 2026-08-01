@@ -334,6 +334,25 @@ async def _timecard_report_nudge_loop():
         await asyncio.sleep(60)
 
 
+async def _daily_fallback_pin_loop():
+    """Every 60 s — delegates to mgt_reminders.run_daily_fallback_pin_post(),
+    which no-ops outside DAILY_FALLBACK_PIN_POST_HOUR and respects an
+    "already sent today" guard. Gated by DAILY_FALLBACK_PIN_ACTIVE
+    (default false)."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(mgt_reminders.run_daily_fallback_pin_post, db)
+            except Exception as exc:
+                logger.warning("Daily fallback PIN loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("Daily fallback PIN loop outer error: %s", exc)
+        await asyncio.sleep(60)
+
+
 async def _ecp_screenshot_reminder_loop():
     """Every 60 s — delegates to mgt_reminders.run_ecp_screenshot_reminder(),
     which no-ops before 5 PM Pacific, scans #dlv3-nday-info for Amazon's ECP
@@ -740,6 +759,7 @@ async def startup():
     asyncio.create_task(_wave_lead_watcher_loop())
     asyncio.create_task(_mgt_reminders_loop())
     asyncio.create_task(_timecard_report_nudge_loop())
+    asyncio.create_task(_daily_fallback_pin_loop())
     asyncio.create_task(_ecp_screenshot_reminder_loop())
     asyncio.create_task(_okami_finalize_reminder_loop())
     asyncio.create_task(_associate_data_reminder_loop())

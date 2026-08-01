@@ -275,6 +275,25 @@ async def _eod_category_digest_loop():
         await asyncio.sleep(60)
 
 
+async def _eod_completion_report_loop():
+    """Every 60 s — delegates to eod_survey.send_eod_completion_time_report(),
+    which no-ops outside EOD_COMPLETION_REPORT_HOUR and respects an
+    "already sent" guard. Gated by EOD_COMPLETION_REPORT_ACTIVE
+    (default false)."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(eod_survey.send_eod_completion_time_report, db)
+            except Exception as exc:
+                logger.warning("EOD completion report loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("EOD completion report loop outer error: %s", exc)
+        await asyncio.sleep(60)
+
+
 async def _weekly_slack_relink_loop():
     """Every 60 s — delegates to drivers.run_weekly_slack_relink(), which
     no-ops on any day but Monday and respects an "already ran today"
@@ -773,6 +792,7 @@ async def startup():
     asyncio.create_task(_sentiment_survey_weekly_summary_loop())
     asyncio.create_task(_weekly_slack_relink_loop())
     asyncio.create_task(_eod_category_digest_loop())
+    asyncio.create_task(_eod_completion_report_loop())
     asyncio.create_task(_safety_violation_review_loop())
     asyncio.create_task(_website_user_sync_loop())
 

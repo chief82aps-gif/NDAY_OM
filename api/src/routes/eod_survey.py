@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -644,6 +644,78 @@ def send_daily_eod_category_digests(db: Session, force: bool = False) -> dict:
 def trigger_category_digest(force: bool = True, db: Session = Depends(get_db)):
     """Manual trigger for testing/recovery."""
     return send_daily_eod_category_digests(db, force=force)
+
+
+EOD_COMPLETION_REPORT_HOUR = int(os.getenv("EOD_COMPLETION_REPORT_HOUR", "9"))
+_EOD_COMPLETION_REPORT_KEY_PREFIX = "eod_completion_time_report_"
+
+
+def send_eod_completion_time_report(db: Session, force: bool = False) -> dict:
+    """By 9 AM Pacific: posts every driver's EOD survey completion time for
+    the PRIOR day to #nday-hr, so reviewers can see who submitted on time
+    vs. late -- added 2026-08-01 per explicit request. Distinct from
+    send_daily_eod_category_digests() above, which only surfaces flagged
+    items, same-day, at ~22:15. This lists every submission, not just
+    flagged ones. Gated by EOD_COMPLETION_REPORT_ACTIVE (default false)."""
+    if not get_flag("EOD_COMPLETION_REPORT_ACTIVE"):
+        return {"status": "inactive"}
+
+    now = datetime.now(PACIFIC)
+    report_date = now.date() - timedelta(days=1)
+
+    if not force and now.hour != EOD_COMPLETION_REPORT_HOUR:
+        return {"status": "not_send_hour", "date": report_date.isoformat()}
+
+    state_key = f"{_EOD_COMPLETION_REPORT_KEY_PREFIX}{report_date.isoformat()}"
+    if not force and get_reminder_state(db, state_key).get("sent_at"):
+        return {"status": "already_sent", "date": report_date.isoformat()}
+
+    rows = (
+        db.query(EodSurveyResponse)
+        .filter(EodSurveyResponse.survey_date == report_date)
+        .order_by(EodSurveyResponse.submitted_at)
+        .all()
+    )
+    date_str = report_date.strftime("%A, %B %-d")
+
+    lines = []
+    for r in rows:
+        if r.submitted_at:
+            local = r.submitted_at.replace(tzinfo=timezone.utc).astimezone(PACIFIC)
+            time_str = local.strftime("%-I:%M %p")
+        else:
+            time_str = "no timestamp on file"
+        lines.append(f"• *{r.driver_name}* — {time_str}")
+
+    text = (
+        f"🕐 *EOD Completion Times — {date_str}* ({len(rows)} submitted)\n"
+        + ("\n".join(lines) if lines else "No EOD surveys submitted.")
+    )
+
+    sent = False
+    try:
+        client = _slack()
+        from api.src.routes.document_routing import get_role_slack_ids
+        for sid in get_role_slack_ids(db, "hr"):
+            try:
+                client.chat_postMessage(channel=sid, text=text)
+                sent = True
+            except Exception as exc:
+                logger.warning("EOD completion-time report post failed: %s", exc)
+    except Exception as exc:
+        logger.warning("EOD completion-time report failed: %s", exc)
+
+    if not sent:
+        return {"status": "no_slack_token", "date": report_date.isoformat(), "count": len(rows)}
+
+    set_reminder_state(db, state_key, {"sent_at": datetime.utcnow().isoformat()})
+    return {"status": "sent", "date": report_date.isoformat(), "count": len(rows)}
+
+
+@router.post("/trigger-completion-report")
+def trigger_completion_report(force: bool = True, db: Session = Depends(get_db)):
+    """Manual trigger for testing/recovery."""
+    return send_eod_completion_time_report(db, force=force)
 
 
 @router.delete("/responses/{response_id}")

@@ -111,6 +111,11 @@ FLAG_REGISTRY: dict[str, dict] = {
         "description": "Daily digest of EOD survey issues (van/injury/incident flags).",
         "category": "EOD Survey",
     },
+    "EOD_COMPLETION_REPORT_ACTIVE": {
+        "label": "EOD Completion Time Report",
+        "description": "By 9 AM, posts every driver's EOD survey completion time for the prior day to #nday-hr.",
+        "category": "EOD Survey",
+    },
     "SENTIMENT_SURVEY_ACTIVE": {
         "label": "Sentiment Survey Daily AI Summary",
         "description": "Daily job that analyzes free-text sentiment responses and posts an anonymized summary to owner/HR.",

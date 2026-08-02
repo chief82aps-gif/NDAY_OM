@@ -78,13 +78,49 @@ def _issue_eod_token(roster_id: int, transporter_id: Optional[str], driver_name:
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
+def _utc_iso(dt: Optional[datetime]) -> Optional[str]:
+    """EodSurveyResponse.submitted_at is naive UTC (Python-side default).
+    Serializing it with plain .isoformat() (no 'Z'/offset) made every admin
+    page that ran it through JS's `new Date()` silently misread it as
+    already being *local* time -- reported 2026-08-02 as every submission
+    showing up around 2 AM, which is exactly the 7 PM Pacific submission
+    window shifted by the UTC offset with zero conversion applied. Adding
+    'Z' makes the string unambiguous, so `new Date()` + toLocaleTimeString()
+    convert it correctly."""
+    return (dt.isoformat() + "Z") if dt else None
+
+
 def _verify_eod_token(token: str) -> Optional[dict]:
+    """Drivers have been reporting "link expired" often enough (2026-08-02)
+    that the real cause needs to be visible in logs rather than collapsed
+    into one message -- ExpiredSignatureError (genuinely past the 30h
+    window, e.g. an old DM clicked from Slack history), InvalidSignatureError
+    (JWT_SECRET mismatch between the process that issued it and this one --
+    would explain a *chronic*, cross-driver pattern), and a plain decode
+    failure (malformed/truncated token) all used to look identical from the
+    outside. Still returns None uniformly to the caller -- this only adds
+    logging, it doesn't change behavior."""
     secret = os.getenv("JWT_SECRET", "dev-secret")
     try:
         payload = jwt.decode(token, secret, algorithms=["HS256"])
-    except Exception:
+    except jwt.ExpiredSignatureError:
+        try:
+            unverified = jwt.decode(token, options={"verify_signature": False, "verify_exp": False})
+            logger.warning(
+                "EOD token expired: exp=%s driver=%s (token preview %s…)",
+                unverified.get("exp"), unverified.get("driver_name"), token[:16],
+            )
+        except Exception:
+            logger.warning("EOD token expired (unverified payload unreadable, token preview %s…)", token[:16])
+        return None
+    except jwt.InvalidSignatureError:
+        logger.warning("EOD token has an invalid signature (JWT_SECRET mismatch?) — token preview %s…", token[:16])
+        return None
+    except Exception as exc:
+        logger.warning("EOD token failed to decode (%s: %s) — token preview %s…", type(exc).__name__, exc, token[:16])
         return None
     if payload.get("purpose") != "eod_survey":
+        logger.warning("EOD token had wrong purpose=%r — token preview %s…", payload.get("purpose"), token[:16])
         return None
     return payload
 
@@ -343,7 +379,7 @@ def driver_lookup(
         wave=assignment.wave if assignment else None,
         role=role,
         already_submitted=existing is not None,
-        submitted_at=existing.submitted_at.isoformat() if existing else None,
+        submitted_at=_utc_iso(existing.submitted_at) if existing else None,
         survey_date=today.isoformat(),
     )
 
@@ -833,7 +869,7 @@ def _row_to_dict(r: EodSurveyResponse) -> dict:
     return {
         "id": r.id,
         "survey_date": r.survey_date.isoformat() if r.survey_date else None,
-        "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None,
+        "submitted_at": _utc_iso(r.submitted_at),
         "driver_name": r.driver_name,
         "transporter_id": r.transporter_id,
         "van_number": r.van_number,

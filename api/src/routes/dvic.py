@@ -317,10 +317,15 @@ def _dm_blocks(violation: "DvicViolation", stage: int, name: str) -> list:
 
 
 def _notify_dispatch_of_escalation(violation: "DvicViolation", name: str, db: Session) -> None:
-    """Tells #nday-mgt the code for a weekly-frequency escalation --
-    explicit instruction not to hand it over until the conversation has
-    actually happened, since the whole point is forcing that
-    conversation before the violation can clear."""
+    """Tells #nday-mgt a weekly-frequency escalation needs a face-to-face
+    conversation before it can clear. Uses today's shared daily fallback
+    PIN (mgt_reminders.get_daily_fallback_pin(), already posted each
+    morning to #nday-mgt) rather than generating a separate per-violation
+    code -- simplified 2026-08-01 per explicit request: drivers should
+    only ever need the one daily mgt PIN here, never a one-off code to
+    coordinate. Explicit instruction not to hand the PIN over until the
+    conversation has actually happened, since the whole point is forcing
+    that conversation before the violation can clear."""
     date_str = violation.start_date.strftime("%A, %B %-d") if violation.start_date else "recently"
     _post(
         NDAY_MGT_CHANNEL,
@@ -328,7 +333,7 @@ def _notify_dispatch_of_escalation(violation: "DvicViolation", name: str, db: Se
         blocks=[
             {
                 "type": "header",
-                "text": {"type": "plain_text", "text": "🔢 DVIC Escalation — Code Required", "emoji": True},
+                "text": {"type": "plain_text", "text": "🔢 DVIC Escalation — Conversation Required", "emoji": True},
             },
             {
                 "type": "section",
@@ -337,9 +342,8 @@ def _notify_dispatch_of_escalation(violation: "DvicViolation", name: str, db: Se
                     "text": (
                         f"*{name}* just hit their {WEEKLY_FREQUENCY_THRESHOLD}rd under-90-second pre-trip in "
                         f"{WEEKLY_FREQUENCY_WINDOW_DAYS} days (this one {violation.duration_seconds}s on {date_str}).\n\n"
-                        f"Their code is *{violation.dispatch_pin_code}*.\n\n"
-                        "⚠️ *Have the conversation first.* Only give them the code once you've actually talked "
-                        "to them about it — that's the entire point of this step."
+                        "⚠️ *Have the conversation first.* Only give them today's fallback PIN once you've "
+                        "actually talked to them about it — that's the entire point of this step."
                     ),
                 },
             },
@@ -425,7 +429,6 @@ def _action_new_violations(week: str, db: Session, only_tid: Optional[str] = Non
         # a 3rd-in-7-days by definition).
         if stage == 2 and _crosses_weekly_frequency_threshold(v, db):
             v.escalation_tier = "weekly_frequency"
-            v.dispatch_pin_code = f"{random.randint(1000, 9999)}"
 
         roster = _find_roster_entry(name, db)
         if not roster or not roster.slack_member_id:
@@ -1284,9 +1287,16 @@ def _handle_dvic_pin_button(payload: dict, db: Session) -> None:
 
 
 def record_violation_pin_verification(violation_id: int, code: str, db: Session) -> dict:
-    """Verifies a dispatch-supplied code against DvicViolation.dispatch_pin_code
-    and, if correct, clears the violation the same way a normal
-    acknowledgment would -- mirrors record_violation_acknowledgment()'s shape."""
+    """Verifies the entered code against today's shared daily fallback PIN
+    (mgt_reminders.get_daily_fallback_pin() -- the same one posted each
+    morning to #nday-mgt) and, if correct, clears the violation the same
+    way a normal acknowledgment would -- mirrors
+    record_violation_acknowledgment()'s shape. Changed 2026-08-01 from a
+    random per-violation code to the one shared daily PIN, per explicit
+    request that drivers never need a one-off code here, only the mgt
+    PIN. Requires DAILY_FALLBACK_PIN_ACTIVE to be on -- if it's off, no
+    code will ever verify and every weekly-frequency escalation stays
+    stuck until it's enabled."""
     violation = db.query(DvicViolation).filter(DvicViolation.id == violation_id).first()
     if not violation:
         return {"status": "not_found"}
@@ -1296,7 +1306,9 @@ def record_violation_pin_verification(violation_id: int, code: str, db: Session)
             "transporter_name": violation.transporter_name,
             "acknowledged_at": violation.acknowledged_at.isoformat() if violation.acknowledged_at else None,
         }
-    if not violation.dispatch_pin_code or (code or "").strip() != violation.dispatch_pin_code:
+    from api.src.routes.mgt_reminders import get_daily_fallback_pin
+    today_pin = get_daily_fallback_pin(db)
+    if not today_pin or (code or "").strip() != today_pin:
         return {"status": "incorrect_code"}
 
     now = datetime.utcnow()

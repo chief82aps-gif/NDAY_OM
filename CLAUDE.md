@@ -50,6 +50,41 @@ new module) and `Governance/DSP_Route_Manager_Software_Manual.md`.
 - **Next.js gotcha**: no `.lnk`/shortcut files anywhere under
   `frontend/pages/` or the dev server fails to start.
 
+## Driver identity resolution — one canonical module, never reimplement
+
+**`api/src/driver_identity.py` is the one shared place that turns a
+free-text driver-name string into a canonical `DriverRosterEntry` /
+`roster_id`.** Every ingest source (ADP, DOP, Cortex, a schedule file,
+Amazon's quality/scorecard export, a Slack DM, a manager-typed form)
+spells the same driver's name slightly differently — middle initials,
+punctuation, Last/First order. This module was built 2026-07-23 after a
+run of production bugs that all traced back to fuzzy name matching being
+re-derived independently at 12+ call sites, each with its own
+normalization/threshold.
+
+**This has already been rebuilt from scratch at least twice** — once
+before 2026-07-23 (the reason the module exists at all), and again
+2026-08-02 (`rostering.py`'s quality-standing lookups shipped their own
+ad-hoc token matcher instead of using this module, causing many drivers
+to incorrectly show "Unknown" performance despite having real data).
+**Before writing any new name-matching/fuzzy-driver-lookup code, grep for
+`driver_identity` and use `resolve_roster_entry()` / `resolve_roster_id()`
+— do not write a second implementation, even a small one.** If a data
+source's own dict/map needs a driver-identity key (like a quality-score
+lookup table), key it by `roster_id` (resolved once per row via this
+module), not by a raw name string compared against another raw name
+string.
+
+- `resolve_roster_entry(name, db)` — exact `payroll_name` match first,
+  then best-scoring token-overlap fallback (≥2 shared name tokens,
+  comma-stripped, lowercased) among active roster entries.
+- `resolve_roster_id(name, db)` — same, returns just the id.
+- `backfill_roster_ids(db, start, end)` — one-time/rerunnable backfill of
+  `roster_id` onto existing rows that predate this module.
+- Matching is against `payroll_name` only (ADP's "Last, First" spelling)
+  — every other system's driver_name string is ultimately trying to refer
+  to that. Never match against `preferred_name` (display-only).
+
 ## Ingest: append-only, latest-snapshot, never auto-post
 
 This is the single most expensive lesson this project has learned (2026-07).
@@ -418,11 +453,14 @@ most likely to bite if re-derived from code alone rather than looked up:
 
 ## Workflow preferences (established via direct user correction this session)
 
-- **Minimize redeploy cycles.** Render does not auto-deploy on push — the
-  user manually redeploys each time and has explicitly asked not to be put
-  through "render after render." Do a thorough static/code review up front
-  and bundle fixes into as few deploys as possible rather than iterating
-  live in production.
+- **Minimize redeploy cycles.** Render's Auto-Deploy (On Commit) is enabled
+  and confirmed working (verified live via direct curl checks against new
+  endpoints) — every push to `main` triggers a real production deploy. This
+  raises the stakes of pushing, it doesn't lower them: do a thorough
+  static/code review up front, verify locally (import check + a functional
+  test that actually exercises the changed logic) before committing, and
+  confirm with the user before pushing — bundle fixes into as few pushes as
+  reasonably possible rather than pushing on every small edit.
 - **Verify staged files before every commit.** `git status`/`git diff
   --cached --name-only` should show *exactly* the intended files. This repo
   carries 100+ pre-existing untracked/modified files unrelated to any given

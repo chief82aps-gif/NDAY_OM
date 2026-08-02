@@ -198,58 +198,48 @@ def _resolve_showtime(night_prior: Optional[str], day_of: Optional[str]) -> Opti
     return night_prior
 
 
-def _latest_quality_map(db: Session) -> dict[str, dict]:
-    """Return {driver_name: {standing, score}}, sourced from
+def _latest_quality_map(db: Session) -> dict[int, dict]:
+    """Return {roster_id: {standing, score}}, sourced from
     driver_scoring.py's blended 20/40/40 overall score/tier (fixed
-    2026-07-30 -- see _STANDING_RANK comment above)."""
-    from api.src.routes.driver_scoring import compute_driver_scores
+    2026-07-30 -- see _STANDING_RANK comment above).
 
-    return {
-        s["driver_name"]: {
+    Keyed by roster_id (resolved via driver_identity.py's canonical
+    resolve_roster_id()), not the raw driver_name string from the quality
+    ingest. QualityMetricDriver.driver_name comes from a separate source
+    (Amazon's DSP Overview Dashboard) than the schedule/assignment rows
+    this gets looked up against -- an exact-string key silently missed
+    real matches whenever middle initials, punctuation, or Last/First
+    order differed between the two, showing "Unknown" for drivers who
+    actually had current data (reported 2026-08-02). Route every driver
+    identity question through driver_identity.py rather than re-deriving
+    a name match here -- see CLAUDE.md's driver-identity section."""
+    from api.src.routes.driver_scoring import compute_driver_scores
+    from api.src.driver_identity import resolve_roster_id
+
+    result: dict[int, dict] = {}
+    for s in compute_driver_scores(db):
+        if not s["driver_name"]:
+            continue
+        roster_id = resolve_roster_id(s["driver_name"], db)
+        if roster_id is None:
+            continue
+        result[roster_id] = {
             "standing": _TIER_DISPLAY.get(s["overall_tier"], s["overall_tier"].capitalize()),
             "score": s["overall"] if s["overall"] is not None else 0.0,
         }
-        for s in compute_driver_scores(db)
-        if s["driver_name"]
-    }
+    return result
 
 
-_QUALITY_TOKEN_MATCH_THRESHOLD = 2
-
-
-def _quality_tokens(name: str) -> frozenset:
-    return frozenset(re.sub(r"[^a-z\s]", "", (name or "").lower()).split())
-
-
-def _resolve_quality(name: str, quality_map: dict[str, dict]) -> dict:
-    """quality_map is keyed by the name string from the quality/scorecard
-    ingest, which is a different source than the schedule/assignment
-    ingest this gets looked up against -- middle initials, punctuation, or
-    Last/First order can differ between the two, so an exact-string
-    lookup alone was silently missing real matches and showing "Unknown"
-    for drivers who actually had current data (reported 2026-08-02). Exact
-    match first (cheap, common case), else best-scoring token-overlap
-    match (>=2 shared name tokens) — same threshold and "pick the best
-    match, not the first" approach as driver_identity.py's
-    resolve_roster_entry()."""
-    if not name:
+def _resolve_quality(name: str, quality_map: dict[int, dict], db: Session) -> dict:
+    """Resolve name -> roster_id via driver_identity.py's canonical
+    resolver, then look up quality_map (keyed by roster_id) -- this is
+    the one place identity resolution happens, not a second name-matching
+    algorithm living here."""
+    from api.src.driver_identity import resolve_roster_id
+    roster_id = resolve_roster_id(name, db)
+    if roster_id is None:
         return {"standing": "Unknown", "score": 0.0}
-    exact = quality_map.get(name)
-    if exact:
-        return exact
-
-    name_tokens = _quality_tokens(name)
-    if not name_tokens:
-        return {"standing": "Unknown", "score": 0.0}
-
-    best_q = None
-    best_score = 0
-    for qname, q in quality_map.items():
-        score = len(name_tokens & _quality_tokens(qname))
-        if score >= _QUALITY_TOKEN_MATCH_THRESHOLD and score > best_score:
-            best_q = q
-            best_score = score
-    return best_q or {"standing": "Unknown", "score": 0.0}
+    return quality_map.get(roster_id, {"standing": "Unknown", "score": 0.0})
 
 
 def _standing_emoji(st: str) -> str:
@@ -441,7 +431,7 @@ def _build_roster_suggestion(shift_date: date, db: Session) -> list[dict]:
     suggestions = []
     for entry in scheduled:
         name = entry.driver_name
-        q = _resolve_quality(name, quality_map)
+        q = _resolve_quality(name, quality_map, db)
         constraint = DRIVER_VAN_CONSTRAINTS.get(name)
         suggestions.append({
             "driver_name": name,
@@ -1353,7 +1343,7 @@ def _build_assignment_matrix_blocks(shift_date: date, assignments: list, db: Ses
         })
 
     # ── Team-aggregate performance line ──────────────────────────────────
-    resolved_quality = [_resolve_quality(a.driver_name, quality_map) for a in assignments]
+    resolved_quality = [_resolve_quality(a.driver_name, quality_map, db) for a in assignments]
     scored = [q["score"] for q in resolved_quality if q["standing"] != "Unknown"]
     standings = [q["standing"] for q in resolved_quality if q["standing"] != "Unknown"]
     no_data = len(assignments) - len(scored)
@@ -1603,7 +1593,7 @@ def post_driver_summary_matrix(shift_date: date, db: Session, force: bool = Fals
         name = _truncate(_full_name(a.driver_name), 22)
         showtime = _calc_showtime(a.wave) or "—"
         return_time = _calc_return_time(a.wave or "", a.route_duration) or "—"
-        standing = _resolve_quality(a.driver_name, quality_map)["standing"]
+        standing = _resolve_quality(a.driver_name, quality_map, db)["standing"]
         dvic_row = dvic_map.get(a.driver_name)
         if dvic_row and dvic_row.get("avg_seconds") is not None:
             safety_val = f"{dvic_row['avg_seconds']:.0f}s/{dvic_row['instances']}x"

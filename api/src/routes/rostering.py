@@ -214,6 +214,44 @@ def _latest_quality_map(db: Session) -> dict[str, dict]:
     }
 
 
+_QUALITY_TOKEN_MATCH_THRESHOLD = 2
+
+
+def _quality_tokens(name: str) -> frozenset:
+    return frozenset(re.sub(r"[^a-z\s]", "", (name or "").lower()).split())
+
+
+def _resolve_quality(name: str, quality_map: dict[str, dict]) -> dict:
+    """quality_map is keyed by the name string from the quality/scorecard
+    ingest, which is a different source than the schedule/assignment
+    ingest this gets looked up against -- middle initials, punctuation, or
+    Last/First order can differ between the two, so an exact-string
+    lookup alone was silently missing real matches and showing "Unknown"
+    for drivers who actually had current data (reported 2026-08-02). Exact
+    match first (cheap, common case), else best-scoring token-overlap
+    match (>=2 shared name tokens) — same threshold and "pick the best
+    match, not the first" approach as driver_identity.py's
+    resolve_roster_entry()."""
+    if not name:
+        return {"standing": "Unknown", "score": 0.0}
+    exact = quality_map.get(name)
+    if exact:
+        return exact
+
+    name_tokens = _quality_tokens(name)
+    if not name_tokens:
+        return {"standing": "Unknown", "score": 0.0}
+
+    best_q = None
+    best_score = 0
+    for qname, q in quality_map.items():
+        score = len(name_tokens & _quality_tokens(qname))
+        if score >= _QUALITY_TOKEN_MATCH_THRESHOLD and score > best_score:
+            best_q = q
+            best_score = score
+    return best_q or {"standing": "Unknown", "score": 0.0}
+
+
 def _standing_emoji(st: str) -> str:
     return {
         "Platinum": "💎", "Gold": "🥇", "Silver": "🥈", "Bronze": "🥉",
@@ -403,7 +441,7 @@ def _build_roster_suggestion(shift_date: date, db: Session) -> list[dict]:
     suggestions = []
     for entry in scheduled:
         name = entry.driver_name
-        q = quality_map.get(name, {"standing": "Unknown", "score": 0.0})
+        q = _resolve_quality(name, quality_map)
         constraint = DRIVER_VAN_CONSTRAINTS.get(name)
         suggestions.append({
             "driver_name": name,
@@ -1232,7 +1270,15 @@ def _truncate(s: str, width: int) -> str:
 def _build_assignment_matrix_blocks(shift_date: date, assignments: list, db: Session) -> tuple[list, str]:
     """Pure block builder shared by post_assignment_matrix() (#nday-mgt,
     idempotent) and send_assignment_matrix_to_channel() (manual, any
-    channel, always fresh) — same table content either way."""
+    channel, always fresh) — same table content either way.
+
+    Per-driver "Perf" column removed 2026-08-02: this is the one matrix
+    that also gets copied into #nday-team-room (driver-facing) when
+    TEAM_ROOM_MESSAGES_ACTIVE is on, so a per-row standing next to each
+    driver's name meant every driver could see every other driver's
+    individual quality standing — explicit request to stop that PII
+    exposure. The team-aggregate "Team Performance" line below stays,
+    since it names no individual."""
     def _sort_key(a):
         wave_dt = _parse_wave_dt(a.wave or "")
         return (wave_dt is None, wave_dt or datetime.max, _first_name(a.driver_name).lower())
@@ -1250,7 +1296,7 @@ def _build_assignment_matrix_blocks(shift_date: date, assignments: list, db: Ses
         },
     ]
 
-    col_header = f"{'Driver':<22} {'Route':<10} {'Van':<10} {'Stg Loc':<14} {'Return':<9} {'Perf'}"
+    col_header = f"{'Driver':<22} {'Route':<10} {'Van':<10} {'Stg Loc':<14} {'Return'}"
 
     def _flush(wave_label: str, rows: list[str]):
         if not rows:
@@ -1274,9 +1320,8 @@ def _build_assignment_matrix_blocks(shift_date: date, assignments: list, db: Ses
         first_group = False
         name = _truncate(_full_name(a.driver_name), 22)
         return_time = _calc_return_time(a.wave or "", a.route_duration) or "—"
-        standing = quality_map.get(a.driver_name, {}).get("standing", "Unk")
         wave_rows.append(
-            f"{name:<22} {a.route_code or '—':<10} {a.van_number or '—':<10} {a.stage_location or '—':<14} {return_time:<9} {standing}"
+            f"{name:<22} {a.route_code or '—':<10} {a.van_number or '—':<10} {a.stage_location or '—':<14} {return_time}"
         )
     _flush(active_wave, wave_rows)
 
@@ -1308,8 +1353,9 @@ def _build_assignment_matrix_blocks(shift_date: date, assignments: list, db: Ses
         })
 
     # ── Team-aggregate performance line ──────────────────────────────────
-    scored = [quality_map[a.driver_name]["score"] for a in assignments if a.driver_name in quality_map]
-    standings = [quality_map[a.driver_name]["standing"] for a in assignments if a.driver_name in quality_map]
+    resolved_quality = [_resolve_quality(a.driver_name, quality_map) for a in assignments]
+    scored = [q["score"] for q in resolved_quality if q["standing"] != "Unknown"]
+    standings = [q["standing"] for q in resolved_quality if q["standing"] != "Unknown"]
     no_data = len(assignments) - len(scored)
     if scored:
         avg_score = sum(scored) / len(scored)
@@ -1557,7 +1603,7 @@ def post_driver_summary_matrix(shift_date: date, db: Session, force: bool = Fals
         name = _truncate(_full_name(a.driver_name), 22)
         showtime = _calc_showtime(a.wave) or "—"
         return_time = _calc_return_time(a.wave or "", a.route_duration) or "—"
-        standing = quality_map.get(a.driver_name, {}).get("standing", "Unk")
+        standing = _resolve_quality(a.driver_name, quality_map)["standing"]
         dvic_row = dvic_map.get(a.driver_name)
         if dvic_row and dvic_row.get("avg_seconds") is not None:
             safety_val = f"{dvic_row['avg_seconds']:.0f}s/{dvic_row['instances']}x"

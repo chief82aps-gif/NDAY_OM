@@ -324,6 +324,11 @@ def build_dispatch_home_view_blocks(db: Session, dash_user, dash_token: str) -> 
                 },
                 {
                     "type": "button",
+                    "action_id": "dispatch_send_dvic_naughty_list",
+                    "text": {"type": "plain_text", "text": "🚨 Send DVIC Naughty List", "emoji": True},
+                },
+                {
+                    "type": "button",
                     "action_id": "dispatch_open_wave_lead_admin",
                     "text": {"type": "plain_text", "text": "🌊 Wave Lead Admin", "emoji": True},
                     "url": _slack_login_url("/wave-lead-admin", dash_user, dash_token),
@@ -693,6 +698,53 @@ def _handle_dispatch_send_route_matrix(payload: dict, db: Session) -> None:
         _dm_driver(client, user_id, summary)
     except Exception as exc:
         logger.warning("Send-route-matrix summary DM failed for %s: %s", user_id, exc)
+
+
+def _handle_dispatch_send_dvic_naughty_list(payload: dict, db: Session) -> None:
+    """Send DVIC Naughty List — manual, on-demand post of the latest
+    ingested DVIC snapshot's naughty list to #nday-mgt. Reuses
+    dvic.py's post_dvic_naughty_list() (already runs automatically on
+    ingest and via POST /dvic/post-mgt-summary) rather than re-deriving
+    the violator query here -- this button just gives dispatch an
+    on-demand way to re-send it. post_dvic_naughty_list() reports the
+    most recent inspection DATE actually present in the snapshot, which
+    in practice is "the day prior" since Amazon's DVIC export always
+    trails by at least a day."""
+    user_id = payload.get("user", {}).get("id", "")
+    if not is_dispatch_staff(user_id, db):
+        logger.warning("Non-dispatch user %s attempted dispatch_send_dvic_naughty_list", user_id)
+        return
+
+    from api.src.database import DvicSnapshot
+    from api.src.routes.dvic import post_dvic_naughty_list
+
+    snap = (
+        db.query(DvicSnapshot)
+        .order_by(DvicSnapshot.imported_at.desc(), DvicSnapshot.id.desc())
+        .first()
+    )
+    if not snap:
+        result = {"status": "no_data"}
+    else:
+        try:
+            result = post_dvic_naughty_list(snap.id, db)
+        except Exception as exc:
+            logger.exception("Send DVIC naughty list failed")
+            result = {"status": "error", "detail": str(exc)}
+
+    client = _client()
+    if not client:
+        return
+    if result.get("status") == "posted":
+        summary = f":white_check_mark: DVIC Naughty List sent to #nday-mgt for {result.get('date')} ({result.get('violator_count')} violator(s))."
+    elif result.get("status") == "no_data":
+        summary = ":warning: No DVIC violations found for the most recent inspection day — nothing sent."
+    else:
+        summary = f":x: Send DVIC Naughty List failed: {result}"
+    try:
+        _dm_driver(client, user_id, summary)
+    except Exception as exc:
+        logger.warning("Send-DVIC-naughty-list summary DM failed for %s: %s", user_id, exc)
 
 
 def _handle_dispatch_back_from_preview(payload: dict, db: Session) -> None:

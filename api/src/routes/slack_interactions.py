@@ -584,6 +584,10 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
         from api.src.routes.slack_dispatch_home import _handle_dispatch_send_route_matrix
         _handle_dispatch_send_route_matrix(payload, db)
 
+    elif action_id == "dispatch_send_dvic_naughty_list":
+        from api.src.routes.slack_dispatch_home import _handle_dispatch_send_dvic_naughty_list
+        _handle_dispatch_send_dvic_naughty_list(payload, db)
+
     elif action_id == "dispatch_invite_user_button":
         from api.src.routes.slack_dispatch_home import _handle_dispatch_invite_user_button
         _handle_dispatch_invite_user_button(payload, db)

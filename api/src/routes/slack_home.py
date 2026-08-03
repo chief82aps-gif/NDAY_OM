@@ -770,8 +770,18 @@ def _build_combined_home_blocks(slack_user_id: str, db: Session) -> tuple[list, 
     else:
         driver = _resolve_driver(slack_user_id, db)
         info["resolved_driver"] = driver.payroll_name if driver else None
-        blocks += build_home_view_blocks(driver, db)
-        info["sections"].append("driver")
+        if driver is None and (is_dispatch or is_hr):
+            # HR/dispatch-only staff (Amanda et al.) will never have a
+            # DriverRosterEntry linked to their Slack ID -- they aren't
+            # drivers and never will be. Showing the "not linked yet,
+            # contact your dispatcher" warning here reads as a real
+            # problem when it's actually just "you're not a driver,"
+            # since they already got their own dashboard above. Reported
+            # 2026-08-03. Real drivers who aren't dispatch/HR still see it.
+            info["sections"].append("driver_not_applicable")
+        else:
+            blocks += build_home_view_blocks(driver, db)
+            info["sections"].append("driver")
 
     return blocks, info
 

@@ -1634,3 +1634,51 @@ def training_video_watched(req: TrainingVideoTokenRequest, db: Session = Depends
     violation.video_watched_at = datetime.utcnow()
     db.commit()
     return {"status": "watched", "video_watched_at": violation.video_watched_at.isoformat()}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Reliability score input — added 2026-08-02. driver_scoring.py's blended
+# score used to derive its "attendance" slice purely from HRM-023.1 points;
+# it now also factors in DVIC violations (among other write-up types) via
+# this map, per explicit request to move discipline consequences onto a
+# broader reliability ranking rather than points alone. This does NOT
+# change anything about how DVIC violations themselves are actioned,
+# escalated, or acknowledged -- it only reads already-recorded outcomes.
+# ─────────────────────────────────────────────────────────────────────────────
+
+DVIC_RELIABILITY_DEDUCTIONS = {1: 3.0, 2: 6.0}
+DVIC_WEEKLY_FREQUENCY_DEDUCTION = 12.0
+
+
+def get_dvic_reliability_deductions(since_date: date, db: Session) -> dict[int, float]:
+    """{roster_id: deduction} for every DvicViolation actioned since
+    since_date. Resolves identity via DriverRosterEntry.position_id ==
+    transporter_id first (same Amazon transporter-ID concept, exact
+    match), falling back to resolve_roster_entry() by name for roster
+    rows without a position_id on file (schedule-seeded entries)."""
+    since_dt = datetime.combine(since_date, datetime.min.time())
+    violations = (
+        db.query(DvicViolation)
+        .filter(DvicViolation.actioned_at.isnot(None), DvicViolation.actioned_at >= since_dt)
+        .all()
+    )
+    if not violations:
+        return {}
+
+    position_ids = {v.transporter_id for v in violations if v.transporter_id}
+    by_position_id = {
+        e.position_id: e.id
+        for e in db.query(DriverRosterEntry).filter(DriverRosterEntry.position_id.in_(position_ids)).all()
+    } if position_ids else {}
+
+    deductions: dict[int, float] = {}
+    for v in violations:
+        roster_id = by_position_id.get(v.transporter_id)
+        if roster_id is None:
+            entry = resolve_roster_entry(v.transporter_name, db)
+            roster_id = entry.id if entry else None
+        if roster_id is None:
+            continue
+        amount = DVIC_WEEKLY_FREQUENCY_DEDUCTION if v.escalation_tier == "weekly_frequency" else DVIC_RELIABILITY_DEDUCTIONS.get(v.action_stage, 0.0)
+        deductions[roster_id] = deductions.get(roster_id, 0.0) + amount
+    return deductions

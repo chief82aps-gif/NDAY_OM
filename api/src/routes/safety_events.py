@@ -25,7 +25,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from api.src.database import get_db, SessionLocal, SafetyEvent, get_reminder_state, set_reminder_state
+from api.src.database import get_db, SessionLocal, SafetyEvent, DriverRosterEntry, get_reminder_state, set_reminder_state
 from api.src.ingest.safety_events import parse_safety_events
 from api.src.driver_identity import resolve_roster_entry
 from api.src.routes.document_routing import is_dispatch_staff
@@ -571,3 +571,46 @@ def post_pending_reviews_endpoint(db: Session = Depends(get_db)):
     ingested historical rows (e.g. this morning's violations). Gated by
     SAFETY_VIOLATION_REVIEW_ACTIVE."""
     return post_pending_safety_violations(db)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Reliability score input — added 2026-08-02, same purpose/precedent as
+# dvic.py's get_dvic_reliability_deductions(). Only CONFIRMED events count
+# -- an unconfirmed or false-flagged event must never penalize a driver.
+# Only reads already-reviewed outcomes; the Confirm/False-Flag review
+# workflow above is completely unaffected.
+# ─────────────────────────────────────────────────────────────────────────────
+
+SAFETY_VIOLATION_RELIABILITY_DEDUCTION = 8.0
+
+
+def get_safety_reliability_deductions(since_date: date, db: Session) -> dict[int, float]:
+    """{roster_id: deduction} for every CONFIRMED SafetyEvent reported
+    since since_date. Resolves identity via DriverRosterEntry.position_id
+    == transporter_id first (exact match), falling back to
+    resolve_roster_entry() by name for roster rows without a position_id
+    on file (schedule-seeded entries)."""
+    events = (
+        db.query(SafetyEvent)
+        .filter(SafetyEvent.review_status == "confirmed", SafetyEvent.report_date >= since_date)
+        .all()
+    )
+    if not events:
+        return {}
+
+    position_ids = {e.transporter_id for e in events if e.transporter_id}
+    by_position_id = {
+        r.position_id: r.id
+        for r in db.query(DriverRosterEntry).filter(DriverRosterEntry.position_id.in_(position_ids)).all()
+    } if position_ids else {}
+
+    deductions: dict[int, float] = {}
+    for e in events:
+        roster_id = by_position_id.get(e.transporter_id)
+        if roster_id is None:
+            entry = resolve_roster_entry(e.driver_name, db)
+            roster_id = entry.id if entry else None
+        if roster_id is None:
+            continue
+        deductions[roster_id] = deductions.get(roster_id, 0.0) + SAFETY_VIOLATION_RELIABILITY_DEDUCTION
+    return deductions

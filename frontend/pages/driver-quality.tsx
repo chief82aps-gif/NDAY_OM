@@ -112,7 +112,7 @@ function weakestCategory(d: DriverScore): string | null {
   const cats: [string, number | null][] = [
     ['Safety', d.safety],
     ['Quality', d.quality],
-    ['Attendance', d.attendance],
+    ['Reliability', d.attendance],
   ];
   const scored = cats.filter((c): c is [string, number] => c[1] != null);
   if (scored.length === 0) return null;
@@ -172,7 +172,7 @@ function DriverRow({ d, rank, banked }: { d: DriverScore; rank: number; banked: 
                   <td style={{ ...td, textAlign: 'center' }}>{tierBadge(d.quality_tier)}</td>
                 </tr>
                 <tr style={{ borderBottom: '1px solid #1e293b' }}>
-                  <td style={{ ...td, color: '#ccc' }}>Attendance</td>
+                  <td style={{ ...td, color: '#ccc' }}>Reliability</td>
                   <td style={{ ...td, textAlign: 'center', color: '#888' }}>20%</td>
                   <td style={{ ...td, textAlign: 'center' }}>{scoreBar(d.attendance)}</td>
                   <td style={{ ...td, textAlign: 'center' }}>{tierBadge(d.attendance_tier)}</td>
@@ -274,7 +274,7 @@ export default function DriverQualityPage() {
         <div style={{ marginBottom: 24 }}>
           <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>🏆 Mentoring Dashboard</h1>
           <p style={{ color: '#94a3b8', marginTop: 4, fontSize: 13 }}>
-            Every driver ranked by their personal performance score (Safety 40% · Quality 40% · Attendance 20%). Tap a row for the full breakdown.
+            Every driver ranked by their personal performance score (Safety 40% · Quality 40% · Reliability 20%). Tap a row for the full breakdown.
           </p>
         </div>
 

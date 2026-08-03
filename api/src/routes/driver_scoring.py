@@ -17,11 +17,27 @@ separately, so CDF here continues to stand in for both combined
     Speeding 12.5 | Seatbelt 12.5 | Sign/Signal 12.5 | Distractions 7.5 | Following Distance 5.0
   Quality metric proportions:
     DC DPMO 11.9 | DSB 11.9 | POD 2.9 | CDF DPMO (+CED) 17.8 | PSB 5.5
-  Attendance (20% of overall):
-    100 - (trailing-60-day attendance points x 10), floored at 0 -- reuses
-    attendance.py's existing HRM-023.1 points ladder (10 points is that
-    system's own termination threshold, so e.g. 8 points nets a 20%
-    attendance score), no new data collection.
+  Attendance (20% of overall) -- reframed as a "reliability score" 2026-08-02:
+    100 - total deductions, floored at 0. Deductions combine:
+      - trailing-60-day attendance points x 10 (unchanged from the
+        original formula -- attendance.py's HRM-023.1 points ladder still
+        drives its own separate Written Warning/Final Warning/Termination
+        consequences; this just reuses the same point total as one input)
+      - DVIC violations in the same 60-day window (dvic.py's
+        get_dvic_reliability_deductions()): 3 per stage-1, 6 per stage-2,
+        12 for a weekly-frequency escalation
+      - Coaching Notifications in the window (coaching_notifications.py's
+        get_coaching_reliability_deductions()): 4 each
+      - CONFIRMED safety violations in the window (safety_events.py's
+        get_safety_reliability_deductions()): 8 each -- unconfirmed/
+        false-flagged events never count
+    Crash reports and injury reports are deliberately excluded -- both are
+    frequently no-fault or safety-positive-to-report, so docking
+    reliability for filing one would be a bad incentive. This is purely a
+    ranking input (route/schedule priority) -- it changes NO existing
+    write-up workflow, notification, video gate, or sign-off chain; those
+    all keep working exactly as before, this only reads their already-
+    recorded outcomes.
 
 Team & Fleet (Tenured Workforce + Fleet Execution) is dropped entirely
 from the weighted score -- these are DSP-wide/vehicle-level metrics, not
@@ -63,6 +79,7 @@ preserved as-is even though the tier *names* changed.
 """
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends
@@ -73,9 +90,11 @@ from api.src.database import (
     get_db,
     QualityMetricDriver,
     QualityMetricSnapshot,
+    DriverRosterEntry,
     get_trailing_route_count,
     get_latest_tenure_record,
 )
+from api.src.driver_identity import resolve_roster_id
 
 router = APIRouter(prefix="/driver-scoring", tags=["driver-scoring"])
 
@@ -135,11 +154,33 @@ def _weighted_avg(row: QualityMetricDriver, weights: dict) -> Optional[float]:
     return total / total_weight
 
 
-def _attendance_score(driver_name: str, db: Session) -> float:
+RELIABILITY_WINDOW_DAYS = 60
+
+
+def _reliability_score(
+    roster_id: Optional[int],
+    driver_name: str,
+    db: Session,
+    dvic_deductions: dict[int, float],
+    coaching_deductions: dict[int, float],
+    safety_deductions: dict[int, float],
+) -> float:
+    """Replaces the old pure-points _attendance_score() -- see the module
+    docstring's "Attendance (20% of overall)" section for the full
+    breakdown of what feeds this. attendance.py's own points ladder and
+    Written Warning/Final Warning/Termination consequences are entirely
+    separate and unaffected by this function."""
     from api.src.routes.attendance import _driver_points_summary
-    summary = _driver_points_summary(driver_name, db)
-    points = summary["current_points"]
-    return max(0.0, 100.0 - points * 10.0)
+    points = _driver_points_summary(driver_name, db)["current_points"]
+    points_deduction = min(100.0, points * 10.0)
+
+    total_deduction = points_deduction
+    if roster_id is not None:
+        total_deduction += dvic_deductions.get(roster_id, 0.0)
+        total_deduction += coaching_deductions.get(roster_id, 0.0)
+        total_deduction += safety_deductions.get(roster_id, 0.0)
+
+    return max(0.0, 100.0 - total_deduction)
 
 
 def tier_for(score: Optional[float]) -> str:
@@ -172,11 +213,34 @@ def compute_driver_scores(db: Session) -> list[dict]:
         .all()
     )
 
+    # Reliability deduction maps -- built ONCE per call, not per-row (same
+    # "resolve identity once, key by roster_id" pattern as rostering.py's
+    # _latest_quality_map()). Imported lazily to avoid a route-module
+    # import cycle at package load time.
+    since_date = date.today() - timedelta(days=RELIABILITY_WINDOW_DAYS)
+    from api.src.routes.dvic import get_dvic_reliability_deductions
+    from api.src.routes.coaching_notifications import get_coaching_reliability_deductions
+    from api.src.routes.safety_events import get_safety_reliability_deductions
+    dvic_deductions = get_dvic_reliability_deductions(since_date, db)
+    coaching_deductions = get_coaching_reliability_deductions(since_date, db)
+    safety_deductions = get_safety_reliability_deductions(since_date, db)
+
+    # roster_id per QualityMetricDriver row -- exact transporter_id ==
+    # position_id match first, falling back to name resolution, same
+    # precedent as the deduction-map builders above.
+    position_ids = {row.transporter_id for row in rows if row.transporter_id}
+    by_position_id = {
+        e.position_id: e.id
+        for e in db.query(DriverRosterEntry).filter(DriverRosterEntry.position_id.in_(position_ids)).all()
+    } if position_ids else {}
+
     results = []
     for row in rows:
         safety = _weighted_avg(row, SAFETY_WEIGHTS)
         quality = _weighted_avg(row, QUALITY_WEIGHTS)
-        attendance = _attendance_score(row.driver_name, db)
+
+        roster_id = by_position_id.get(row.transporter_id) or resolve_roster_id(row.driver_name, db)
+        attendance = _reliability_score(roster_id, row.driver_name, db, dvic_deductions, coaching_deductions, safety_deductions)
 
         parts = [
             (safety, CATEGORY_WEIGHTS["safety"]),

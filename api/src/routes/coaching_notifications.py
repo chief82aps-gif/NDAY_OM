@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -396,3 +396,29 @@ def list_coaching_notifications(week: Optional[str] = None, db: Session = Depend
             for n in rows
         ]
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Reliability score input — added 2026-08-02, same purpose/precedent as
+# dvic.py's get_dvic_reliability_deductions(). Only reads already-recorded
+# notifications; the driver-ack -> ops_manager -> HR approval chain above
+# is completely unaffected.
+# ─────────────────────────────────────────────────────────────────────────────
+
+COACHING_RELIABILITY_DEDUCTION = 4.0
+
+
+def get_coaching_reliability_deductions(since_date: date, db: Session) -> dict[int, float]:
+    """{roster_id: deduction} for every CoachingNotification created since
+    since_date. roster_id is already a native column here -- no identity
+    resolution needed, unlike DVIC/Safety."""
+    since_dt = datetime.combine(since_date, datetime.min.time())
+    rows = (
+        db.query(CoachingNotification)
+        .filter(CoachingNotification.created_at >= since_dt, CoachingNotification.roster_id.isnot(None))
+        .all()
+    )
+    deductions: dict[int, float] = {}
+    for n in rows:
+        deductions[n.roster_id] = deductions.get(n.roster_id, 0.0) + COACHING_RELIABILITY_DEDUCTION
+    return deductions

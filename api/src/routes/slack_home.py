@@ -777,13 +777,17 @@ def _build_combined_home_blocks(slack_user_id: str, db: Session) -> tuple[list, 
 
 
 @router.get("/debug-publish-home")
-async def debug_publish_home(slack_user_id: str, db: Session = Depends(get_db)) -> dict:
+async def debug_publish_home(slack_user_id: str, dry_run: bool = False, db: Session = Depends(get_db)) -> dict:
     """Read-only-ish diagnostic (does actually call views_publish, same as
     the real thing) — added 2026-07-27 because _publish_home() swallows
     every exception into a log line we can't see without Render log
     access, and coordinating "have them open it right now, then paste
     logs" was too slow/unreliable. Runs the exact same branch logic and
-    returns the real exception + traceback directly in the response."""
+    returns the real exception + traceback directly in the response.
+
+    dry_run=true (added 2026-08-03): skip the actual views_publish call
+    and return the raw blocks instead, for inspecting what someone's Home
+    tab currently renders without touching their live view."""
     import traceback
 
     result = {"slack_user_id": slack_user_id}
@@ -796,6 +800,10 @@ async def debug_publish_home(slack_user_id: str, db: Session = Depends(get_db)) 
         blocks, info = _build_combined_home_blocks(slack_user_id, db)
         result.update(info)
         result["block_count"] = len(blocks)
+        if dry_run:
+            result["status"] = "dry_run"
+            result["blocks"] = blocks
+            return result
         resp = client.views_publish(user_id=slack_user_id, view={"type": "home", "blocks": blocks})
         result["status"] = "published"
         result["slack_ok"] = resp.get("ok")

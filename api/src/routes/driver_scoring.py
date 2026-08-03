@@ -79,12 +79,15 @@ preserved as-is even though the tier *names* changed.
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import timedelta, datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+
+PACIFIC = ZoneInfo("America/Los_Angeles")
 
 from api.src.database import (
     get_db,
@@ -217,7 +220,7 @@ def compute_driver_scores(db: Session) -> list[dict]:
     # "resolve identity once, key by roster_id" pattern as rostering.py's
     # _latest_quality_map()). Imported lazily to avoid a route-module
     # import cycle at package load time.
-    since_date = date.today() - timedelta(days=RELIABILITY_WINDOW_DAYS)
+    since_date = datetime.now(PACIFIC).date() - timedelta(days=RELIABILITY_WINDOW_DAYS)
     from api.src.routes.dvic import get_dvic_reliability_deductions
     from api.src.routes.coaching_notifications import get_coaching_reliability_deductions
     from api.src.routes.safety_events import get_safety_reliability_deductions

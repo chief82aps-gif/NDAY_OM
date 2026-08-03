@@ -98,9 +98,17 @@ def _dm_driver(client, slack_user_id: str, text: str) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _resolve_quality_driver(roster_entry: DriverRosterEntry, db: Session) -> Optional[QualityMetricDriver]:
-    """Match a roster entry to its latest-week quality row by name-token
-    overlap — same approach dvic.py's _find_roster_entry uses in reverse.
-    No FK exists between the two tables today."""
+    """Match a roster entry to its latest-week quality row via
+    driver_identity.py's canonical resolve_roster_id() — previously ran
+    its own private 1-token fuzzy matcher (importing dvic.py's
+    _name_tokens directly, a hub-and-spoke violation) with a weaker
+    threshold than driver_identity.py's 2-shared-token standard, the
+    same reinvented-identity mistake flagged and fixed elsewhere in
+    rostering.py's _latest_quality_map(). No FK exists between the two
+    tables today, so this still resolves by name — just through the one
+    shared resolver instead of a second one living here."""
+    from api.src.driver_identity import resolve_roster_id
+
     latest_week = db.query(func.max(QualityMetricSnapshot.week)).scalar()
     if not latest_week:
         return None
@@ -108,14 +116,10 @@ def _resolve_quality_driver(roster_entry: DriverRosterEntry, db: Session) -> Opt
     if not snap:
         return None
 
-    target = _name_tokens(roster_entry.payroll_name)
-    best: Optional[QualityMetricDriver] = None
-    best_score = 0
     for row in db.query(QualityMetricDriver).filter(QualityMetricDriver.snapshot_id == snap.id).all():
-        score = len(target & _name_tokens(row.driver_name))
-        if score > best_score:
-            best_score, best = score, row
-    return best if best_score >= 1 else None
+        if resolve_roster_id(row.driver_name, db) == roster_entry.id:
+            return row
+    return None
 
 
 def _score_emoji(score: Optional[float]) -> str:

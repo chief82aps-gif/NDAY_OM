@@ -54,6 +54,22 @@ interface EditForm {
   is_active: boolean;
 }
 
+interface ImportMatchSample {
+  driver: string;
+  score: number;
+  pin?: string;
+  slack_id?: string;
+  slack_display?: string;
+  method?: string;
+}
+
+interface ImportResult {
+  status: string;
+  roster_size: number;
+  ssn: { matched: number; unmatched: number; sample: ImportMatchSample[] } | null;
+  slack: { matched: number; unmatched: number; sample: ImportMatchSample[] } | null;
+}
+
 function toForm(d: Driver): EditForm {
   return {
     phone: d.phone ?? '',
@@ -75,7 +91,44 @@ export default function DriversPage() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  const [showImport, setShowImport] = useState(false);
+  const [ssnFile, setSsnFile] = useState<File | null>(null);
+  const [slackFile, setSlackFile] = useState<File | null>(null);
+  const [associateFile, setAssociateFile] = useState<File | null>(null);
+  const [dryRun, setDryRun] = useState(true);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+
   const api = resolveApi();
+
+  const runImport = async () => {
+    if (!ssnFile && !slackFile) {
+      setImportError('Provide at least an SSN export or a Slack export.');
+      return;
+    }
+    setImporting(true);
+    setImportError(null);
+    try {
+      const body = new FormData();
+      if (ssnFile) body.append('ssn_file', ssnFile);
+      if (slackFile) body.append('slack_file', slackFile);
+      if (associateFile) body.append('associate_file', associateFile);
+      const res = await fetch(`${api}/drivers/import-ssn-slack?dry_run=${dryRun}`, {
+        method: 'POST',
+        body,
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data: ImportResult = await res.json();
+      setImportResult(data);
+      if (!dryRun) await load();
+    } catch (e: unknown) {
+      setImportError(e instanceof Error ? e.message : 'Import failed.');
+      setImportResult(null);
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -150,17 +203,139 @@ export default function DriversPage() {
                 Interim source of truth, fed by ADP import and schedule uploads — a future HR module will own create/terminate.
               </p>
             </div>
-            <button
-              onClick={load}
-              disabled={loading}
-              style={{
-                background: loading ? '#1e293b' : '#0ea5e9', color: '#fff', border: 'none', borderRadius: 8,
-                padding: '10px 20px', cursor: loading ? 'default' : 'pointer', fontWeight: 600, fontSize: 14,
-              }}
-            >
-              {loading ? 'Loading…' : 'Refresh'}
-            </button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => setShowImport(v => !v)}
+                style={{
+                  background: showImport ? '#1e40af' : '#334155', color: '#fff', border: 'none', borderRadius: 8,
+                  padding: '10px 20px', cursor: 'pointer', fontWeight: 600, fontSize: 14,
+                }}
+              >
+                📥 Import SSN/Slack Data
+              </button>
+              <button
+                onClick={load}
+                disabled={loading}
+                style={{
+                  background: loading ? '#1e293b' : '#0ea5e9', color: '#fff', border: 'none', borderRadius: 8,
+                  padding: '10px 20px', cursor: loading ? 'default' : 'pointer', fontWeight: 600, fontSize: 14,
+                }}
+              >
+                {loading ? 'Loading…' : 'Refresh'}
+              </button>
+            </div>
           </div>
+
+          {showImport && (
+            <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 12, padding: 20, marginBottom: 24 }}>
+              <h2 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 700, color: '#f1f5f9' }}>
+                SSN / Slack / Associate Data Import
+              </h2>
+              <p style={{ margin: '0 0 16px', fontSize: 13, color: '#64748b' }}>
+                Fuzzy-matches fresh exports against the active roster. Runs as a dry run first so you can review
+                matches before writing anything — flip off "Dry run" and re-run once the sample looks right.
+              </p>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14, marginBottom: 14 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>SSN Export</label>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    onChange={(e) => setSsnFile(e.target.files?.[0] ?? null)}
+                    style={{ ...inputStyle, padding: '6px 8px' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>Slack Member Export</label>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    onChange={(e) => setSlackFile(e.target.files?.[0] ?? null)}
+                    style={{ ...inputStyle, padding: '6px 8px' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>Associate Data (optional)</label>
+                  <input
+                    type="file"
+                    accept=".csv"
+                    onChange={(e) => setAssociateFile(e.target.files?.[0] ?? null)}
+                    style={{ ...inputStyle, padding: '6px 8px' }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, color: '#e2e8f0', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} />
+                  Dry run (preview only, no changes written)
+                </label>
+                <button
+                  onClick={runImport}
+                  disabled={importing || (!ssnFile && !slackFile)}
+                  style={{
+                    background: importing ? '#1e293b' : dryRun ? '#0ea5e9' : '#dc2626', color: '#fff', border: 'none',
+                    borderRadius: 8, padding: '10px 20px', cursor: importing ? 'default' : 'pointer', fontWeight: 600, fontSize: 14,
+                  }}
+                >
+                  {importing ? 'Running…' : dryRun ? 'Preview Matches' : 'Run Import (writes changes)'}
+                </button>
+              </div>
+
+              {importError && (
+                <div style={{ background: '#450a0a', border: '1px solid #7f1d1d', borderRadius: 8, padding: 12, fontSize: 13, color: '#fca5a5', marginBottom: 14 }}>
+                  {importError}
+                </div>
+              )}
+
+              {importResult && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div style={{ fontSize: 13, color: importResult.status === 'applied' ? '#10b981' : '#94a3b8' }}>
+                    {importResult.status === 'applied' ? '✅ Changes written' : '👁 Preview only — nothing written'} · {importResult.roster_size} active drivers checked
+                  </div>
+                  {importResult.ssn && (
+                    <div style={{ background: '#0f172a', borderRadius: 8, padding: 12, fontSize: 13 }}>
+                      <strong style={{ color: '#e2e8f0' }}>SSN / PIN:</strong>{' '}
+                      <span style={{ color: '#10b981' }}>{importResult.ssn.matched} matched</span>,{' '}
+                      <span style={{ color: '#f59e0b' }}>{importResult.ssn.unmatched} unmatched</span>
+                    </div>
+                  )}
+                  {importResult.slack && (
+                    <div style={{ background: '#0f172a', borderRadius: 8, padding: 12, fontSize: 13 }}>
+                      <strong style={{ color: '#e2e8f0' }}>Slack:</strong>{' '}
+                      <span style={{ color: '#10b981' }}>{importResult.slack.matched} matched</span>,{' '}
+                      <span style={{ color: '#f59e0b' }}>{importResult.slack.unmatched} unmatched</span>
+                      {importResult.slack.sample.length > 0 && (
+                        <div style={{ marginTop: 8, maxHeight: 220, overflowY: 'auto' }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                            <thead>
+                              <tr style={{ color: '#64748b', textAlign: 'left' }}>
+                                <th style={{ padding: '4px 8px' }}>Driver</th>
+                                <th style={{ padding: '4px 8px' }}>Slack Name</th>
+                                <th style={{ padding: '4px 8px' }}>Method</th>
+                                <th style={{ padding: '4px 8px' }}>Score</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {importResult.slack.sample.map((row, i) => (
+                                <tr key={i} style={{ borderTop: '1px solid #1e293b', color: '#cbd5e1' }}>
+                                  <td style={{ padding: '4px 8px' }}>{row.driver}</td>
+                                  <td style={{ padding: '4px 8px' }}>{row.slack_display ?? '—'}</td>
+                                  <td style={{ padding: '4px 8px' }}>{row.method ?? '—'}</td>
+                                  <td style={{ padding: '4px 8px' }}>{row.score}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           <div style={{ display: 'flex', gap: 4, marginBottom: 24 }}>
             {([

@@ -49,6 +49,8 @@ interface DriverStatus {
   event_count: number;
   is_default_pin: boolean;
   patterns: AttendancePattern[];
+  third_callout_lockout: boolean;
+  dispatch_phone: string | null;
 }
 
 interface SubmitResult {
@@ -68,7 +70,7 @@ interface SubmitResult {
   unauthorized_message: string | null;
 }
 
-type Step = 'loading' | 'blocked' | 'identify' | 'set-pin' | 'status' | 'details' | 'review' | 'submitting' | 'done' | 'error';
+type Step = 'loading' | 'blocked' | 'identify' | 'set-pin' | 'status' | 'details' | 'review' | 'submitting' | 'done' | 'callout-locked' | 'error';
 
 function fmtDate(iso: string): string {
   const [y, m, d] = iso.split('-');
@@ -165,6 +167,23 @@ export default function CalloutPage() {
   const [result, setResult] = useState<SubmitResult | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
 
+  // Third-callout-in-60-days lockout — the tool locks, the driver doesn't;
+  // they're sent straight to "call dispatch" instead of the normal flow.
+  const [dispatchPhone, setDispatchPhone] = useState('');
+
+  // Fire-and-forget log of a blocked attempt — zero point impact, just a
+  // record that the driver hit the wall and was sent to call dispatch.
+  function logBlockedAttempt(name: string, opts: { token?: string; pin?: string }) {
+    fetch(`${resolveApi()}/attendance/callout/log-blocked-attempt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        driver_name: name,
+        ...(opts.token ? { callout_token: opts.token } : { ssn_last4: opts.pin }),
+      }),
+    }).catch(() => {});
+  }
+
   // On mount: check for ?token= in URL first
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -180,6 +199,12 @@ export default function CalloutPage() {
           return r.json();
         })
         .then(data => {
+          if (data.third_callout_lockout) {
+            logBlockedAttempt(data.driver_name, { token });
+            setDispatchPhone(data.dispatch_phone ?? '');
+            setStep('callout-locked');
+            return;
+          }
           setDriverStatus(data);
           setDriverName(data.driver_name);
           // Pre-fill shift date from token if available
@@ -268,6 +293,12 @@ export default function CalloutPage() {
       if (res.status === 401) { setIdentifyErr('Name or PIN is incorrect.'); return; }
       if (!res.ok) throw new Error(`Server error (${res.status}). Try again or call dispatch directly.`);
       const data = await res.json();
+      if (data.third_callout_lockout) {
+        logBlockedAttempt(driverName, { pin });
+        setDispatchPhone(data.dispatch_phone ?? '');
+        setStep('callout-locked');
+        return;
+      }
       setDriverStatus(data);
       setStep(data.is_default_pin ? 'set-pin' : 'status');
     } catch (err: unknown) {
@@ -418,6 +449,38 @@ export default function CalloutPage() {
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
         <div className="text-slate-400 text-sm">Verifying your link…</div>
       </div>
+    );
+  }
+
+  // ── CALLOUT LOCKED (3rd callout within 60 days) ─────────────────────────────
+  // The tool locks, the driver doesn't — this is the only screen shown, no
+  // other UI, no way back into the normal flow. The attempt is already
+  // logged server-side by the time this renders.
+  if (step === 'callout-locked') {
+    return (
+      <>
+        <Head><title>Call Dispatch — New Day Logistics</title></Head>
+        <div className="min-h-screen bg-slate-900 flex items-center justify-center px-4">
+          <div className="w-full max-w-sm text-center space-y-5">
+            <div className="text-6xl">🚫</div>
+            <h1 className="text-2xl font-bold text-white">You have exceeded the use of this tool</h1>
+            <p className="text-slate-300 text-base leading-relaxed">
+              You must call dispatch and speak with them directly.
+            </p>
+            <p className="text-slate-400 text-sm">
+              Your call-out attempt has been logged.
+            </p>
+            {dispatchPhone && (
+              <a
+                href={`tel:${dispatchPhone}`}
+                className="block bg-red-600 hover:bg-red-500 text-white text-3xl font-bold rounded-2xl py-6"
+              >
+                📞 {dispatchPhone}
+              </a>
+            )}
+          </div>
+        </div>
+      </>
     );
   }
 

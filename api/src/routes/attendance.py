@@ -878,6 +878,16 @@ def _build_driver_status_response(roster_entry: DriverRosterEntry, db: Session) 
     except Exception:
         patterns = []
 
+    # Third-callout-in-60-days lockout — added 2026-08-02 per explicit
+    # request. _missed_shift_count already counts every self-reported
+    # callout in the trailing 60 days (submit_callout() sets is_missed=True
+    # unconditionally); this attempt would be the 3rd once that count
+    # reaches 2 already on file. Locks the *tool*, not the driver's ability
+    # to report an absence -- they still must call dispatch and speak to
+    # them directly, which is the whole point.
+    missed_count = _missed_shift_count(roster_entry.payroll_name, today, db)
+    third_callout_lockout = missed_count >= 2
+
     return {
         "driver_name": roster_entry.payroll_name,
         **summary,
@@ -887,6 +897,8 @@ def _build_driver_status_response(roster_entry: DriverRosterEntry, db: Session) 
         "projected_next_threshold": _next_threshold(projected),
         "is_default_pin": roster_entry.ssn_last4 == "1234",
         "patterns": patterns,
+        "third_callout_lockout": third_callout_lockout,
+        "dispatch_phone": DISPATCH_PHONE_NUMBER if third_callout_lockout else None,
     }
 
 
@@ -918,6 +930,65 @@ def callout_reason_check(reason_code: str, family_who: Optional[str] = None, liv
         raise HTTPException(400, "Invalid reason.")
     valid, message = check_reason_validity(reason_code, family_who, lives_with_family)
     return {"valid": valid, "message": message}
+
+
+class CalloutBlockedAttemptRequest(BaseModel):
+    driver_name: str
+    ssn_last4: Optional[str] = None
+    callout_token: Optional[str] = None
+
+
+@router.post("/callout/log-blocked-attempt")
+def log_callout_blocked_attempt(req: CalloutBlockedAttemptRequest, db: Session = Depends(get_db)):
+    """Records that a driver hit the third-callout-in-60-days lockout and
+    was sent to call dispatch directly instead of completing the normal
+    self-service flow. Added 2026-08-02 per explicit request: the tool
+    itself locks (still reachable, still logs the attempt), the driver
+    does not. Zero attendance-point impact by design -- event_type isn't
+    in POINT_VALUES and is_missed=False, so this never double-counts
+    toward the same lockout or a driver's point total; whatever dispatch
+    logs after actually talking to the driver is the real record."""
+    roster_entry = db.query(DriverRosterEntry).filter(
+        func.lower(DriverRosterEntry.payroll_name) == req.driver_name.lower(),
+        DriverRosterEntry.is_active == True,
+    ).first()
+    if not roster_entry:
+        raise HTTPException(401, "Name or PIN is incorrect.")
+
+    if req.callout_token:
+        import jwt as _jwt, os as _os
+        try:
+            payload = _jwt.decode(req.callout_token, _os.getenv("JWT_SECRET", "dev-secret"), algorithms=["HS256"])
+            if payload.get("purpose") != "callout" or payload.get("driver_name", "").lower() != roster_entry.payroll_name.lower():
+                raise HTTPException(401, "Invalid callout token.")
+        except _jwt.ExpiredSignatureError:
+            raise HTTPException(401, "Callout link has expired.")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(401, "Invalid callout token.")
+    else:
+        if not _pin_matches(roster_entry, req.ssn_last4, db):
+            raise HTTPException(401, "Name or PIN is incorrect.")
+
+    today = datetime.now(PACIFIC).date()
+    event = AttendanceEvent(
+        driver_name=roster_entry.payroll_name,
+        roster_id=roster_entry.id,
+        event_date=today,
+        event_type="callout_tool_blocked",
+        is_missed=False,
+        notes=(
+            "Driver attempted a callout via the self-service tool but was on "
+            "their 3rd callout within 60 days -- directed to call dispatch "
+            "directly. No points applied here; see dispatch's own log entry "
+            "for the real record."
+        ),
+        logged_by="System (callout tool 3rd-callout lockout)",
+    )
+    db.add(event)
+    db.commit()
+    return {"status": "logged", "driver_name": roster_entry.payroll_name, "dispatch_phone": DISPATCH_PHONE_NUMBER}
 
 
 @router.post("/callout")

@@ -288,7 +288,7 @@ def build_dispatch_home_view_blocks(db: Session, dash_user, dash_token: str) -> 
         # "Invite to Website" reuses the exact hr_home_invite_user_button
         # action_id/handler unchanged; is_hr_staff() is checked independently
         # inside that handler regardless of which Home tab it's clicked from.
-        {"type": "section", "text": {"type": "mrkdwn", "text": "👔 *HR*"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": "💁‍♀️ *HR*"}},
         {
             "type": "actions",
             "elements": [
@@ -350,6 +350,12 @@ def build_dispatch_home_view_blocks(db: Session, dash_user, dash_token: str) -> 
                     "action_id": "dispatch_open_swag_store_admin",
                     "text": {"type": "plain_text", "text": "🎁 Swag Store", "emoji": True},
                     "url": _slack_login_url("/swag-store-admin", dash_user, dash_token),
+                },
+                {
+                    "type": "button",
+                    "action_id": "dispatch_open_feature_flags",
+                    "text": {"type": "plain_text", "text": "🚦 Feature Flags", "emoji": True},
+                    "url": _slack_login_url("/feature-flags", dash_user, dash_token),
                 },
             ],
         },

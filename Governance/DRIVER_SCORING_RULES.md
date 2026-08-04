@@ -20,35 +20,53 @@ scorecard rating (see `WEEKLY_INCENTIVE_RULES.md` for that).
 
 ## 2. Formula
 
-The individual score mirrors the real scorecard's category weights
-(Appendix A of the weekly PDF), computed from the per-metric scores
-Amazon already supplies in the weekly per-driver CSV — **not** a
-re-derivation from raw rates, and **not** Amazon's own `Overall Score`.
+**Updated 2026-08-04 to match the live code** — this section previously
+described the original 2026-07-17 design (47.6/47.4/5.0 weights,
+Green/Yellow/Red tiers). The formula was revised twice since then
+(2026-07-27 reweighting, 2026-08-02 reliability reframing) and this doc
+had drifted out of sync with what's actually computing real bonus and
+coaching outcomes. See `api/src/routes/driver_scoring.py`'s module
+docstring for the authoritative, always-current version of this
+history.
+
+The individual score mirrors the real scorecard's per-metric proportions
+within Safety and Quality (Appendix A of the weekly PDF), computed from
+the per-metric scores Amazon already supplies in the weekly per-driver
+CSV — **not** a re-derivation from raw rates, and **not** Amazon's own
+`Overall Score`.
 
 ### 2.1 Two deliberate departures from the real scorecard
 
-- **Team & Fleet is dropped entirely** (Tenured Workforce 0% + Fleet
-  Execution 5%). Neither is something an individual driver's own
-  behavior controls — Tenured Workforce is a DSP-wide workforce-tenure
+- **Team & Fleet is dropped entirely** (Tenured Workforce + Fleet
+  Execution). Neither is something an individual driver's own behavior
+  controls — Tenured Workforce is a DSP-wide workforce-tenure
   percentage, Fleet Execution is vehicle/VIN-level rotation compliance.
-  That 5% is reassigned to a new **Attendance** component instead.
 - **Driver tenure is not part of the weighted score at all.** It's a
   pass/fail eligibility gate (see §3), same as the 30-route floor.
 
 ### 2.2 Category weights
 
+Explicit 2026-07-27 decision — Safety and Quality carry equal weight,
+with the remaining 20% going to Attendance (since reframed as
+Reliability, §2.4):
+
 | Category | Weight | Components |
 |---|---|---|
-| **Safety** | 47.6% | Speeding 11.7 · Seatbelt 11.7 · Sign/Signal 11.7 · Distractions 7.5 · Following Distance 5.0 |
-| **Quality** | 47.4% | DC DPMO 11.3 · DSB 11.3 · POD 2.8 · CDF DPMO 17.0 · PSB 5.0 |
-| **Attendance** (new) | 5.0% | `100 - (trailing-60-day attendance points × 10)`, floored at 0 |
+| **Safety** | 40% | Speeding 12.5 · Seatbelt 12.5 · Sign/Signal 12.5 · Distractions 7.5 · Following Distance 5.0 |
+| **Quality** | 40% | DC DPMO 11.9 · DSB 11.9 · POD 2.9 · CDF DPMO 17.8 · PSB 5.5 |
+| **Attendance / Reliability** | 20% | See §2.4 |
+
+The per-metric proportions within each category mirror Amazon's current
+DA Performance Scoring config (2026-07-22) and determine that category's
+own 0-100 score independent of its 40%/40% weight in the overall blend.
 
 **Note on CDF:** the real scorecard splits Customer Delivery Experience
-into Customer Delivery Feedback DPMO (5.7%) and Customer Escalation
-Defect DPMO (11.3%). Amazon's per-driver CSV only gives one combined CDF
-DPMO score, not split — so here CDF stands in for the full 17.0%
-category. This is an honest data-availability constraint, not a policy
-choice; revisit if Amazon ever splits it at the per-driver level.
+into Customer Delivery Feedback DPMO and Customer Escalation Defect
+(CED) DPMO separately. Amazon's per-driver CSV only gives one combined
+CDF DPMO score, not split — so here CDF stands in for both combined
+(5.9 + 11.9 = 17.8%). This is an honest data-availability constraint,
+not a policy choice; revisit if Amazon ever splits it at the per-driver
+level.
 
 ### 2.3 Missing-metric handling
 
@@ -57,10 +75,29 @@ remaining weights in that category are renormalized among themselves —
 the same handling the real scorecard documents in its own Appendix A.
 One missing metric never unfairly zeroes out a category.
 
-### 2.4 Attendance component
+### 2.4 Attendance component — reframed as "Reliability" (2026-08-02)
 
-Reuses `attendance.py`'s existing HRM-023.1 points ladder — no new data
-collection:
+`reliability_score = max(0, 100 - total_deductions)`, where deductions
+combine four inputs over a trailing **60-day** window:
+
+| Source | Deduction |
+|---|---|
+| Attendance points (unchanged HRM-023.1 ladder, `attendance.py`) | `points × 10` |
+| DVIC violation, stage 1 | 3.0 each |
+| DVIC violation, stage 2 | 6.0 each |
+| DVIC weekly-frequency escalation | 12.0 each |
+| Coaching Notification | 4.0 each |
+| Confirmed safety violation (unconfirmed/false-flagged never count) | 8.0 each |
+
+This is purely a ranking input (route/schedule priority via
+`_build_roster_suggestion()`) — it changes **no** existing write-up
+workflow, notification, video gate, or sign-off chain; those all keep
+working exactly as before, this only reads their already-recorded
+outcomes. **Crash reports and injury reports are deliberately excluded**
+— both are frequently no-fault or safety-positive-to-report, so docking
+reliability for filing one would be a bad incentive.
+
+The underlying attendance-points ladder itself is unchanged:
 
 | Event | Points |
 |---|---|
@@ -69,10 +106,6 @@ collection:
 | Late arrival | 1.0 |
 | Early departure | 0.5 |
 | Present / excused | 0.0 |
-
-`attendance_score = max(0, 100 - trailing_60_day_points × 10)` — 10
-points is that system's own existing termination threshold, so a driver
-at the termination line scores 0 on Attendance, not an arbitrary cutoff.
 
 ---
 
@@ -108,7 +141,7 @@ this app today).
   principle as `DOP_ROUTE_SHEET_INGEST_RULES.md` §1. Parsed via the same
   content-sniffing `read_tabular_file()`.
 - **Cadence**: weekly, by **COB (5 PM) every Friday**. `mgt_reminders.py`
-  nags `#nday-mgt` every 5 min from 5:00–11:59 PM PT on Fridays only
+  nags `#nday-mgt` every 10 min from 5:00–11:59 PM PT on Fridays only
   (`weekday=4`) until detected, including the portal-navigation
   instructions above in the reminder text itself.
 - **Column note**: the source file's own header literally reads
@@ -126,18 +159,29 @@ this app today).
 
 ---
 
-## 5. Color Thresholds
+## 5. Tiers
 
-Applied uniformly to Overall, Safety, Quality, and Attendance:
+Replaced 2026-07-29 (the 40/40/20 blend and the finer Tin/Lead/Sawdust
+bands were added the same day, per explicit request) — the 3-band
+Green/Yellow/Red system is gone. Applied to the blended **Overall**
+score only (not separately to Safety/Quality/Attendance the way the old
+color system was). Each tier's threshold is its own upper bound — you
+must exceed a tier's listed number to reach the tier above it:
 
-| Color | Threshold |
+| Tier | Threshold |
 |---|---|
-| 🟢 Green | ≥ 92% |
-| 🟡 Yellow | ≥ 90% and < 92% |
-| 🔴 Red | < 90% |
+| Platinum | > 99% |
+| Gold | 98–99% |
+| Silver | 97–98% |
+| Bronze | 92–97% |
+| Tin | 91–92% |
+| Lead | 90–91% |
+| Sawdust | ≤ 90% |
 
-High-performer bonus eligibility = Overall ≥ 92% **and** both eligibility
-gates (§3) pass.
+High-performer bonus eligibility = Overall ≥ 92% (any named tier, not
+just Platinum — this floor is unchanged from the old Green cutoff, a
+deliberate choice not to quietly tighten bonus eligibility when the tier
+names changed) **and** both eligibility gates (§3) pass.
 
 ---
 
@@ -146,6 +190,7 @@ gates (§3) pass.
 - [x] Scoring formula (`compute_driver_scores()`) — implemented, unit-verified against hand-calculated values
 - [x] Tenured Workforce ingest pipeline + Friday reminder
 - [x] `GET /driver-scoring/scores` endpoint
+- [x] Reliability score (DVIC + coaching + confirmed safety-violation deductions) feeding route/schedule ranking priority — 2026-08-02
 - [ ] Visual list/report for reviewing all drivers at once (requested, not yet delivered — pending a production data pull)
 - [ ] Home screen (Slack Home tab) display of a driver's own score + bonus-eligible indicator
 - [ ] Actual bonus **dollar amount** calculation/messaging ("here's what you're leaving on the table")
@@ -156,11 +201,12 @@ gates (§3) pass.
 
 ## 7. This Document Governs
 
-- Scoring formula, weights, renormalization: `compute_driver_scores()` (`api/src/routes/driver_scoring.py`)
+- Scoring formula, weights, renormalization, tiers: `compute_driver_scores()` (`api/src/routes/driver_scoring.py`)
 - Tenured Workforce ingest: `_store_tenured_workforce()` (`api/src/routes/tenured_workforce.py`)
 - Tenured Workforce schema + query helpers: `TenuredWorkforceRecord`, `get_latest_tenure_record()`, `get_trailing_route_count()` (`api/src/database.py`)
 - Friday COB reminder: `mgt_reminders.py` (`tenured_workforce` key)
 - Attendance points reused (not owned by this doc): `attendance.py`'s `POINT_VALUES`/`_driver_points_summary()`
+- Reliability deductions (not owned by this doc, only read by it): `dvic.py`'s `get_dvic_reliability_deductions()`, `coaching_notifications.py`'s `get_coaching_reliability_deductions()`, `safety_events.py`'s `get_safety_reliability_deductions()`
 
 **Any changes to these rules must**:
 
@@ -172,11 +218,12 @@ gates (§3) pass.
 
 ## 8. Quick Reference: Rules Checklist
 
-- [ ] Safety (47.6%), Quality (47.4%), Attendance (5.0%) — Team & Fleet dropped, not just zero-weighted
-- [ ] CDF DPMO stands in for the full 17.0% Customer Delivery Experience category (per-driver data isn't split further)
+- [ ] Safety (40%), Quality (40%), Attendance/Reliability (20%) — Team & Fleet dropped, not just zero-weighted
+- [ ] CDF DPMO stands in for the full 17.8% Customer Delivery Experience category (per-driver data isn't split further)
 - [ ] Missing metric → drop it, renormalize the category's remaining weights
-- [ ] Attendance = `100 - (trailing 60-day points × 10)`, floored at 0
+- [ ] Reliability = `100 - deductions` (points×10, DVIC 3/6/12, coaching 4, confirmed safety violations 8), floored at 0, 60-day window
 - [ ] Ranking/bonus eligibility requires Tenure Status == "Tenured" AND ≥30 trailing-6-week routes — both required
 - [ ] A driver failing eligibility still gets a score shown, just flagged ineligible
-- [ ] Green ≥92%, Yellow ≥90%, Red <90% — applied to all four displayed scores, not just Overall
+- [ ] Tiers (Overall only): Platinum >99, Gold 98-99, Silver 97-98, Bronze 92-97, Tin 91-92, Lead 90-91, Sawdust ≤90
+- [ ] High-performer bonus floor stays 92% regardless of tier name (unchanged from the old Green cutoff)
 - [ ] Tenured Workforce report: CSV or XLS, Fridays by COB, from TWF Dashboard, keyed by Transporter ID

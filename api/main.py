@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.src.routes import uploads, auth, audit, enhanced_audit, weekly_audit, weekly_audit_upload, rescue
 from api.src.routes import daily_notify, quality, attendance, attendance_reports, ops_ingest, dvic, dsp_scorecard_weekly, eod_survey, route_assignment, slack_interactions, slack_home, manager_accountability
-from api.src.routes import rostering, cortex_tracking, adp, rts, mgt_reminders, document_routing, crash_report, drivers, candidates, safety_events, okami_capacity, driver_scoring, route_bands, driver_lead_schedule, injury_report, sentiment_survey, wave_lead, glitch_reports, daily_quality, nday_points, feature_flags, coaching_notifications, quality_rts, customer_feedback, packages, ops_cadence
+from api.src.routes import rostering, cortex_tracking, adp, rts, mgt_reminders, document_routing, crash_report, drivers, candidates, safety_events, okami_capacity, driver_scoring, route_bands, driver_lead_schedule, injury_report, sentiment_survey, wave_lead, glitch_reports, daily_quality, nday_points, feature_flags, coaching_notifications, quality_rts, customer_feedback, packages, ops_cadence, ops_daily_digest
 from api.src.routes.daily_notify import check_and_notify, check_ecp_and_prompt
 from api.src.routes.rostering import send_nightly_roster_reminder, send_wave_lead_pre_wave_dm, send_missing_drivers_summary
 from api.src.schedule_config import SCHEDULE_GAP_CHECK_HOUR
@@ -349,6 +349,23 @@ async def _ops_cadence_loop():
                 db.close()
         except Exception as exc:
             logger.warning("Ops cadence loop error: %s", exc)
+        await asyncio.sleep(60)
+
+
+async def _ops_daily_digest_loop():
+    """Every 60 s — delegates to ops_daily_digest.run_daily_ops_digest(),
+    which no-ops outside the 20:00+ Pacific window and respects an
+    "already sent today" guard. Always on, no feature flag (matches
+    mgt_reminders.py's pattern, not eod_survey.py's flag-gated one)."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(ops_daily_digest.run_daily_ops_digest, db)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("Ops daily digest loop error: %s", exc)
         await asyncio.sleep(60)
 
 
@@ -797,6 +814,7 @@ async def startup():
     asyncio.create_task(_wave_lead_watcher_loop())
     asyncio.create_task(_mgt_reminders_loop())
     asyncio.create_task(_ops_cadence_loop())
+    asyncio.create_task(_ops_daily_digest_loop())
     asyncio.create_task(_timecard_report_nudge_loop())
     asyncio.create_task(_daily_fallback_pin_loop())
     asyncio.create_task(_ecp_screenshot_reminder_loop())
@@ -883,6 +901,7 @@ app.include_router(quality_rts.router)
 app.include_router(customer_feedback.router)
 app.include_router(packages.router)
 app.include_router(ops_cadence.router)
+app.include_router(ops_daily_digest.router)
 app.include_router(nday_points.router)
 app.include_router(feature_flags.router)
 app.include_router(coaching_notifications.router)

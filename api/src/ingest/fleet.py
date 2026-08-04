@@ -68,7 +68,7 @@ def parse_fleet_excel(file_path: str) -> Tuple[List[Vehicle], List[str]]:
             return records, errors
 
         parsed_count = 0
-        skipped_grounded = 0
+        grounded_count = 0
         skipped_validation = 0
 
         for idx, row in df.iloc[start_idx:].iterrows():
@@ -78,9 +78,7 @@ def parse_fleet_excel(file_path: str) -> Tuple[List[Vehicle], List[str]]:
                     for cell in row.tolist()
                     if pd.notna(cell)
                 )
-                if "GROUNDED" in row_text:
-                    skipped_grounded += 1
-                    continue
+                row_says_grounded = "GROUNDED" in row_text
 
                 vin_cell = _safe_cell(row, column_map["vin"])
                 service_cell = _safe_cell(row, column_map["service_type"])
@@ -113,10 +111,17 @@ def parse_fleet_excel(file_path: str) -> Tuple[List[Vehicle], List[str]]:
                     skipped_validation += 1
                     continue
 
+                # Grounded vans used to be skipped entirely here, which meant
+                # route_assignment.py's own "Vehicle.status == grounded" query
+                # (get_available_vehicles()'s exclusion filter) never actually
+                # had any grounded rows to find -- a van's status just stayed
+                # stale at whatever it was before going down. Stored now like
+                # any other status so that filter (and the daily ops digest)
+                # both work as originally intended -- fixed 2026-08-04.
                 status_norm = operational_status.strip().upper()
-                if status_norm == "GROUNDED":
-                    skipped_grounded += 1
-                    continue
+                if row_says_grounded or status_norm == "GROUNDED":
+                    operational_status = "GROUNDED"
+                    grounded_count += 1
 
                 record = Vehicle(
                     vin=vin,
@@ -131,7 +136,7 @@ def parse_fleet_excel(file_path: str) -> Tuple[List[Vehicle], List[str]]:
                 skipped_validation += 1
                 continue
 
-        logger.info(f"Fleet: Parsed {parsed_count} records, skipped {skipped_grounded} (GROUNDED), {skipped_validation} (validation errors)")
+        logger.info(f"Fleet: Parsed {parsed_count} records ({grounded_count} GROUNDED), skipped {skipped_validation} (validation errors)")
 
     except Exception as e:
         error_msg = f"Failed to read Fleet file: {str(e)}"

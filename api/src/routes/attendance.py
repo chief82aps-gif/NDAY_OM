@@ -320,7 +320,50 @@ def _family_reason_valid(family_who: Optional[str], lives_with: Optional[bool]) 
     return bool(lives_with)
 
 
-def check_reason_validity(reason_code: str, family_who: Optional[str] = None, lives_with_family: Optional[bool] = None) -> tuple[bool, Optional[str]]:
+# Content plausibility check for the free-text "what is the emergency"
+# description -- added 2026-08-04 per explicit request: the structural
+# check above (who + do you live with them) doesn't catch a driver typing
+# something clearly unrelated to a family emergency (e.g. a vehicle
+# issue) under the family-emergency reason code, since it never looks at
+# what was actually typed. One quick Claude call, same pattern as
+# sentiment_survey.py's daily analysis. Fails open (treated as plausible)
+# on any API error -- a broken AI call must never be the reason a driver
+# can't call out, it just means this specific check didn't add anything
+# that day.
+_FAMILY_EMERGENCY_SYSTEM_PROMPT = """You review a one-line description a delivery driver typed when calling out
+of work under a "family emergency" reason code. Decide whether the description plausibly describes an actual
+family emergency (illness, injury, hospitalization, urgent care needed, a family crisis) as opposed to something
+unrelated (a vehicle problem, an alarm clock, being tired, wanting a day off, or something nonsensical/left blank).
+Respond with exactly one word: PLAUSIBLE or IMPLAUSIBLE. When genuinely unsure, answer PLAUSIBLE -- the cost of a
+false rejection here is higher than letting an ambiguous one through."""
+
+
+def _family_emergency_content_plausible(description: str) -> bool:
+    key = os.getenv("ANTHROPIC_API_KEY")
+    if not key or not (description or "").strip():
+        return True
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=key)
+        response = client.messages.create(
+            model="claude-opus-4-8",
+            max_tokens=8,
+            system=_FAMILY_EMERGENCY_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": description.strip()[:500]}],
+        )
+        text = next((b.text for b in response.content if b.type == "text"), "")
+        return "IMPLAUSIBLE" not in text.upper()
+    except Exception as exc:
+        logger.warning("Family-emergency content check failed, treating as plausible: %s", exc)
+        return True
+
+
+def check_reason_validity(
+    reason_code: str,
+    family_who: Optional[str] = None,
+    lives_with_family: Optional[bool] = None,
+    family_what: Optional[str] = None,
+) -> tuple[bool, Optional[str]]:
     """Returns (is_valid, pushback_message_or_None). Used both by the
     pre-submit reason-check endpoint (frontend shows this inline the
     moment a reason is picked) and re-validated server-side on actual
@@ -332,6 +375,11 @@ def check_reason_validity(reason_code: str, family_who: Optional[str] = None, li
             return False, (
                 "A family emergency callout only applies to an immediate family member you currently "
                 "live with — spouse, child, mother, or father. It doesn't extend beyond that."
+            )
+        if family_what and not _family_emergency_content_plausible(family_what):
+            return False, (
+                "This doesn't read as a family emergency. If something else is going on, please call "
+                f"dispatch directly at {DISPATCH_PHONE_NUMBER} and explain."
             )
         return True, None
     return True, None
@@ -371,6 +419,7 @@ class CalloutRequest(BaseModel):
     reason_code: str
     family_who: Optional[str] = None         # spouse | child | mother | father -- only when reason_code == "family"
     lives_with_family: Optional[bool] = None  # does the driver currently live with family_who
+    family_what: Optional[str] = None        # free-text "what is the emergency" -- only when reason_code == "family"
     reason_override_ack: bool = False        # driver was shown the pushback message and chose to submit anyway
     scheduled_wave: Optional[str] = None
     shift_date: Optional[str] = None         # ISO date of the shift being called out for
@@ -918,15 +967,22 @@ def driver_status(driver_name: str, ssn_last4: str, db: Session = Depends(get_db
 
 
 @router.get("/callout/reason-check")
-def callout_reason_check(reason_code: str, family_who: Optional[str] = None, lives_with_family: Optional[bool] = None):
+def callout_reason_check(
+    reason_code: str,
+    family_who: Optional[str] = None,
+    lives_with_family: Optional[bool] = None,
+    family_what: Optional[str] = None,
+):
     """Public — the callout page calls this the moment a driver picks a
     reason, so the pushback message (if any) shows immediately rather
     than only being discovered at final submit. Re-checked server-side
     in submit_callout() regardless, so this is a UX convenience, not the
-    actual enforcement point."""
+    actual enforcement point. family_what triggers an AI plausibility
+    call (see check_reason_validity()) -- the frontend debounces this
+    rather than firing on every keystroke."""
     if reason_code not in VALID_REASON_CODES:
         raise HTTPException(400, "Invalid reason.")
-    valid, message = check_reason_validity(reason_code, family_who, lives_with_family)
+    valid, message = check_reason_validity(reason_code, family_who, lives_with_family, family_what)
     return {"valid": valid, "message": message}
 
 
@@ -998,7 +1054,7 @@ def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
     if req.reason_code not in VALID_REASON_CODES:
         raise HTTPException(400, "Invalid reason.")
 
-    reason_valid, reason_message = check_reason_validity(req.reason_code, req.family_who, req.lives_with_family)
+    reason_valid, reason_message = check_reason_validity(req.reason_code, req.family_who, req.lives_with_family, req.family_what)
     if not reason_valid and not req.reason_override_ack:
         # Re-validated server-side regardless of what the reason-check
         # endpoint already told the frontend -- a modified client

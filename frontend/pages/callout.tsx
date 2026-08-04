@@ -149,6 +149,7 @@ export default function CalloutPage() {
   // the driver explicitly chose to submit anyway after seeing the push-back.
   const [reasonCheck, setReasonCheck] = useState<{ valid: boolean; message: string | null } | null>(null);
   const [reasonAck, setReasonAck]     = useState(false);
+  const [reasonChecking, setReasonChecking] = useState(false);
 
   // Set-PIN step
   const [newPin, setNewPin]         = useState('');
@@ -263,21 +264,34 @@ export default function CalloutPage() {
   // Check reason validity the moment a reason is picked (and re-check for
   // family once who/lives-with are answered) — surfaces the push-back
   // message immediately rather than only at final submit. Resets the
-  // acknowledgment any time the underlying answer changes.
+  // acknowledgment any time the underlying answer changes. Debounced
+  // 900ms on familyWhat specifically (added 2026-08-04, AI content
+  // plausibility check) so it doesn't fire an AI call on every keystroke.
   useEffect(() => {
     setReasonAck(false);
-    if (!reason) { setReasonCheck(null); return; }
-    if (reason === 'family' && !familyWho) { setReasonCheck(null); return; }
-    const params = new URLSearchParams({ reason_code: reason });
-    if (reason === 'family') {
-      params.set('family_who', familyWho.toLowerCase());
-      params.set('lives_with_family', String(livesWithFamily === true));
-    }
-    fetch(`${resolveApi()}/attendance/callout/reason-check?${params}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(d => setReasonCheck(d ?? null))
-      .catch(() => setReasonCheck(null));
-  }, [reason, familyWho, livesWithFamily]);
+    if (!reason) { setReasonCheck(null); setReasonChecking(false); return; }
+    if (reason === 'family' && !familyWho) { setReasonCheck(null); setReasonChecking(false); return; }
+
+    const run = () => {
+      const params = new URLSearchParams({ reason_code: reason });
+      if (reason === 'family') {
+        params.set('family_who', familyWho.toLowerCase());
+        params.set('lives_with_family', String(livesWithFamily === true));
+        if (familyWhat.trim()) params.set('family_what', familyWhat.trim());
+      }
+      setReasonChecking(true);
+      fetch(`${resolveApi()}/attendance/callout/reason-check?${params}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(d => setReasonCheck(d ?? null))
+        .catch(() => setReasonCheck(null))
+        .finally(() => setReasonChecking(false));
+    };
+
+    // familyWhat changes fire debounced (typing); who/lives-with changes
+    // (button taps, not typing) fire immediately.
+    const timer = setTimeout(run, reason === 'family' && familyWhat ? 900 : 0);
+    return () => clearTimeout(timer);
+  }, [reason, familyWho, livesWithFamily, familyWhat]);
 
   // Step 1 → Step 2: verify PIN and load status
   async function handleIdentify(e: React.FormEvent) {
@@ -349,6 +363,10 @@ export default function CalloutPage() {
       if (!familyWho) { setDetailErr('Please select who the emergency pertains to.'); return; }
       if (livesWithFamily === null) { setDetailErr('Please answer whether you currently live with this person.'); return; }
     }
+    if (reasonChecking) {
+      setDetailErr('Still checking your reason — one moment and try again.');
+      return;
+    }
     if (reasonCheck && !reasonCheck.valid && !reasonAck) {
       setDetailErr('Please review the note above before continuing.');
       return;
@@ -385,7 +403,7 @@ export default function CalloutPage() {
           driver_name: driverName,
           ...(calloutToken ? { callout_token: calloutToken } : { ssn_last4: pin }),
           reason_code: reason,
-          ...(reason === 'family' ? { family_who: familyWho.toLowerCase(), lives_with_family: livesWithFamily === true } : {}),
+          ...(reason === 'family' ? { family_who: familyWho.toLowerCase(), lives_with_family: livesWithFamily === true, family_what: familyWhat.trim() } : {}),
           reason_override_ack: reasonAck,
           shift_date: shiftDate || undefined,
           notes: combinedNotes || undefined,
@@ -926,6 +944,9 @@ export default function CalloutPage() {
                       placeholder="Brief description…"
                       className="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-3 text-white text-base"
                     />
+                    {reasonChecking && (
+                      <p className="text-slate-500 text-xs mt-1">Checking…</p>
+                    )}
                   </div>
 
                   <div>

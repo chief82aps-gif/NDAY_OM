@@ -21,7 +21,7 @@ their part on those, so they don't belong here.
 from __future__ import annotations
 
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -29,6 +29,17 @@ from sqlalchemy.orm import Session
 from api.src.database import DvicCounselingRecord, AttendanceEvent, DailyRouteAssignment, EodSurveyResponse
 from api.src.driver_identity import _tokens
 from api.src.feature_flags import get_flag
+from api.src.timezone import PACIFIC
+
+# An item stuck "pending" longer than this stops gating the driver's
+# route DM — added 2026-08-04 after Ethan Boston/Nathan Berg sat behind
+# unacknowledged DVIC counseling records for 1-2+ weeks, requiring
+# dispatch to manually bypass the gate every single day. The gate exists
+# to get near-term acknowledgment, not to indefinitely block route
+# delivery over old paperwork someone forgot to chase down -- the
+# underlying record stays "pending" for HR/discipline-tracker purposes,
+# this only stops it from blocking today's DM.
+OUTSTANDING_ITEM_MAX_AGE_DAYS = 14
 
 # Hard off-switch, default false — added 2026-07-26 within hours of the
 # missed_eod_survey check below going live. That check depends entirely on
@@ -45,6 +56,9 @@ def get_outstanding_items(driver_name: str, roster_id: Optional[int], db: Sessio
     """Returns [] when nothing is pending — the common case, and the two
     queries below are each indexed/filtered, not full-table scans."""
     items: list[dict] = []
+    today = datetime.now(PACIFIC).date()
+    age_cutoff_date = today - timedelta(days=OUTSTANDING_ITEM_MAX_AGE_DAYS)
+    age_cutoff_dt = datetime.now(PACIFIC).replace(tzinfo=None) - timedelta(days=OUTSTANDING_ITEM_MAX_AGE_DAYS)
 
     # DVIC — no reliable transporter_id bridge exists from a day-of
     # DailyRouteAssignment row to DvicCounselingRecord (confirmed:
@@ -53,7 +67,10 @@ def get_outstanding_items(driver_name: str, roster_id: Optional[int], db: Sessio
     # driver-identity refactor.
     name_tokens = _tokens(driver_name)
     if name_tokens:
-        for record in db.query(DvicCounselingRecord).filter(DvicCounselingRecord.ack_status == "pending").all():
+        dvic_query = db.query(DvicCounselingRecord).filter(DvicCounselingRecord.ack_status == "pending")
+        for record in dvic_query.all():
+            if record.last_actioned_at and record.last_actioned_at < age_cutoff_dt:
+                continue  # stale lock -- see OUTSTANDING_ITEM_MAX_AGE_DAYS
             if len(name_tokens & _tokens(record.transporter_name)) >= 2:
                 items.append({
                     "type": "dvic",
@@ -65,7 +82,10 @@ def get_outstanding_items(driver_name: str, roster_id: Optional[int], db: Sessio
                 })
 
     # Attendance — driver never signed their own write-up.
-    query = db.query(AttendanceEvent).filter(AttendanceEvent.signature_name.is_(None))
+    query = db.query(AttendanceEvent).filter(
+        AttendanceEvent.signature_name.is_(None),
+        AttendanceEvent.event_date >= age_cutoff_date,  # stale lock -- see OUTSTANDING_ITEM_MAX_AGE_DAYS
+    )
     if roster_id is not None:
         query = query.filter(AttendanceEvent.roster_id == roster_id)
     else:
@@ -85,10 +105,10 @@ def get_outstanding_items(driver_name: str, roster_id: Optional[int], db: Sessio
     # a multi-day gap doesn't silently stop resurfacing once today's route
     # DM would otherwise dedup past it. Only counts a day the driver
     # actually had a route (no assignment = nothing to have submitted).
+    # (Already well under OUTSTANDING_ITEM_MAX_AGE_DAYS, no separate cutoff needed.)
     if roster_id is not None and get_flag("MISSED_EOD_GATE_ACTIVE"):
         from api.src.routes.eod_survey import _issue_eod_token
 
-        today = date.today()
         for days_back in range(1, 8):
             check_date = today - timedelta(days=days_back)
             had_route = db.query(DailyRouteAssignment).filter(

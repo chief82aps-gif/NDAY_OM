@@ -214,14 +214,8 @@ def _authenticate_driver(
         return entry
 
     if driver_name_hint:
-        # Token-overlap match (Last, First vs First Last)
-        hint_tokens = frozenset(driver_name_hint.lower().split())
-        candidates = db.query(DriverRosterEntry).filter_by(is_active=True).all()
-        for c in candidates:
-            name_tokens = frozenset(c.payroll_name.lower().replace(",", "").split())
-            if len(hint_tokens & name_tokens) >= 2:
-                entry = c
-                break
+        from api.src.driver_identity import resolve_roster_entry
+        entry = resolve_roster_entry(driver_name_hint, db)
 
     if not entry:
         raise HTTPException(status_code=404, detail="Driver not found.")
@@ -240,15 +234,19 @@ def _load_today_assignment(roster_id: int, today: date, db: Session) -> Optional
     if not entry:
         return None
     # Match by driver name (payroll_name is "Last, First"; assignment stores "First Last")
-    name_tokens = frozenset(entry.payroll_name.lower().replace(",", "").split())
+    from api.src.driver_identity import _tokens, TOKEN_MATCH_THRESHOLD
+    name_tokens = _tokens(entry.payroll_name)
     rows = db.query(DailyRouteAssignment).filter(
         DailyRouteAssignment.assignment_date == today
     ).all()
+    best_row = None
+    best_score = 0
     for row in rows:
-        row_tokens = frozenset(row.driver_name.lower().split())
-        if len(name_tokens & row_tokens) >= 2:
-            return row
-    return None
+        score = len(name_tokens & _tokens(row.driver_name))
+        if score >= TOKEN_MATCH_THRESHOLD and score > best_score:
+            best_row = row
+            best_score = score
+    return best_row
 
 
 # ─── Pydantic models ─────────────────────────────────────────────────────────
@@ -945,19 +943,12 @@ def post_daily_survey_message(force: bool = False) -> dict:
             set_reminder_state(db, _DAILY_POST_KEY, {"last_posted_date": today.isoformat()})
             return {"status": "no_schedule", "date": today.isoformat()}
 
-        # Build name→roster lookup
-        roster_entries = db.query(DriverRosterEntry).filter_by(is_active=True).all()
+        from api.src.driver_identity import resolve_roster_entry
 
         sent = 0
         no_slack = 0
         for assignment in scheduled:
-            name_tokens = frozenset(assignment.driver_name.lower().split())
-            roster_entry: Optional[DriverRosterEntry] = None
-            for rc in roster_entries:
-                rc_tokens = frozenset(rc.payroll_name.lower().replace(",", "").split())
-                if len(name_tokens & rc_tokens) >= 2:
-                    roster_entry = rc
-                    break
+            roster_entry = resolve_roster_entry(assignment.driver_name, db)
 
             if not roster_entry or not roster_entry.slack_member_id:
                 no_slack += 1
@@ -1020,14 +1011,8 @@ def send_eod_reminders(force: bool = False) -> dict:
                 continue
 
             # Find roster entry for Slack ID
-            name_tokens = frozenset(assignment.driver_name.lower().split())
-            roster_candidates = db.query(DriverRosterEntry).filter_by(is_active=True).all()
-            roster_entry: Optional[DriverRosterEntry] = None
-            for rc in roster_candidates:
-                rc_tokens = frozenset(rc.payroll_name.lower().replace(",", "").split())
-                if len(name_tokens & rc_tokens) >= 2:
-                    roster_entry = rc
-                    break
+            from api.src.driver_identity import resolve_roster_entry
+            roster_entry = resolve_roster_entry(assignment.driver_name, db)
 
             if not roster_entry or not roster_entry.slack_member_id:
                 continue

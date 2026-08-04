@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.src.routes import uploads, auth, audit, enhanced_audit, weekly_audit, weekly_audit_upload, rescue
 from api.src.routes import daily_notify, quality, attendance, attendance_reports, ops_ingest, dvic, dsp_scorecard_weekly, eod_survey, route_assignment, slack_interactions, slack_home, manager_accountability
-from api.src.routes import rostering, cortex_tracking, adp, rts, mgt_reminders, document_routing, crash_report, drivers, candidates, safety_events, okami_capacity, driver_scoring, route_bands, driver_lead_schedule, injury_report, sentiment_survey, wave_lead, glitch_reports, daily_quality, nday_points, feature_flags, coaching_notifications, quality_rts, customer_feedback, packages
+from api.src.routes import rostering, cortex_tracking, adp, rts, mgt_reminders, document_routing, crash_report, drivers, candidates, safety_events, okami_capacity, driver_scoring, route_bands, driver_lead_schedule, injury_report, sentiment_survey, wave_lead, glitch_reports, daily_quality, nday_points, feature_flags, coaching_notifications, quality_rts, customer_feedback, packages, ops_cadence
 from api.src.routes.daily_notify import check_and_notify, check_ecp_and_prompt
 from api.src.routes.rostering import send_nightly_roster_reminder, send_wave_lead_pre_wave_dm, send_missing_drivers_summary
 from api.src.schedule_config import SCHEDULE_GAP_CHECK_HOUR
@@ -331,6 +331,24 @@ async def _mgt_reminders_loop():
             await asyncio.to_thread(mgt_reminders.run_mgt_reminders_check)
         except Exception as exc:
             logger.warning("Mgt reminders loop error: %s", exc)
+        await asyncio.sleep(60)
+
+
+async def _ops_cadence_loop():
+    """Every 60 s — delegates to ops_cadence.run_ops_cadence_check(), which
+    no-ops until the day's last wave has launched, then nags #nday-mgt every
+    ~75 min for a fresh Packages/Cortex re-upload, and auto-posts "All In" to
+    #nday-mgt + #dlv3-nday-info once both have landed at/after the COB
+    cutoff (last wave launch + 11h)."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(ops_cadence.run_ops_cadence_check, db)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("Ops cadence loop error: %s", exc)
         await asyncio.sleep(60)
 
 
@@ -778,6 +796,7 @@ async def startup():
     asyncio.create_task(_grounded_van_watcher_loop())
     asyncio.create_task(_wave_lead_watcher_loop())
     asyncio.create_task(_mgt_reminders_loop())
+    asyncio.create_task(_ops_cadence_loop())
     asyncio.create_task(_timecard_report_nudge_loop())
     asyncio.create_task(_daily_fallback_pin_loop())
     asyncio.create_task(_ecp_screenshot_reminder_loop())
@@ -863,6 +882,7 @@ app.include_router(daily_quality.router)
 app.include_router(quality_rts.router)
 app.include_router(customer_feedback.router)
 app.include_router(packages.router)
+app.include_router(ops_cadence.router)
 app.include_router(nday_points.router)
 app.include_router(feature_flags.router)
 app.include_router(coaching_notifications.router)

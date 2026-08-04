@@ -162,6 +162,7 @@ _TYPE_LABELS = {
     "daily_quality":     "Quality Overview (Daily CSV)",
     "quality_rts":       "Quality RTS (Daily CSV)",
     "customer_feedback": "DSP Customer Delivery Feedback - negative (CSV)",
+    "packages":          "Packages (non-delivered export, CSV)",
     "tenured_workforce": "Tenured Workforce DAs Report (CSV/Excel)",
     "unknown":           "Unknown — needs manual review",
 }
@@ -216,6 +217,13 @@ def _classify(filename: str, message: str, channel_id: str = "") -> str:
         # per-package negative customer feedback export -- added 2026-08-04.
         if any(k in combined for k in ("customer_delivery_feedback", "customer delivery feedback", "delivery_feedback", "delivery feedback")):
             return "customer_feedback"
+        # "Packages (3).csv" -- Amazon's live non-delivered-package export.
+        # Generic browser-download filename (no DSP/date stamp like the
+        # other exports), so matched narrowly on the literal word
+        # "packages" before the broad "quality" catch-all -- added
+        # 2026-08-04.
+        if "packages" in combined:
+            return "packages"
         if any(k in combined for k in ("quality", "trailing", "overview", "scorecard")):
             return "quality_csv"
         if re.search(r"\bw\d{2}\b", combined):   # W27, W03, etc.
@@ -503,6 +511,11 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
     if t == "customer_feedback":
         from api.src.routes.customer_feedback import _store_customer_feedback
         return _store_customer_feedback(content, job.file_name, job.slack_file_id, db)
+
+    # ── Packages (non-delivered export, CSV) ─────────────────────────────────
+    if t == "packages":
+        from api.src.routes.packages import _store_packages
+        return _store_packages(content, job.file_name, job.slack_file_id, db)
 
     # ── Tenured Workforce DAs Report (CSV/Excel) ─────────────────────────────
     if t == "tenured_workforce":
@@ -1011,7 +1024,7 @@ def manual_misrouted_scan(db: Session = Depends(get_db)):
 # real driver DM to fire on its own.
 # ─────────────────────────────────────────────────────────────────────────────
 
-_AUTO_INGEST_TYPES = ("dvic", "driver_schedule", "fleet", "quality_csv", "safety_events", "dsp_scorecard", "tenured_workforce", "daily_quality", "quality_rts", "customer_feedback")
+_AUTO_INGEST_TYPES = ("dvic", "driver_schedule", "fleet", "quality_csv", "safety_events", "dsp_scorecard", "tenured_workforce", "daily_quality", "quality_rts", "customer_feedback", "packages")
 
 
 def run_ops_auto_ingest(db: Session) -> dict:

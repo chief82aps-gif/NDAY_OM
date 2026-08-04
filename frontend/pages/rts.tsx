@@ -13,10 +13,26 @@ function resolveApi() {
 
 type Step = 'loading' | 'identify' | 'form' | 'submitting' | 'done' | 'error';
 
+interface PackageInfo {
+  tracking_id: string;
+  package_status: string | null;
+  amazon_reason_code: string | null;
+  suggested_code: string | null;
+  needs_answer: boolean;
+}
+
+interface ReasonCode {
+  code: string;
+  label: string;
+  amazon_code: string | null;
+}
+
 interface DebriefInfo {
   driver_name: string;
   route_id: string | null;
   shift_date: string;
+  packages: PackageInfo[];
+  reason_codes: ReasonCode[];
 }
 
 interface SubmitResult {
@@ -32,36 +48,20 @@ interface IdentifyResult {
   debrief_url?: string;
 }
 
-function CountStepper({
-  label, hint, value, onChange,
-}: { label: string; hint?: string; value: number; onChange: (n: number) => void }) {
-  return (
-    <div className="bg-slate-800 border border-slate-600 rounded-2xl p-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-white text-sm font-semibold">{label}</p>
-          {hint && <p className="text-slate-400 text-xs mt-0.5">{hint}</p>}
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => onChange(Math.max(0, value - 1))}
-            className="w-9 h-9 rounded-xl bg-slate-700 text-white text-lg font-bold"
-          >
-            −
-          </button>
-          <span className="text-white text-xl font-bold w-6 text-center">{value}</span>
-          <button
-            type="button"
-            onClick={() => onChange(value + 1)}
-            className="w-9 h-9 rounded-xl bg-slate-700 text-white text-lg font-bold"
-          >
-            +
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+interface Answer {
+  reason_code: string;
+  other_detail: string;
+  within_drive_time: boolean | null;
+  source: 'packages_file' | 'manual';
+  amazon_reason_code: string | null;
+  package_status: string | null;
+}
+
+function isAnswerComplete(a: Answer): boolean {
+  if (!a.reason_code) return false;
+  if (a.reason_code === 'other' && !a.other_detail.trim()) return false;
+  if (a.reason_code === 'reattemptable' && a.within_drive_time === null) return false;
+  return true;
 }
 
 export default function RtsPage() {
@@ -77,11 +77,9 @@ export default function RtsPage() {
   const [identifyErr, setIdentifyErr] = useState('');
   const [identifying, setIdentifying] = useState(false);
 
-  const [damaged, setDamaged] = useState(0);
-  const [reverse, setReverse] = useState(0);
-  const [excluded, setExcluded] = useState(0);
-  const [reattemptEligible, setReattemptEligible] = useState(0);
-  const [reattemptWithinDrive, setReattemptWithinDrive] = useState(0);
+  const [answers, setAnswers] = useState<Record<string, Answer>>({});
+  const [newTrackingId, setNewTrackingId] = useState('');
+  const [submitErr, setSubmitErr] = useState('');
 
   function loadDebrief(t: string) {
     fetch(`${resolveApi()}/rts/debrief?token=${encodeURIComponent(t)}`)
@@ -92,7 +90,22 @@ export default function RtsPage() {
         }
         return r.json();
       })
-      .then(d => { setInfo(d); setStep('form'); })
+      .then((d: DebriefInfo) => {
+        setInfo(d);
+        const seeded: Record<string, Answer> = {};
+        for (const p of d.packages) {
+          seeded[p.tracking_id] = {
+            reason_code: p.suggested_code ?? '',
+            other_detail: '',
+            within_drive_time: null,
+            source: 'packages_file',
+            amazon_reason_code: p.amazon_reason_code,
+            package_status: p.package_status,
+          };
+        }
+        setAnswers(seeded);
+        setStep('form');
+      })
       .catch(err => {
         setErrorMsg(err instanceof Error ? err.message : 'This link is invalid.');
         setStep('error');
@@ -149,8 +162,37 @@ export default function RtsPage() {
     }
   }
 
+  function updateAnswer(trackingId: string, patch: Partial<Answer>) {
+    setAnswers(prev => ({ ...prev, [trackingId]: { ...prev[trackingId], ...patch } }));
+  }
+
+  function addManualPackage() {
+    const id = newTrackingId.trim().toUpperCase();
+    if (!id || answers[id]) return;
+    setAnswers(prev => ({
+      ...prev,
+      [id]: {
+        reason_code: '', other_detail: '', within_drive_time: null,
+        source: 'manual', amazon_reason_code: null, package_status: null,
+      },
+    }));
+    setNewTrackingId('');
+  }
+
+  function removeManualPackage(trackingId: string) {
+    setAnswers(prev => {
+      const next = { ...prev };
+      delete next[trackingId];
+      return next;
+    });
+  }
+
+  const allComplete = Object.values(answers).every(isAnswerComplete);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!allComplete) return;
+    setSubmitErr('');
     setStep('submitting');
     try {
       const res = await fetch(`${resolveApi()}/rts/submit`, {
@@ -158,16 +200,21 @@ export default function RtsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           token,
-          damaged_count: damaged,
-          reverse_count: reverse,
-          excluded_count: excluded,
-          reattempt_eligible_count: reattemptEligible,
-          reattempt_within_drive_time: reattemptWithinDrive,
+          packages: Object.entries(answers).map(([tracking_id, a]) => ({
+            tracking_id,
+            reason_code: a.reason_code,
+            other_detail: a.other_detail || null,
+            within_drive_time: a.within_drive_time,
+            source: a.source,
+            amazon_reason_code: a.amazon_reason_code,
+          })),
         }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
-        throw new Error(d.detail ?? `Error ${res.status}`);
+        setSubmitErr(d.detail ?? `Error ${res.status}`);
+        setStep('form');
+        return;
       }
       setResult(await res.json());
       setStep('done');
@@ -316,6 +363,9 @@ export default function RtsPage() {
     );
   }
 
+  const entries = Object.entries(answers);
+  const reasonCodes = info?.reason_codes ?? [];
+
   return (
     <>
       <Head>
@@ -334,53 +384,96 @@ export default function RtsPage() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            <CountStepper label="Damaged" hint="Marked as damaged / undeliverable" value={damaged} onChange={setDamaged} />
-            <CountStepper label="Reverse" hint="Customer returns / SWA pickups" value={reverse} onChange={setReverse} />
-            <CountStepper
-              label="Excluded"
-              hint="Business closed, refused, or rescheduled — not reattemptable"
-              value={excluded}
-              onChange={setExcluded}
-            />
-            <CountStepper
-              label="Re-Attemptable"
-              hint="Could still be delivered today"
-              value={reattemptEligible}
-              onChange={n => {
-                setReattemptEligible(n);
-                if (reattemptWithinDrive > n) setReattemptWithinDrive(n);
-              }}
-            />
-
-            {reattemptEligible > 0 && (
-              <div className="bg-amber-900/20 border border-amber-700/40 rounded-2xl p-4 space-y-3">
-                <p className="text-amber-300 text-sm font-semibold">
-                  Of those {reattemptEligible}, how many are a 10–15 min drive or less?
-                </p>
-                <p className="text-amber-200/70 text-xs">Don't include anything that would add a longer drive to your day.</p>
-                <div className="flex items-center justify-center gap-4">
-                  <button
-                    type="button"
-                    onClick={() => setReattemptWithinDrive(Math.max(0, reattemptWithinDrive - 1))}
-                    className="w-10 h-10 rounded-xl bg-slate-700 text-white text-xl font-bold"
-                  >
-                    −
-                  </button>
-                  <span className="text-white text-2xl font-bold w-8 text-center">{reattemptWithinDrive}</span>
-                  <button
-                    type="button"
-                    onClick={() => setReattemptWithinDrive(Math.min(reattemptEligible, reattemptWithinDrive + 1))}
-                    className="w-10 h-10 rounded-xl bg-slate-700 text-white text-xl font-bold"
-                  >
-                    +
-                  </button>
-                </div>
+            {entries.length === 0 && (
+              <div className="bg-emerald-900/20 border border-emerald-700/40 rounded-2xl p-4 text-center">
+                <p className="text-emerald-300 text-sm font-semibold">Nothing flagged for you — you're all clear!</p>
               </div>
             )}
 
+            {entries.map(([trackingId, a]) => (
+              <div key={trackingId} className={`rounded-2xl p-4 border ${a.amazon_reason_code === null ? 'bg-amber-900/20 border-amber-700/40' : 'bg-slate-800 border-slate-600'}`}>
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div>
+                    <p className="text-white text-sm font-mono">{trackingId}</p>
+                    {a.package_status && <p className="text-slate-400 text-xs">{a.package_status}</p>}
+                  </div>
+                  {a.source === 'manual' && (
+                    <button type="button" onClick={() => removeManualPackage(trackingId)} className="text-slate-500 text-xs underline">
+                      Remove
+                    </button>
+                  )}
+                </div>
+
+                {a.amazon_reason_code ? (
+                  <p className="text-slate-400 text-xs mb-2">Amazon has this as: <span className="text-slate-300">{a.amazon_reason_code}</span> — confirm or change below.</p>
+                ) : (
+                  <p className="text-amber-300 text-xs mb-2 font-semibold">⚠️ No reason recorded yet — pick one before you can submit.</p>
+                )}
+
+                <select
+                  value={a.reason_code}
+                  onChange={e => updateAnswer(trackingId, { reason_code: e.target.value, within_drive_time: null })}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-xl px-3 py-3 text-white text-sm"
+                  required
+                >
+                  <option value="">Select a reason…</option>
+                  {reasonCodes.map(rc => (
+                    <option key={rc.code} value={rc.code}>{rc.label}</option>
+                  ))}
+                </select>
+
+                {a.reason_code === 'other' && (
+                  <input
+                    type="text"
+                    value={a.other_detail}
+                    onChange={e => updateAnswer(trackingId, { other_detail: e.target.value })}
+                    placeholder="Briefly describe why"
+                    className="w-full mt-2 bg-slate-900 border border-slate-600 rounded-xl px-3 py-3 text-white text-sm"
+                  />
+                )}
+
+                {a.reason_code === 'reattemptable' && (
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => updateAnswer(trackingId, { within_drive_time: true })}
+                      className={`flex-1 py-2 rounded-xl text-sm font-semibold ${a.within_drive_time === true ? 'bg-blue-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-600'}`}
+                    >
+                      Quick drive (10-15 min)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateAnswer(trackingId, { within_drive_time: false })}
+                      className={`flex-1 py-2 rounded-xl text-sm font-semibold ${a.within_drive_time === false ? 'bg-blue-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-600'}`}
+                    >
+                      Too far
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+
+            <div className="bg-slate-800/60 border border-dashed border-slate-600 rounded-2xl p-4 space-y-2">
+              <p className="text-slate-400 text-xs">Have a package that isn't listed above?</p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newTrackingId}
+                  onChange={e => setNewTrackingId(e.target.value)}
+                  placeholder="Tracking ID (TBA…)"
+                  className="flex-1 bg-slate-900 border border-slate-600 rounded-xl px-3 py-2 text-white text-sm"
+                />
+                <button type="button" onClick={addManualPackage} className="bg-slate-700 text-white px-4 rounded-xl text-sm font-semibold">
+                  Add
+                </button>
+              </div>
+            </div>
+
+            {submitErr && <p className="text-red-400 text-sm text-center">{submitErr}</p>}
+
             <button
               type="submit"
-              disabled={step === 'submitting'}
+              disabled={!allComplete || step === 'submitting'}
               className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold py-5 rounded-2xl text-xl"
             >
               {step === 'submitting' ? 'Submitting…' : 'Submit Debrief →'}

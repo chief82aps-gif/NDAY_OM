@@ -4,12 +4,24 @@ Flow:
   1. Driver taps "Return to Station" in Slack.
   2. If dispatch has already assigned them a rescue, they're routed straight into
      the existing rescue Stage 2 flow instead of the debrief (no separate prompt).
-  3. Otherwise they get a personal link to a short (~3 min) debrief: what's coming
-     back, split into Damaged / Reverse / Re-Attemptable, per the RTS Standards.
-  4. Any Re-Attemptable packages the driver can reach within a 10-15 min drive get
-     assigned as reattempts; everything else (plus Business Closed / Damaged /
-     Refused / Rescheduled, which are never reattemptable) heads back with them.
+  3. Otherwise they get a personal link to a short debrief: for every package
+     they're bringing back, a deliberate reason -- pre-populated (with tracking
+     ID + Amazon's own reason code, if any) from the latest Packages export
+     (packages.py) for their transporter ID. Redesigned 2026-08-04: any package
+     Amazon hasn't recorded a reason for yet forces the driver to pick one of
+     Amazon's own RTS codes before they can submit -- this is the actual fix for
+     the "NO RTS CODE SELECTED" scorecard defect (quality_rts.py), which Amazon's
+     own docs confirm defaults to a DC DPMO defect. The old count-only Damaged/
+     Reverse/Excluded/Re-Attemptable buckets are gone in favor of this per-
+     package list (RtsDebriefPackage).
+  4. Any package marked Still-Deliverable-Today that the driver can reach within
+     a 10-15 min drive gets assigned as a reattempt; everything else heads back.
   5. Driver gets their expected return time and a go-ahead to head to the station.
+
+Submission is blocked (400) until every package in the driver's pre-populated
+list has an answer -- see submit_debrief()'s reconciliation against
+packages.get_driver_packages(). Drivers can also add packages that became a
+problem after the last Packages pull (source="manual").
 
 No mapping/API dependency: reattempt drive-time eligibility is self-reported by
 the driver, not computed from a live routing service.
@@ -29,9 +41,36 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from api.src.database import (
-    get_db, RtsDebrief, RescueEvent, RescueContribution,
+    get_db, RtsDebrief, RtsDebriefPackage, RescueEvent, RescueContribution,
     DailyRouteAssignment, CortexSnapshot, DriverRosterEntry, CrashReport,
 )
+from api.src.routes.packages import get_driver_packages
+
+# Amazon's own RTS reason codes (confirmed against real exports -- see
+# api/src/ingest/quality_rts.py and api/src/ingest/packages.py) plus two
+# NDAY-internal classifications that aren't delivery failures at all
+# (reverse_pickup, reattemptable) and a free-text escape hatch (other).
+# "amazon_code" is what the driver should also select in their own Amazon
+# app -- shown to them as a reminder, since this tool can't set it there.
+RTS_REASON_CODES = [
+    {"code": "business_closed",      "label": "Business Closed",                    "amazon_code": "BUSINESS CLOSED"},
+    {"code": "address_not_found",    "label": "Address Not Found",                  "amazon_code": "ADDRESS NOT FOUND"},
+    {"code": "object_missing",       "label": "Package Missing From Van",           "amazon_code": "OBJECT MISSING"},
+    {"code": "damaged",              "label": "Damaged",                            "amazon_code": "DAMAGED"},
+    {"code": "otp_not_available",    "label": "OTP / ID Verification Not Available","amazon_code": "OTP NOT AVAILABLE"},
+    {"code": "no_locker_available",  "label": "No Locker Available",                "amazon_code": "NO LOCKER AVAILABLE"},
+    {"code": "inaccessible_location","label": "Inaccessible Delivery Location",      "amazon_code": "INACCESSIBLE DELIVERY LOCATION"},
+    {"code": "refused",              "label": "Refused by Customer",                "amazon_code": "REFUSED"},
+    {"code": "tr_cancelled",         "label": "Cancelled by Amazon (TR Cancelled)", "amazon_code": "TR CANCELLED"},
+    {"code": "reverse_pickup",       "label": "Customer Return / SWA Pickup",       "amazon_code": None},
+    {"code": "reattemptable",        "label": "Still Deliverable Today",            "amazon_code": None},
+    {"code": "other",                "label": "Other (explain)",                    "amazon_code": None},
+]
+_VALID_REASON_CODES = {c["code"] for c in RTS_REASON_CODES}
+
+# Amazon's raw reason-code text -> our code, for suggesting a default
+# selection when Amazon already recorded one (driver just confirms).
+_AMAZON_CODE_TO_OURS = {c["amazon_code"]: c["code"] for c in RTS_REASON_CODES if c["amazon_code"]}
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/rts", tags=["rts"])
@@ -296,6 +335,11 @@ def generate_rts(payload: GenerateRequest, db: Session = Depends(get_db)):
     return {**result, "driver_name": roster_entry.payroll_name, "dm_sent": dm_sent}
 
 
+def _driver_transporter_id(driver_name: str, shift_date: date, db: Session) -> Optional[str]:
+    assignment = _driver_route_today(driver_name, shift_date, db)
+    return assignment.transporter_id if assignment else None
+
+
 @router.get("/debrief")
 def get_debrief(token: str, db: Session = Depends(get_db)):
     debrief = db.query(RtsDebrief).filter(RtsDebrief.token == token).first()
@@ -303,20 +347,40 @@ def get_debrief(token: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="This RTS link is invalid. Use the button in Slack.")
     if debrief.completed_at:
         raise HTTPException(status_code=400, detail="This debrief has already been submitted.")
+
+    transporter_id = _driver_transporter_id(debrief.driver_name, debrief.shift_date, db)
+    packages = []
+    if transporter_id:
+        for p in get_driver_packages(transporter_id, db):
+            packages.append({
+                "tracking_id": p.tracking_id,
+                "package_status": p.package_status,
+                "amazon_reason_code": p.reason_code,
+                "suggested_code": _AMAZON_CODE_TO_OURS.get((p.reason_code or "").upper()),
+                "needs_answer": p.reason_code is None,
+            })
+
     return {
         "driver_name": debrief.driver_name,
         "route_id": debrief.route_id,
         "shift_date": str(debrief.shift_date),
+        "packages": packages,
+        "reason_codes": RTS_REASON_CODES,
     }
+
+
+class PackageAnswer(BaseModel):
+    tracking_id: str
+    reason_code: str
+    other_detail: Optional[str] = None
+    within_drive_time: Optional[bool] = None   # only meaningful when reason_code == "reattemptable"
+    source: str = "packages_file"              # packages_file | manual
+    amazon_reason_code: Optional[str] = None   # what Amazon already had recorded, if anything
 
 
 class SubmitRequest(BaseModel):
     token: str
-    damaged_count: int = 0
-    reverse_count: int = 0
-    excluded_count: int = 0            # Business Closed / Refused / Rescheduled
-    reattempt_eligible_count: int = 0  # candidates that could still be delivered
-    reattempt_within_drive_time: int = 0  # of those, how many are a 10-15 min drive or less
+    packages: list[PackageAnswer] = []
 
 
 @router.post("/submit")
@@ -327,13 +391,47 @@ def submit_debrief(payload: SubmitRequest, db: Session = Depends(get_db)):
     if debrief.completed_at:
         raise HTTPException(status_code=400, detail="This debrief has already been submitted.")
 
-    assigned = min(payload.reattempt_within_drive_time, payload.reattempt_eligible_count)
-    skipped = payload.reattempt_eligible_count - assigned
+    seen_tracking_ids: set[str] = set()
+    for p in payload.packages:
+        if p.reason_code not in _VALID_REASON_CODES:
+            raise HTTPException(status_code=400, detail=f"Unrecognized reason code: {p.reason_code}")
+        if p.reason_code == "other" and not (p.other_detail or "").strip():
+            raise HTTPException(status_code=400, detail=f"Package {p.tracking_id} needs a description for 'Other'.")
+        if p.reason_code == "reattemptable" and p.within_drive_time is None:
+            raise HTTPException(status_code=400, detail=f"Package {p.tracking_id}: answer whether it's a quick drive.")
+        seen_tracking_ids.add(p.tracking_id)
 
-    debrief.damaged_count = payload.damaged_count
-    debrief.reverse_count = payload.reverse_count
-    debrief.excluded_count = payload.excluded_count
-    debrief.reattempt_eligible_count = payload.reattempt_eligible_count
+    # Hard enforcement: every package Amazon already flagged for this driver
+    # today must be accounted for before they can submit -- closes any
+    # client-side bypass of the pre-populated list.
+    transporter_id = _driver_transporter_id(debrief.driver_name, debrief.shift_date, db)
+    if transporter_id:
+        required_ids = {p.tracking_id for p in get_driver_packages(transporter_id, db)}
+        missing = required_ids - seen_tracking_ids
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{len(missing)} package(s) still need a reason before you can submit: "
+                    f"{', '.join(sorted(missing)[:5])}"
+                ),
+            )
+
+    for p in payload.packages:
+        db.add(RtsDebriefPackage(
+            debrief_id=debrief.id,
+            tracking_id=p.tracking_id,
+            reason_code=p.reason_code,
+            other_detail=p.other_detail,
+            within_drive_time=p.within_drive_time,
+            source=p.source,
+            amazon_reason_code=p.amazon_reason_code,
+        ))
+
+    reattemptable = [p for p in payload.packages if p.reason_code == "reattemptable"]
+    assigned = sum(1 for p in reattemptable if p.within_drive_time)
+    skipped = sum(1 for p in reattemptable if not p.within_drive_time)
+
     debrief.reattempt_assigned_count = assigned
     debrief.reattempt_skipped_count = skipped
     debrief.completed_at = datetime.utcnow()
@@ -362,6 +460,16 @@ def submit_debrief(payload: SubmitRequest, db: Session = Depends(get_db)):
                     f"✅ *RTS Debrief Complete* — Thanks {first}!\n\n"
                     f"Head back to the station now."
                     + (f" Expected arrival: *{eta}*" if eta else "")
+                )
+            # This tool can't select the code in Amazon's own app for the
+            # driver -- the actual defect only clears once they do it there
+            # too, so any package we just forced an answer for (Amazon had
+            # no code recorded yet) gets an explicit reminder.
+            needed_coaching = [p for p in payload.packages if p.amazon_reason_code is None and p.reason_code not in ("reattemptable", "reverse_pickup")]
+            if needed_coaching:
+                text += (
+                    f"\n\n⚠️ *{len(needed_coaching)} package(s)* didn't have a reason code in your "
+                    f"delivery app yet — make sure you select one there too before you clock out."
                 )
             client.chat_postMessage(channel=debrief.slack_user_id, text=text)
     except Exception as exc:

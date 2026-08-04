@@ -3786,12 +3786,12 @@ class RtsDebrief(Base):
     started_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime)
 
-    # Driver-reported return counts
-    damaged_count = Column(Integer, default=0)
-    reverse_count = Column(Integer, default=0)          # customer return / SWA pickup
-    excluded_count = Column(Integer, default=0)         # Business Closed / Refused / Rescheduled — not reattemptable
-    reattempt_eligible_count = Column(Integer, default=0)   # candidates that could still be delivered
-    reattempt_assigned_count = Column(Integer, default=0)   # driver self-reported as within 10-15 min drive
+    # Reattempt totals -- computed at submit time from the driver's
+    # RtsDebriefPackage rows (see below), not driver-entered counts.
+    # Raw category counts (damaged/reverse/excluded/reattempt_eligible)
+    # removed 2026-08-04 in favor of per-package rows -- see
+    # RtsDebriefPackage's docstring for why.
+    reattempt_assigned_count = Column(Integer, default=0)   # within a 10-15 min drive
     reattempt_skipped_count = Column(Integer, default=0)    # too far — handed back to dispatch instead
 
     expected_return_time = Column(String(20))
@@ -3802,6 +3802,30 @@ class RtsDebrief(Base):
     __table_args__ = (
         Index("idx_rts_date_driver", "shift_date", "driver_name"),
     )
+
+
+class RtsDebriefPackage(Base):
+    """One row per package a driver accounts for during their RTS
+    debrief -- added 2026-08-04, replaces the old count-only Damaged/
+    Reverse/Excluded/Re-Attemptable buckets. The debrief pre-populates
+    this list from the driver's rows in the latest PackagesSnapshot
+    (packages.py) for the day; any package Amazon hasn't recorded a
+    reason for yet (reason_code NULL there) forces a deliberate answer
+    here before the driver can submit and head back -- the actual
+    "no code selected" defect this was built to close. Driver-entered
+    rows (packages that became a problem after the last Packages pull)
+    are also allowed, flagged via source="manual".
+    """
+    __tablename__ = "rts_debrief_packages"
+
+    id = Column(Integer, primary_key=True)
+    debrief_id = Column(Integer, ForeignKey("rts_debriefs.id"), nullable=False, index=True)
+    tracking_id = Column(String(50), nullable=False, index=True)
+    reason_code = Column(String(30), nullable=False)   # see RTS_REASON_CODES in rts.py
+    other_detail = Column(String(255))                  # only when reason_code == "other"
+    within_drive_time = Column(Boolean)                 # only meaningful when reason_code == "reattemptable"
+    source = Column(String(10), default="packages_file")   # packages_file | manual
+    amazon_reason_code = Column(String(60))             # the code (if any) Amazon already had recorded, for audit
 
 
 class MgtSummaryPost(Base):
@@ -3975,6 +3999,41 @@ class QualityRtsRecord(Base):
     additional_information = Column(String(255))
     exemption_reason = Column(String(150))
     service_area = Column(String(50))
+
+
+class PackagesSnapshot(Base):
+    """One row per ingested "Packages" export -- added 2026-08-04. Unlike
+    the single-per-day daily_quality/quality_rts snapshots, this file is
+    pulled multiple times a day (immediately after the last wave launches,
+    every 60-90 min after that, and at COB), so multiple snapshots per
+    date are expected -- no unique(report_date) constraint. The latest
+    snapshot for a date is what rts.py's debrief pre-population and the
+    ops_cadence All-In gate both read; older snapshots are kept for
+    progress-over-the-day visibility only."""
+    __tablename__ = "packages_snapshots"
+
+    id = Column(Integer, primary_key=True)
+    report_date = Column(Date, nullable=False, index=True)
+    source_file = Column(String(255))
+    slack_file_id = Column(String(50))
+    imported_at = Column(DateTime, default=datetime.utcnow, index=True)
+    package_count = Column(Integer, default=0)
+
+
+class PackagesRecord(Base):
+    """One row per non-delivered package. See PackagesSnapshot's docstring."""
+    __tablename__ = "packages_records"
+
+    id = Column(Integer, primary_key=True)
+    snapshot_id = Column(Integer, ForeignKey("packages_snapshots.id"), nullable=False, index=True)
+    tracking_id = Column(String(50), index=True)
+    route_code = Column(String(20), index=True)
+    transporter_name = Column(String(150), index=True)
+    transporter_id = Column(String(50), index=True)
+    address = Column(String(255))
+    package_status = Column(String(30))     # Reattemptable | Undeliverable | Missing | Returned to station | Pickup failed
+    reason_code = Column(String(60))        # NULL == Amazon's "NONE" -- no reason recorded yet
+    last_scan_at = Column(DateTime)
 
 
 class NdayPointsLedger(Base):

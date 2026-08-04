@@ -32,12 +32,13 @@ interface SentimentResponse {
   has_slack_link: boolean;
 }
 
-type BlakeMode = 'noted' | 'noted_with_reason' | 'decline_with_reason';
+type BlakeMode = 'noted' | 'noted_with_reason' | 'decline_with_reason' | 'free_text';
 
 const BLAKE_MODE_LABELS: Record<BlakeMode, string> = {
   noted: 'Noted (no elaboration)',
   noted_with_reason: 'Noted + reason',
   decline_with_reason: "Thank you for the suggestion... here's why",
+  free_text: 'Write your own reply',
 };
 
 interface QuestionStat {
@@ -281,12 +282,17 @@ export default function SentimentSurveyAdminPage() {
                           <textarea
                             value={composerReason}
                             onChange={e => setComposerReason(e.target.value)}
-                            placeholder="Reason / body of the response..."
+                            placeholder={composerMode === 'free_text' ? 'Type the full reply, exactly as it will be sent...' : 'Reason / body of the response...'}
                             style={{ width: '100%', boxSizing: 'border-box', background: '#1e293b', border: '1px solid #334155', borderRadius: 6, padding: '8px 10px', color: '#e2e8f0', fontSize: 13, minHeight: 70, marginBottom: 8, fontFamily: 'inherit' }}
                           />
                         )}
                         <div style={{ fontSize: 12, color: '#64748b', marginBottom: 8 }}>
-                          Preview: &ldquo;{composerMode === 'noted' ? 'Noted.' : composerMode === 'noted_with_reason' ? `Noted. ${composerReason || '...'}` : `Thank you for the suggestion, I see where you're coming from — unfortunately we cannot do this, and here's why: ${composerReason || '...'}`}&rdquo;
+                          Preview: &ldquo;{
+                            composerMode === 'noted' ? 'Noted.'
+                            : composerMode === 'noted_with_reason' ? `Noted. ${composerReason || '...'}`
+                            : composerMode === 'free_text' ? (composerReason || '...')
+                            : `Thank you for the suggestion, I see where you're coming from — unfortunately we cannot do this, and here's why: ${composerReason || '...'}`
+                          }&rdquo;
                         </div>
                         {sendError && <div style={{ color: '#f87171', fontSize: 12, marginBottom: 8 }}>{sendError}</div>}
                         <div style={{ display: 'flex', gap: 8 }}>

@@ -588,6 +588,9 @@ def admin_report(
 #   - "decline_with_reason": "Thank you for the suggestion, I see where
 #     you're coming from -- unfortunately we cannot do this, and here's
 #     why: {reason}" -- for genuine suggestions being declined.
+#   - "free_text" (added 2026-08-04): sends `reason` verbatim, no template
+#     wrapper -- for the responses where none of Blake's three signature
+#     phrasings actually fit what needs to be said.
 # ─────────────────────────────────────────────────────────────────────────────
 
 BLAKE_RESPONSE_TEMPLATES = {
@@ -597,11 +600,12 @@ BLAKE_RESPONSE_TEMPLATES = {
         "Thank you for the suggestion, I see where you're coming from — "
         f"unfortunately we cannot do this, and here's why: {reason}"
     ),
+    "free_text": lambda reason: reason,
 }
 
 
 class BlakeResponseRequest(BaseModel):
-    mode: str   # "noted" | "noted_with_reason" | "decline_with_reason"
+    mode: str   # "noted" | "noted_with_reason" | "decline_with_reason" | "free_text"
     reason: Optional[str] = None
     responded_by: Optional[str] = None
 

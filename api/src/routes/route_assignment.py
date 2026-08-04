@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
@@ -90,25 +89,10 @@ def _van_matches(van: Vehicle, service_type: str) -> bool:
 # Name-token matching
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _tokens(name: str) -> frozenset[str]:
-    return frozenset(re.sub(r"[^a-z\s]", "", (name or "").lower()).split())
+from api.src.driver_identity import _tokens
 
 def _name_overlap(a: str, b: str) -> int:
     return len(_tokens(a) & _tokens(b))
-
-def _match_roster(name: str, roster: list[DriverRosterEntry]) -> Optional[DriverRosterEntry]:
-    """Best-match among an already-loaded roster list. Tightened
-    2026-07-23 from a >=1-shared-token threshold to the same >=2 used by
-    the shared driver-identity resolver elsewhere — a single shared token
-    (e.g. only a common first name) was noticeably weaker than every
-    other matcher in the codebase and could mismatch two different
-    drivers who happen to share a first name."""
-    best, best_score = None, 0
-    for r in roster:
-        score = _name_overlap(name, r.payroll_name)
-        if score > best_score:
-            best_score, best = score, r
-    return best if best_score >= 2 else None
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Data loaders

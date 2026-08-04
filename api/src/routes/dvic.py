@@ -26,7 +26,6 @@ import json
 import logging
 import os
 import random
-import re
 import time
 from collections import defaultdict
 from datetime import datetime, date, timezone
@@ -193,10 +192,6 @@ def _dm_with_blocks(slack_member_id: str, fallback_text: str, blocks: list):
 # ─────────────────────────────────────────────────────────────────────────────
 # Name matching — DVIC "First Last" vs roster "Last, First"
 # ─────────────────────────────────────────────────────────────────────────────
-
-def _name_tokens(name: str) -> frozenset[str]:
-    return frozenset(re.sub(r"[^a-z\s]", "", name.lower()).split())
-
 
 def _find_roster_entry(transporter_name: str, db: Session) -> Optional[DriverRosterEntry]:
     """Delegates to the shared driver-identity resolver (2026-07-23) —

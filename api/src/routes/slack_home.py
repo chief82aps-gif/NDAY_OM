@@ -41,7 +41,7 @@ from api.src.database import (
     QualityMetricSnapshot,
     TimeOffRequest,
 )
-from api.src.routes.dvic import _name_tokens
+from api.src.driver_identity import _tokens as _name_tokens
 from api.src.routes.document_routing import resolve_recipients, is_dispatch_staff, is_hr_staff
 from api.src.routes.quality import get_rankings, _METRIC_LABELS
 from api.src.authorization import require_any_role

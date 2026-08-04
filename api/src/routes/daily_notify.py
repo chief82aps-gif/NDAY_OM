@@ -21,7 +21,6 @@ import tempfile
 import logging
 from datetime import datetime, date, timedelta
 from typing import Optional, List, Dict, Tuple
-from zoneinfo import ZoneInfo
 
 import pdfplumber
 import pandas as pd
@@ -48,11 +47,11 @@ from api.src.database import (
 )
 from api.src.driver_identity import resolve_roster_id, resolve_roster_entry
 from api.src.feature_flags import get_flag
+from api.src.timezone import PACIFIC
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-PACIFIC = ZoneInfo("America/Los_Angeles")
 NOTIFY_CHANNEL = os.getenv("SLACK_NOTIFY_CHANNEL", "C0AF48TPAMV")
 CORTEX_CHANNEL = os.getenv("CORTEX_NOTIFY_CHANNEL", "C0BE4ALL1EX")
 MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
@@ -1837,8 +1836,6 @@ def today_confirmation_status(for_date: Optional[str] = None, db: Session = Depe
     Returns all driver assignments for a given date with confirmation status.
     Used by the dispatch confirmation dashboard. Defaults to today Pacific time.
     """
-    from zoneinfo import ZoneInfo
-    PACIFIC = ZoneInfo("America/Los_Angeles")
     if for_date:
         try:
             target = date.fromisoformat(for_date)

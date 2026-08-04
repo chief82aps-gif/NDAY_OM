@@ -20,17 +20,16 @@ import os
 import time
 from datetime import date, datetime, timedelta
 from typing import Optional
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from api.src.database import get_db, DriverRosterEntry
+from api.src.timezone import PACIFIC
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/slack", tags=["slack"])
 
-PACIFIC = ZoneInfo("America/Los_Angeles")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://nday-om.vercel.app")
 MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
 TOKEN_TTL_HOURS = 4

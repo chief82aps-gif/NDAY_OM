@@ -51,6 +51,7 @@ from api.src.driver_identity import resolve_roster_entry, resolve_roster_id
 from api.src.outstanding_items import get_outstanding_items
 from api.src.schedule_config import SHOWTIME_OFFSET_MINUTES
 from api.src.feature_flags import get_flag
+from api.src.timezone import PACIFIC
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/rostering", tags=["rostering"])
@@ -292,7 +293,7 @@ def _calc_eta_dt(snap: "CortexSnapshot", wave_str: Optional[str], shift_date: "d
         return None
 
     from zoneinfo import ZoneInfo as _ZI
-    _PACIFIC = _ZI("America/Los_Angeles")
+    _PACIFIC = PACIFIC
     _UTC = _ZI("UTC")
 
     # Parse wave time into a naive UTC datetime on shift_date
@@ -327,7 +328,7 @@ def _calc_eta_dt(snap: "CortexSnapshot", wave_str: Optional[str], shift_date: "d
 def _calc_eta(snap: "CortexSnapshot", wave_str: Optional[str], shift_date: "date") -> Optional[str]:
     """Pacific-time label for the ETA, e.g. "3:45 PM", "Done", or None. See _calc_eta_dt."""
     from zoneinfo import ZoneInfo as _ZI
-    _PACIFIC = _ZI("America/Los_Angeles")
+    _PACIFIC = PACIFIC
     _UTC = _ZI("UTC")
 
     if not snap:
@@ -393,7 +394,7 @@ def get_driver_original_return_dt(driver_name: str, shift_date: date, db: Sessio
         return None
 
     from zoneinfo import ZoneInfo as _ZI
-    _PACIFIC = _ZI("America/Los_Angeles")
+    _PACIFIC = PACIFIC
     _UTC = _ZI("UTC")
     for fmt in ("%I:%M %p", "%H:%M", "%I:%M%p"):
         try:
@@ -977,9 +978,7 @@ def run_schedule_escalation_check(db: Session) -> dict:
     if not get_flag("SCHEDULE_ESCALATION_ACTIVE"):
         return {"status": "inactive"}
 
-    from zoneinfo import ZoneInfo as _ZI
-    pacific = _ZI("America/Los_Angeles")
-    now = datetime.now(pacific)
+    now = datetime.now(PACIFIC)
     today = now.date()
     tomorrow = today + timedelta(days=1)
 
@@ -2478,8 +2477,6 @@ def get_wave_status(shift_date: Optional[str] = None, db: Session = Depends(get_
     Return wave-by-wave attendance status for shift_date (defaults to today).
     Used by the Wave Status dashboard page.
     """
-    from zoneinfo import ZoneInfo
-    PACIFIC = ZoneInfo("America/Los_Angeles")
     now_pt = datetime.now(PACIFIC)
 
     if shift_date:
@@ -2711,8 +2708,7 @@ def trigger_nightly_reminder(shift_date: Optional[str] = None, db: Session = Dep
         except ValueError:
             raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
     else:
-        from zoneinfo import ZoneInfo
-        now_pt = datetime.now(ZoneInfo("America/Los_Angeles"))
+        now_pt = datetime.now(PACIFIC)
         target = now_pt.date() + timedelta(days=1)
 
     return send_nightly_roster_reminder(target, db)
@@ -3345,8 +3341,7 @@ def refresh_all_dm_response_summaries(db: Session) -> dict:
     Refreshes tomorrow's Showtime response summary and today's Route
     Assignment response summary — the two dates each DM type is
     realistically active for."""
-    from zoneinfo import ZoneInfo
-    today = datetime.now(ZoneInfo("America/Los_Angeles")).date()
+    today = datetime.now(PACIFIC).date()
     tomorrow = today + timedelta(days=1)
     results = {}
     try:

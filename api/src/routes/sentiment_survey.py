@@ -29,7 +29,6 @@ import os
 import time
 from datetime import datetime, date, timedelta
 from typing import Optional
-from zoneinfo import ZoneInfo
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException
@@ -43,6 +42,7 @@ from api.src.database import (
 )
 from api.src.authorization import require_any_role
 from api.src.feature_flags import get_flag
+from api.src.timezone import PACIFIC
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sentiment-survey", tags=["sentiment-survey"])
@@ -69,7 +69,6 @@ _NUDGE_THRESHOLD_DAYS = 3  # shortened from 5 (2026-07-29) -- "I really want the
 # survey window (first two weeks of the month) so drivers' sentiment is
 # already positively primed by the time Amazon asks.
 _MONTHLY_PUSH_KEY_PREFIX = "sentiment_survey_monthly_push_"
-PACIFIC = ZoneInfo("America/Los_Angeles")
 
 
 def _pacific_today() -> date:
@@ -714,15 +713,13 @@ def send_daily_sentiment_report(db: Session, force: bool = False) -> dict:
     if not get_flag("SENTIMENT_SURVEY_ACTIVE"):
         return {"status": "inactive"}
 
-    import zoneinfo
-    tz = zoneinfo.ZoneInfo("America/Los_Angeles")
-    today = datetime.now(tz).date()
+    today = datetime.now(PACIFIC).date()
 
     if not force:
         state = get_reminder_state(db, _DAILY_REPORT_KEY)
         if state.get("last_sent_date") == today.isoformat():
             return {"status": "already_sent", "date": today.isoformat()}
-        if datetime.now(tz).hour < 21:
+        if datetime.now(PACIFIC).hour < 21:
             return {"status": "outside_window"}
 
     from datetime import timedelta

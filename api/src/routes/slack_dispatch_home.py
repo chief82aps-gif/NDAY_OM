@@ -20,7 +20,6 @@ import logging
 import os
 from datetime import date, datetime
 from typing import Optional
-from zoneinfo import ZoneInfo
 
 from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
@@ -31,8 +30,7 @@ from api.src.routes.slack_home import _client, _dm_driver
 from api.src.routes.slack_interactions import FRONTEND_URL
 from api.src.routes.slack_hr_home import _slack_login_url
 from api.src.routes import auth as auth_routes
-
-PACIFIC = ZoneInfo("America/Los_Angeles")
+from api.src.timezone import PACIFIC
 
 logger = logging.getLogger(__name__)
 
@@ -462,15 +460,13 @@ def _handle_dispatch_preview_driver_home(payload: dict, db: Session) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _run_rerun_and_report(user_id: str) -> None:
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
     from api.src.database import SessionLocal
     from api.src.routes.daily_notify import rerun_route_assignments
 
     client = _client()
     db = SessionLocal()
     try:
-        today = datetime.now(ZoneInfo("America/Los_Angeles")).date()
+        today = datetime.now(PACIFIC).date()
         result = rerun_route_assignments(today, db)
         changed = result["changed_dms"]
         removed = result["removed_dms"]
@@ -595,13 +591,11 @@ def _handle_dispatch_republish_showtime(payload: dict, db: Session) -> None:
         logger.warning("Non-dispatch user %s attempted dispatch_republish_showtime", user_id)
         return
 
-    from datetime import datetime as _dt
-    from zoneinfo import ZoneInfo
     from sqlalchemy import func, or_
     from api.src.database import DriverScheduleEntry
     from api.src.routes.rostering import post_showtime_summary
 
-    today = _dt.now(ZoneInfo("America/Los_Angeles")).date()
+    today = datetime.now(PACIFIC).date()
     # Showtime is a night-before roster for the NEXT shift, never the
     # calendar day the button happens to be clicked on -- so the date
     # filter must be strictly > today, not >= today. Today's row still
@@ -678,11 +672,9 @@ def _handle_dispatch_send_route_matrix(payload: dict, db: Session) -> None:
         logger.warning("Non-dispatch user %s attempted dispatch_send_route_matrix", user_id)
         return
 
-    from datetime import datetime as _dt
-    from zoneinfo import ZoneInfo
     from api.src.routes.rostering import send_assignment_matrix_to_channel
 
-    today = _dt.now(ZoneInfo("America/Los_Angeles")).date()
+    today = datetime.now(PACIFIC).date()
     try:
         result = send_assignment_matrix_to_channel(today, db, ROUTE_MATRIX_TARGET_CHANNEL)
     except Exception as exc:

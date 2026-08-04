@@ -20,7 +20,6 @@ import os
 import time
 from datetime import datetime, date, timedelta, timezone
 from typing import Optional
-from zoneinfo import ZoneInfo
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException
@@ -33,9 +32,9 @@ from api.src.database import (
     get_reminder_state, set_reminder_state,
 )
 from api.src.feature_flags import get_flag
+from api.src.timezone import PACIFIC
 
 logger = logging.getLogger(__name__)
-PACIFIC = ZoneInfo("America/Los_Angeles")
 
 
 def _pacific_today() -> date:
@@ -924,9 +923,7 @@ def post_daily_survey_message(force: bool = False) -> dict:
     (manual recovery if the automatic window was missed, e.g. a redeploy
     landed mid-window) — still respects the "already sent today" guard
     either way, so this is always safe to call."""
-    import zoneinfo
-    tz = zoneinfo.ZoneInfo("America/Los_Angeles")
-    now = datetime.now(tz)
+    now = datetime.now(PACIFIC)
     today = now.date()
 
     db = SessionLocal()
@@ -978,9 +975,7 @@ def send_eod_reminders(force: bool = False) -> dict:
     """7:30 PM Pacific: DM any scheduled driver who hasn't submitted yet.
     Pass force=True for manual recovery outside the normal window — still
     respects the "already ran today" guard, safe to call any time."""
-    import zoneinfo
-    tz = zoneinfo.ZoneInfo("America/Los_Angeles")
-    now = datetime.now(tz)
+    now = datetime.now(PACIFIC)
     today = now.date()
 
     db = SessionLocal()

@@ -81,13 +81,12 @@ from __future__ import annotations
 
 from datetime import timedelta, datetime
 from typing import Optional
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-PACIFIC = ZoneInfo("America/Los_Angeles")
+from api.src.timezone import PACIFIC
 
 from api.src.database import (
     get_db,

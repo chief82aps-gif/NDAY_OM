@@ -23,7 +23,6 @@ import logging
 import os
 from datetime import datetime, date, timedelta
 from typing import List, Optional
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -31,11 +30,11 @@ from sqlalchemy import Column, Integer, String, Date, DateTime, Text
 from sqlalchemy.orm import Session
 
 from api.src.database import Base, engine, get_db
+from api.src.timezone import PACIFIC
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/manager-accountability", tags=["manager-accountability"])
 
-PACIFIC = ZoneInfo("America/Los_Angeles")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://nday-om.vercel.app")
 
 # ─────────────────────────────────────────────────────────────────────────────

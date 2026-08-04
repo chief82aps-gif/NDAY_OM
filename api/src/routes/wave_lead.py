@@ -28,7 +28,6 @@ import logging
 import os
 from datetime import date, datetime, timedelta
 from typing import Optional
-from zoneinfo import ZoneInfo
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Header
@@ -44,11 +43,11 @@ from api.src.database import (
 from api.src.authorization import require_any_role
 from api.src.routes.auth import JWT_SECRET, JWT_ALGORITHM
 from api.src.feature_flags import get_flag
+from api.src.timezone import PACIFIC
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/wave-lead", tags=["wave-lead"])
 
-PACIFIC = ZoneInfo("America/Los_Angeles")
 MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
 
 WAVE_NUMBERS = (1, 2, 3, 4)          # standard waves, each with one standing lead + a team per half

@@ -20,7 +20,6 @@ import re
 from datetime import datetime, date, timedelta
 from decimal import Decimal
 from typing import Optional
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel
@@ -40,11 +39,10 @@ from api.src.database import (
 from api.src.driver_identity import resolve_roster_entry
 from api.src.authorization import require_any_role
 from api.src.feature_flags import get_flag
+from api.src.timezone import PACIFIC
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/attendance", tags=["attendance"])
-
-PACIFIC = ZoneInfo("America/Los_Angeles")
 
 
 def _pin_matches(roster_entry: Optional["DriverRosterEntry"], submitted_pin: Optional[str], db: Session) -> bool:

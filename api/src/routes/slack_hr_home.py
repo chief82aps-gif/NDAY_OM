@@ -15,19 +15,18 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
 
 from api.src.database import EodSurveyResponse, SentimentSurveyResponse
 from api.src.routes.document_routing import is_hr_staff, get_role_slack_ids
+from api.src.timezone import PACIFIC
 
 logger = logging.getLogger(__name__)
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://nday-om.vercel.app")
 BACKEND_URL = os.getenv("BACKEND_URL", "https://nday-om.onrender.com")
-PACIFIC = ZoneInfo("America/Los_Angeles")
 
 
 def _slack_login_url(redirect_path: str, dash_user, dash_token: str) -> str:

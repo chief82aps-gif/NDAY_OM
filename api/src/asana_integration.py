@@ -239,54 +239,6 @@ class NewDriverScheduler:
             errors.append(f"Failed to get new drivers from Asana: {str(e)}")
             return drivers, errors
     
-    def create_scheduling_suggestion(
-        self,
-        new_drivers: List[Dict],
-        current_schedule: Dict,
-        weeks_ahead: int = 1,
-    ) -> Dict:
-        """
-        Create scheduling suggestions for new drivers based on team load balancing.
-        
-        Args:
-            new_drivers: List of new driver info from Asana
-            current_schedule: Current driver schedule data
-            weeks_ahead: How many weeks to plan ahead
-            
-        Returns:
-            Dictionary with scheduling suggestions
-        """
-        suggestions = {
-            "new_drivers": [],
-            "recommendations": [],
-        }
-        
-        # Calculate team load per day/wave
-        team_load = self._calculate_team_load(current_schedule)
-        
-        for driver in new_drivers:
-            # Find under-loaded days/waves
-            best_assignments = self._find_best_assignments(team_load, count=3)
-            
-            suggestions["new_drivers"].append({
-                "name": driver["name"],
-                "asana_task_gid": driver["asana_task_gid"],
-                "suggested_assignments": best_assignments,
-            })
-        
-        return suggestions
-    
-    def _calculate_team_load(self, schedule: Dict) -> Dict:
-        """Calculate current team distribution across days/waves."""
-        load = {}
-        # TODO: Implement based on schedule structure
-        return load
-    
-    def _find_best_assignments(self, team_load: Dict, count: int = 3) -> List[Dict]:
-        """Find the most under-loaded day/wave combinations."""
-        # TODO: Implement load balancing logic
-        return []
-    
     def push_assignment_to_asana(
         self,
         task_gid: str,

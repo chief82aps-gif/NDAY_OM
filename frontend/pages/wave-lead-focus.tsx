@@ -33,12 +33,12 @@ const TIER_COLOR: Record<string, string> = {
   tin: '#94a3b8', lead: '#64748b', sawdust: '#f87171', gray: '#475569',
 };
 const TIER_ICON: Record<string, string> = {
-  platinum: '💎', gold: '⭐', silver: '✨', bronze: '🔶', tin: '🔩', lead: '✏️', sawdust: '🪵', gray: '❔',
+  platinum: '💎', gold: '⭐', silver: '✨', bronze: '🔶', does_not_meet: '🔩', gray: '❔',
 };
 
 function tierLabel(tier: string): string {
   if (tier === 'gray') return 'No Data';
-  if (tier === 'tin' || tier === 'lead' || tier === 'sawdust') return 'Does Not Meet Minimum';
+  if (tier === 'does_not_meet') return 'Does Not Meet Minimum';
   return tier.charAt(0).toUpperCase() + tier.slice(1);
 }
 

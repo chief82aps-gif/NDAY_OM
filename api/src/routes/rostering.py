@@ -104,26 +104,19 @@ NURSERY_ROUTE_PREFIXES: set[str] = set()   # e.g. {"NUR", "GRD"} — populated l
 # _coaching_highlights_block() below.
 
 # Standing rank for quality tiers, sourced from driver_scoring.py's blended
-# 20/40/40 overall tier (Platinum down through Sawdust) -- fixed 2026-07-30,
-# same ranking-unification already applied to route_assignment.py's
-# _load_quality_map() (2026-07-29) and quality.py's get_rankings()
-# (2026-07-30). This used to be its own separate 4-tier rank off Amazon's
-# raw overall_standing string, which never had Tin/Lead/Sawdust at all --
-# a real, pre-existing disagreement with driver_scoring.py documented as an
-# architecture violation in Governance/SRD_MODULE_ARCHITECTURE_v3.md.
-#
-# Tin/Lead/Sawdust collapsed to one shared "Does Not Meet Minimum" display
-# string 2026-07-31 (per explicit request) -- they're indistinguishable to
-# a viewer now, so they share one rank too (below Bronze, same as the old
-# Sawdust floor) rather than three unreachable keys that would otherwise
-# silently fall through to the same default-0 rank as "Unknown"/no-data.
+# 20/40/40 overall tier (Platinum down through Does Not Meet) -- fixed
+# 2026-07-30, same ranking-unification already applied to
+# route_assignment.py's _load_quality_map() (2026-07-29) and quality.py's
+# get_rankings() (2026-07-30). This used to be its own separate 4-tier
+# rank off Amazon's raw overall_standing string, which never matched
+# driver_scoring.py's own tiers at all -- a real, pre-existing
+# disagreement documented as an architecture violation in
+# Governance/SRD_MODULE_ARCHITECTURE_v3.md. TIER_DISPLAY itself now lives
+# in driver_scoring.py (2026-08-04) -- imported here instead of a second
+# local copy (quality.py and route_assignment.py do the same).
 _STANDING_RANK = {"Platinum": 7, "Gold": 6, "Silver": 5, "Bronze": 4, "Does Not Meet Minimum": 1}
-_TIER_DISPLAY = {
-    "gray": "Unknown",
-    "tin": "Does Not Meet Minimum",
-    "lead": "Does Not Meet Minimum",
-    "sawdust": "Does Not Meet Minimum",
-}
+from api.src.routes.driver_scoring import TIER_DISPLAY as _SHARED_TIER_DISPLAY
+_TIER_DISPLAY = {"gray": "Unknown", **_SHARED_TIER_DISPLAY}
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────

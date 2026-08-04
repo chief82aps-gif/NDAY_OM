@@ -614,13 +614,20 @@ def build_home_view_blocks(driver: Optional[DriverRosterEntry], db: Session) -> 
         )
 
     if match:
+        from api.src.routes.driver_scoring import DRIVER_FACING_TIER_DISPLAY
         score = match.get("overall_score")
         score_text = f" · Score {score:.1f}" if score is not None else ""
+        # Driver-facing standing name (e.g. "All-Star", "Spring Training")
+        # instead of the staff-facing "Platinum"/"Does Not Meet Minimum" --
+        # this is the one place a driver sees their own tier. Falls back
+        # to the staff-facing string if the tier key isn't in the map
+        # (e.g. "gray"/no data).
+        standing_text = DRIVER_FACING_TIER_DISPLAY.get(match.get("overall_tier"), match.get("overall_standing")) or "—"
         blocks.append({
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f"*Standing:* {match['rank']} of {driver_count} · {match.get('overall_standing') or '—'}{score_text}",
+                "text": f"*Standing:* {match['rank']} of {driver_count} · {standing_text}{score_text}",
             },
         })
         fields = _metric_bar_fields(match)

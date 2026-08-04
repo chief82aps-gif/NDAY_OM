@@ -4,7 +4,7 @@ Route Assignment Board — daily assignment management combining Cortex + DOP + 
 Workflow:
   1. Load Cortex routes for the date (Amazon's initial driver assignments)
   2. Overlay DOP data for staging location, wave, and planned packages
-  3. Rank drivers by driver_scoring.py's blended overall tier (Platinum down through Sawdust, then by score)
+  3. Rank drivers by driver_scoring.py's blended overall tier (Platinum down through Does Not Meet, then by score)
   4. Apply callout rule: called-out drivers drop to priority tier 3 (last resort)
   5. Auto-assign vans using service-type fallback chain and 7-day driver affinity
   6. Finalize → write to daily_route_assignments → trigger DM notifications
@@ -134,12 +134,11 @@ def _load_dop_map(target: date, db: Session) -> dict[str, DOP]:
             rows = get_latest_dop_rows(db, latest)
     return {r.route_code: r for r in rows}
 
-_TIER_DISPLAY = {
-    "gray": "Unknown",
-    "tin": "Does Not Meet Minimum",
-    "lead": "Does Not Meet Minimum",
-    "sawdust": "Does Not Meet Minimum",
-}
+# TIER_DISPLAY lives in driver_scoring.py (2026-08-04) -- imported here
+# instead of a third local copy of the same dict (quality.py and
+# rostering.py do the same).
+from api.src.routes.driver_scoring import TIER_DISPLAY as _SHARED_TIER_DISPLAY
+_TIER_DISPLAY = {"gray": "Unknown", **_SHARED_TIER_DISPLAY}
 
 
 def _load_quality_map(db: Session) -> dict[str, dict]:

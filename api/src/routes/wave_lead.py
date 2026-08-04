@@ -359,7 +359,7 @@ def _gap_to_next_tier(overall: Optional[float], tier: str) -> Optional[float]:
 
     if overall is None or tier == "gray" or tier == "platinum":
         return None
-    tier_order = [name for name, _ in TIER_THRESHOLDS] + ["sawdust"]
+    tier_order = [name for name, _ in TIER_THRESHOLDS] + ["does_not_meet"]
     if tier not in tier_order:
         return None
     idx = tier_order.index(tier)

@@ -35,20 +35,18 @@ router = APIRouter(prefix="/quality", tags=["quality"])
 CORTEX_CHANNEL = os.getenv("CORTEX_NOTIFY_CHANNEL", "C0BE4ALL1EX")
 
 # Tier display/ordering, sourced from driver_scoring.py's blended 20/40/40
-# overall tier (Platinum down through Sawdust) -- fixed 2026-07-30, same
-# ranking-unification already applied to route_assignment.py's
+# overall tier (Platinum down through Does Not Meet) -- fixed 2026-07-30,
+# same ranking-unification already applied to route_assignment.py's
 # _load_quality_map() on 2026-07-29. This used to be its own separate
-# _STANDING_RANK off Amazon's raw overall_standing string, which never had
-# Tin/Lead/Sawdust at all -- a real, pre-existing disagreement with
-# driver_scoring.py documented as an architecture violation in
-# Governance/SRD_MODULE_ARCHITECTURE_v3.md.
-_TIER_DISPLAY = {
-    "gray": "Unknown",
-    "tin": "Does Not Meet Minimum",
-    "lead": "Does Not Meet Minimum",
-    "sawdust": "Does Not Meet Minimum",
-}
-_TIER_ORDER = ["platinum", "gold", "silver", "bronze", "tin", "lead", "sawdust", "gray"]
+# _STANDING_RANK off Amazon's raw overall_standing string, which never
+# matched driver_scoring.py's own tiers at all -- a real, pre-existing
+# disagreement documented as an architecture violation in
+# Governance/SRD_MODULE_ARCHITECTURE_v3.md. TIER_DISPLAY itself now lives
+# in driver_scoring.py (2026-08-04) -- rostering.py and route_assignment.py
+# import the same dict instead of each keeping their own copy.
+from api.src.routes.driver_scoring import TIER_DISPLAY as _SHARED_TIER_DISPLAY
+_TIER_DISPLAY = {"gray": "Unknown", **_SHARED_TIER_DISPLAY}
+_TIER_ORDER = ["platinum", "gold", "silver", "bronze", "does_not_meet", "gray"]
 _TIER_RANK = {name: len(_TIER_ORDER) - i for i, name in enumerate(_TIER_ORDER)}
 
 # Human-readable labels for bottom-metric callouts
@@ -209,6 +207,7 @@ def _driver_to_dict(driver: QualityMetricDriver, rank: int, tier: str = "gray") 
         "driver_name": driver.driver_name,
         "transporter_id": driver.transporter_id,
         "overall_standing": _TIER_DISPLAY.get(tier, tier.capitalize()),
+        "overall_tier": tier,   # raw key -- lets a driver-facing consumer apply its own display names
         "overall_score": float(driver.overall_score) if driver.overall_score is not None else None,
         "standing_rank": _TIER_RANK.get(tier, 0),
         "focus_areas": _focus_areas(driver),
@@ -282,11 +281,11 @@ def list_snapshots(db: Session = Depends(get_db)):
 def get_rankings(week: Optional[str] = None, db: Session = Depends(get_db)):
     """
     Return all drivers ranked for rostering, sourced from driver_scoring.py's
-    blended 20/40/40 overall tier (Platinum down through Sawdust) -- same
-    ranking-unification fix already applied to route_assignment.py's
+    blended 20/40/40 overall tier (Platinum down through Does Not Meet) --
+    same ranking-unification fix already applied to route_assignment.py's
     _load_quality_map() on 2026-07-29. This endpoint was the other place
     still sorting by the old raw Amazon overall_standing/_STANDING_RANK,
-    which never had Tin/Lead/Sawdust at all.
+    which never matched driver_scoring.py's own tiers at all.
 
     Note: driver_scoring.compute_driver_scores() always reflects the latest
     snapshot, so the tier/rank shown here always reflects current standing

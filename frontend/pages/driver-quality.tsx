@@ -37,48 +37,44 @@ function resolveApi(): string {
   return 'http://127.0.0.1:8001';
 }
 
+// Collapsed to 5 tiers 2026-08-04 -- Tin/Lead/Sawdust were already
+// indistinguishable in every display (all three showed "Does Not Meet
+// Minimum"); driver_scoring.py now only ever produces "does_not_meet"
+// as the one real tier below Bronze.
 const TIER_LABEL: Record<string, string> = {
-  platinum: 'Platinum',
-  gold:     'Gold',
-  silver:   'Silver',
-  bronze:   'Bronze',
-  tin:      'Does Not Meet Minimum',
-  lead:     'Does Not Meet Minimum',
-  sawdust:  'Does Not Meet Minimum',
-  gray:     'No Data',
+  platinum:      'Platinum',
+  gold:          'Gold',
+  silver:        'Silver',
+  bronze:        'Bronze',
+  does_not_meet: 'Does Not Meet Minimum',
+  gray:          'No Data',
 };
 
 const TIER_COLOR: Record<string, string> = {
-  platinum: '#60a5fa',
-  gold:     '#f59e0b',
-  silver:   '#94a3b8',
-  bronze:   '#b45309',
-  tin:      '#9ca3af',
-  lead:     '#52525b',
-  sawdust:  '#a8763e',
-  gray:     '#555',
+  platinum:      '#60a5fa',
+  gold:          '#f59e0b',
+  silver:        '#94a3b8',
+  bronze:        '#b45309',
+  does_not_meet: '#9ca3af',
+  gray:          '#555',
 };
 
 const TIER_BG: Record<string, string> = {
-  platinum: '#1e3a5f',
-  gold:     '#3d2e00',
-  silver:   '#1e293b',
-  bronze:   '#2c1a00',
-  tin:      '#26282c',
-  lead:     '#1c1c1f',
-  sawdust:  '#2b1d0f',
-  gray:     '#1a1a1a',
+  platinum:      '#1e3a5f',
+  gold:          '#3d2e00',
+  silver:        '#1e293b',
+  bronze:        '#2c1a00',
+  does_not_meet: '#26282c',
+  gray:          '#1a1a1a',
 };
 
 const TIER_ICON: Record<string, string> = {
-  platinum: '💎',
-  gold:     '⭐',
-  silver:   '✨',
-  bronze:   '🔶',
-  tin:      '🥫',
-  lead:     '🪨',
-  sawdust:  '🪵',
-  gray:     '⚪',
+  platinum:      '💎',
+  gold:          '⭐',
+  silver:        '✨',
+  bronze:        '🔶',
+  does_not_meet: '🥫',
+  gray:          '⚪',
 };
 
 const RANK_MEDAL: Record<number, string> = { 1: '🥇', 2: '🥈', 3: '🥉' };
@@ -296,9 +292,7 @@ export default function DriverQualityPage() {
             <option value="gold">Gold</option>
             <option value="silver">Silver</option>
             <option value="bronze">Bronze</option>
-            <option value="tin">Tin</option>
-            <option value="lead">Lead</option>
-            <option value="sawdust">Sawdust</option>
+            <option value="does_not_meet">Does Not Meet Minimum</option>
           </select>
           <input
             type="number"
@@ -313,7 +307,7 @@ export default function DriverQualityPage() {
         {/* Tier summary chips */}
         {data && (
           <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
-            {(['platinum', 'gold', 'silver', 'bronze', 'tin', 'lead', 'sawdust'] as const).map(t => (
+            {(['platinum', 'gold', 'silver', 'bronze', 'does_not_meet'] as const).map(t => (
               <div
                 key={t}
                 style={{ background: TIER_BG[t], border: `1px solid ${TIER_COLOR[t]}`, borderRadius: 8, padding: '6px 16px', cursor: 'pointer', opacity: tierFilter !== 'all' && tierFilter !== t ? 0.4 : 1 }}

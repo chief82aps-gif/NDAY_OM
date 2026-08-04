@@ -47,8 +47,9 @@ gate (the Tenured Workforce report's own "Tenure Status" field), same as
 the 30-route trailing-6-week floor.
 
 Tier cutoffs (TIER_THRESHOLDS) were recalibrated 2026-07-29 for this
-20/40/40 blend, per explicit direction: Platinum >99, Gold 98-99,
-Silver 97-98, Bronze 92-97, Tin 91-92, Lead 90-91, Sawdust <=90.
+20/40/40 blend: Platinum >99, Gold 98-99, Silver 97-98, Bronze 92-97,
+Does Not Meet <=92. (Briefly split the bottom band into Tin/Lead/Sawdust
+the same day, reverted 2026-08-04 -- see TIER_THRESHOLDS's own comment.)
 
   Note: Amazon's own scoring page also lists a Safe Driving Metric
   (FICO) row, currently weighted 0% -- intentionally excluded here since
@@ -67,15 +68,23 @@ just flagged ineligible rather than silently hidden.
 
 Tier thresholds (tier_for()) originally mirrored Amazon's own Platinum/
 Gold/Silver/Bronze cutoffs (screenshot, 2026-07-22), then were replaced
-entirely by NDAY's own bands (see TIER_THRESHOLDS above) once the 20/40/40
-blend and the Tin/Lead/Sawdust tiers were added -- applied here to OUR
-custom-blended overall score, not Amazon's own overall_score, per
-explicit 2026-07-22 decision. high_performer_eligible deliberately keeps
-the exact same 92.0 floor the
-old green/yellow/red system used (i.e. any named tier, not just
-Platinum) -- switching what counts as "high performer" would be a real
-bonus-eligibility policy change nobody asked for here, so it's
-preserved as-is even though the tier *names* changed.
+entirely by NDAY's own bands (see TIER_THRESHOLDS above) for the 20/40/40
+blend -- applied here to OUR custom-blended overall score, not Amazon's
+own overall_score, per explicit 2026-07-22 decision. high_performer_eligible
+deliberately keeps the exact same 92.0 floor the old green/yellow/red
+system used (i.e. any named tier, not just Platinum) -- switching what
+counts as "high performer" would be a real bonus-eligibility policy
+change nobody asked for here, so it's preserved as-is even though the
+tier *names* changed.
+
+Driver-facing display (2026-08-04): when a driver sees their OWN
+standing (slack_home.py's Home tab), the tier renders through
+DRIVER_FACING_TIER_DISPLAY's baseball-ladder names (All-Star/Major
+League/Triple-A/Double-A/Spring Training) instead of the staff-facing
+Platinum/Gold/Silver/Bronze/Does Not Meet Minimum names in TIER_DISPLAY
+-- reframes the bottom tier as a development stage rather than a report
+card. Staff/HR-facing surfaces (admin dashboards, #nday-mgt matrices)
+keep the staff-facing names; this is additive, not a replacement.
 """
 from __future__ import annotations
 
@@ -126,18 +135,23 @@ ROUTE_ELIGIBILITY_WEEKS = 6
 # Recalibrated 2026-07-29 for the 20/40/40 blend (explicit request) --
 # these no longer mirror Amazon's own DA Performance page cutoffs, they're
 # NDAY's own bands for the blended overall score: Platinum >99, Gold
-# 98-99, Silver 97-98, Bronze 92-97, Tin 91-92, Lead 90-91, Sawdust <=90.
+# 98-99, Silver 97-98, Bronze 92-97, Does Not Meet <=92.
+#
+# 2026-07-29 briefly split the bottom band into Tin/Lead/Sawdust, but
+# every consumer (quality.py, rostering.py, route_assignment.py) ended up
+# independently re-collapsing those three back into one "Does Not Meet
+# Minimum" display anyway via their own separate _TIER_DISPLAY dicts --
+# the same reinvented-duplication pattern flagged elsewhere in this
+# codebase. Reverted 2026-08-04 (explicit direction) to make "Does Not
+# Meet" the one real tier below Bronze, removing the need for any
+# display-layer collapsing at all.
 # Each tier's threshold is its own upper bound (you must exceed a tier's
-# listed number to reach the tier above it). Bronze through Sawdust added
-# same day per explicit request, extending below what used to be a single
-# catch-all "Bronze" floor.
+# listed number to reach the tier above it).
 TIER_THRESHOLDS = [
     ("platinum", 99.0),
     ("gold", 98.0),
     ("silver", 97.0),
     ("bronze", 92.0),
-    ("tin", 91.0),
-    ("lead", 90.0),
 ]
 HIGH_PERFORMER_THRESHOLD = 92.0   # unchanged floor -- see module docstring
 
@@ -185,17 +199,45 @@ def _reliability_score(
     return max(0.0, 100.0 - total_deduction)
 
 
+# Staff-facing display names -- the one shared source of truth. Added
+# 2026-08-04: quality.py, rostering.py, and route_assignment.py had each
+# independently defined their own copy of this exact same collapse-tin/
+# lead/sawdust-to-one-string dict; now that "does_not_meet" is the one
+# real tier below Bronze (see TIER_THRESHOLDS above), there's nothing
+# left to collapse -- this is just the canonical tier -> label mapping,
+# imported by every module that needs it instead of redefined per-file.
+TIER_DISPLAY = {
+    "does_not_meet": "Does Not Meet Minimum",
+}
+
+# Driver-facing names ONLY -- shown when a driver sees their own
+# standing (e.g. slack_home.py's Home tab), never on staff/HR-facing
+# dashboards. Added 2026-08-04 per explicit direction: reframes the
+# tiers as a development ladder (real minor-league progression) rather
+# than a report card, since "Does Not Meet Minimum" reads harshly for
+# something a driver sees about themselves. Staff-facing surfaces keep
+# TIER_DISPLAY/the raw Platinum-Bronze names -- this mapping is additive,
+# not a replacement.
+DRIVER_FACING_TIER_DISPLAY = {
+    "platinum": "All-Star",
+    "gold": "Major League",
+    "silver": "Triple-A",
+    "bronze": "Double-A",
+    "does_not_meet": "Spring Training",
+}
+
+
 def tier_for(score: Optional[float]) -> str:
-    """Platinum down through Sawdust per TIER_THRESHOLDS above, applied to
+    """Platinum down through Bronze per TIER_THRESHOLDS above, applied to
     our own blended overall/category scores. "gray" for a score we
-    couldn't compute at all (missing data); "sawdust" is the bottom
-    catch-all for anything at or below the Lead cutoff."""
+    couldn't compute at all (missing data); "does_not_meet" is the bottom
+    catch-all for anything at or below the Bronze cutoff."""
     if score is None:
         return "gray"
     for tier_name, cutoff in TIER_THRESHOLDS:
         if score > cutoff:
             return tier_name
-    return "sawdust"
+    return "does_not_meet"
 
 
 def compute_driver_scores(db: Session) -> list[dict]:

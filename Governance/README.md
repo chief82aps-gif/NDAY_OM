@@ -33,7 +33,7 @@ Use this index to quickly locate governing standards, ingest rules, audit rules,
 
 - [Van Assignment Rules](VAN_INGEST_RULES.md) — GROUNDED skip, electric constraint, CDV14→16→XL fallback, 7-day affinity, capacity thresholds
 - [Driver Quality Rankings](DSP_SCORECARD_RULES.md) — Platinum/Gold/Silver/Bronze standing; used for assignment priority
-- [Rostering & Driver DM Rules](ROSTERING_DM_RULES.md) — **Driver DMs and the assignment matrix stay OFF (`ROSTERING_ACTIVE=false`) until the pipeline is fully tested end-to-end**
+- [Rostering & Driver DM Rules](ROSTERING_DM_RULES.md) — **Corrected 2026-08-04: these are two independent flags, not one.** Driver DMs are gated behind `DRIVER_DM_ACTIVE`. The Slack assignment matrix (`ROSTERING_ACTIVE`) is separate and already live — it is not affected by the driver-DM gate. See `ROSTERING_DM_RULES.md` for the authoritative detail.
 - [Daily Driver DM Content Rules](DRIVER_DM_CONTENT_RULES.md) — what fields the daily driver DM contains and why (successor to the printed handout card spec); ACE Eligibility is a static TBD placeholder pending a future module
 - **Callout Rule (implemented):** Called-out drivers drop below all available drivers in the assignment queue; only assigned when non-callout pool is exhausted (`is_callout_coverage=True`)
 

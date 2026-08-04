@@ -389,9 +389,22 @@ def discipline_tracker(db: Session = Depends(get_db)):
         .order_by(ManagerAccountabilityEvent.shift_date.desc())
         .all()
     )
+    # manager_signature_name == None added 2026-08-04 -- the /sign
+    # endpoints (sign_counseling_record()/sign_violation() in dvic.py)
+    # only ever set manager_signature_name/_at, never ack_status, so an
+    # ops manager signing off had no effect on this list at all before
+    # this fix (reported: "signing off DVICs, reports aren't clearing
+    # out"). Matches the same pattern already used for attendance_items
+    # below -- an item needing sign-off drops off once it's signed,
+    # independent of whether the driver has separately acknowledged
+    # (that's outstanding_items.py's concern, for the route-DM gate, not
+    # this dashboard's).
     dvic_items = (
         db.query(DvicCounselingRecord)
-        .filter(DvicCounselingRecord.ack_status == "pending")
+        .filter(
+            DvicCounselingRecord.ack_status == "pending",
+            DvicCounselingRecord.manager_signature_name == None,
+        )
         .order_by(DvicCounselingRecord.stage.desc(), DvicCounselingRecord.last_actioned_at.desc())
         .all()
     )
@@ -403,7 +416,10 @@ def discipline_tracker(db: Session = Depends(get_db)):
     # out and this becomes the sole DVIC source.
     dvic_violation_items = (
         db.query(DvicViolation)
-        .filter(DvicViolation.ack_status == "pending")
+        .filter(
+            DvicViolation.ack_status == "pending",
+            DvicViolation.manager_signature_name == None,
+        )
         .order_by(DvicViolation.action_stage.desc(), DvicViolation.actioned_at.desc())
         .all()
     )

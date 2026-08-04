@@ -325,6 +325,7 @@ class EodSubmitRequest(BaseModel):
     clock_out_time: Optional[str] = None
     pockets_checked: bool = True
     needs_management_contact: bool = False
+    management_contact_reason: Optional[str] = None
 
     all_equipment_present: bool = True
     missing_equipment: Optional[str] = None
@@ -394,6 +395,13 @@ def submit_survey(req: EodSubmitRequest, db: Session = Depends(get_db)):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid survey_date format.")
 
+    # A bare "wants to talk to management" flag with no context isn't
+    # actionable for HR -- added 2026-08-04 per explicit request. Enforced
+    # server-side (not just a frontend required-field) since this is the
+    # one place every submission path funnels through.
+    if req.needs_management_contact and not (req.management_contact_reason or "").strip():
+        raise HTTPException(status_code=400, detail="Please describe what you'd like to discuss with management.")
+
     # Prevent duplicate for same day
     existing = db.query(EodSurveyResponse).filter_by(
         roster_id=entry.id, survey_date=survey_date
@@ -438,6 +446,7 @@ def submit_survey(req: EodSubmitRequest, db: Session = Depends(get_db)):
         clock_out_time=req.clock_out_time,
         pockets_checked=req.pockets_checked,
         needs_management_contact=req.needs_management_contact,
+        management_contact_reason=req.management_contact_reason,
         all_equipment_present=req.all_equipment_present,
         missing_equipment=req.missing_equipment,
     )
@@ -456,7 +465,7 @@ def submit_survey(req: EodSubmitRequest, db: Session = Depends(get_db)):
     if req.van_issues:
         flags.append("🔧 Van issue: " + (req.van_issue_description or "see survey"))
     if req.needs_management_contact:
-        flags.append("👔 Requests management contact")
+        flags.append("👔 Requests management contact: " + (req.management_contact_reason or "").strip())
 
     # Real-time #nday-mgt alert for crash/injury/incident — added
     # 2026-07-22. Previously these only showed up as a flag on
@@ -535,8 +544,9 @@ def _alert_mgt_on_serious_flags(req: "EodSubmitRequest", driver_name: str, surve
                         channel=sid,
                         text=(
                             f"👔 *Management Contact Requested* via EOD Survey — *{driver_name}* "
-                            f"({survey_date.isoformat()}{time_str}). Please follow up and notify the "
-                            f"appropriate parties."
+                            f"({survey_date.isoformat()}{time_str}).\n"
+                            f"*Reason:* {req.management_contact_reason or 'Not provided'}\n"
+                            f"Please follow up and notify the appropriate parties."
                         ),
                     )
                 except Exception as exc:
@@ -624,7 +634,7 @@ def send_daily_eod_category_digests(db: Session, force: bool = False) -> dict:
         if r.injury_occurred:
             hr_lines.append(f"• *{r.driver_name}* — injury reported")
         if r.needs_management_contact:
-            hr_lines.append(f"• *{r.driver_name}* — requested management contact")
+            hr_lines.append(f"• *{r.driver_name}* — requested management contact: {r.management_contact_reason or 'see survey'}")
     mgt_lines = []
     for r in rows:
         if r.crash_occurred:
@@ -901,6 +911,7 @@ def _row_to_dict(r: EodSurveyResponse) -> dict:
         "clock_out_time": r.clock_out_time,
         "pockets_checked": r.pockets_checked,
         "needs_management_contact": r.needs_management_contact,
+        "management_contact_reason": r.management_contact_reason,
         "all_equipment_present": r.all_equipment_present,
         "missing_equipment": r.missing_equipment,
         "flags": flags,

@@ -2391,6 +2391,21 @@ def ensure_eod_crash_columns():
             pass  # Column already exists
 
 
+def ensure_eod_management_contact_reason_column():
+    """Add management_contact_reason to eod_survey_responses — added
+    2026-08-04 per explicit request: a bare "wants to talk to management"
+    flag with no context wasn't actionable for HR, so the driver's reason
+    is now required at submission and carried through to the HR alert."""
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE eod_survey_responses ADD COLUMN management_contact_reason TEXT"))
+            else:
+                conn.execute(text("ALTER TABLE eod_survey_responses ADD COLUMN IF NOT EXISTS management_contact_reason TEXT"))
+    except Exception:
+        pass  # Column already exists
+
+
 def ensure_user_auth_columns():
     """Add slack_user_id/reset_token/reset_token_expires_at to users —
     added 2026-07-17 for the invite/reset-password Dispatch Home flow."""
@@ -3177,6 +3192,7 @@ class EodSurveyResponse(Base):
 
     # HR
     needs_management_contact = Column(Boolean, default=False)
+    management_contact_reason = Column(Text)
 
     # Equipment
     all_equipment_present = Column(Boolean)

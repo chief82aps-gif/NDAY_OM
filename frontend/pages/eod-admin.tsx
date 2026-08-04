@@ -41,6 +41,7 @@ interface EodResponse {
   clock_out_time: string | null;
   pockets_checked: boolean | null;
   needs_management_contact: boolean;
+  management_contact_reason: string | null;
   all_equipment_present: boolean | null;
   missing_equipment: string | null;
   flags: string[];
@@ -211,6 +212,7 @@ export default function EodAdminPage() {
                               ['All equipment present', yn(r.all_equipment_present)],
                               r.all_equipment_present === false ? ['Missing', r.missing_equipment || '—'] : null,
                               ['Needs mgmt contact', yn(r.needs_management_contact, 'Yes 👔', 'No')],
+                              r.needs_management_contact ? ['Contact reason', r.management_contact_reason || '—'] : null,
                             ].filter((x): x is [string, string] => x !== null).map(([label, value]) => (
                               <div key={String(label)} style={{ background: '#0f172a', borderRadius: 8, padding: '8px 12px' }}>
                                 <div style={{ fontSize: 11, color: '#64748b', marginBottom: 2 }}>{label}</div>
@@ -279,7 +281,7 @@ export default function EodAdminPage() {
                       )}
                       {r.needs_management_contact && (
                         <div style={{ fontSize: 13, color: '#fbbf24', marginTop: 4 }}>
-                          👔 Driver requested management contact
+                          👔 {r.management_contact_reason || 'Driver requested management contact (no reason given)'}
                         </div>
                       )}
                       {r.post_trip_dvic_completed === false && (

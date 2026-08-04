@@ -111,6 +111,7 @@ export default function EodPage() {
   const [clockOut, setClockOut] = useState('');
   const [pockets, setPockets] = useState<boolean | null>(null);
   const [mgmt, setMgmt] = useState<boolean | null>(null);
+  const [mgmtReason, setMgmtReason] = useState('');
   const [equipOk, setEquipOk] = useState<boolean | null>(null);
   const [missingEquip, setMissingEquip] = useState('');
 
@@ -255,6 +256,7 @@ export default function EodPage() {
     tookLunch !== null &&
     pockets !== null &&
     mgmt !== null &&
+    (!mgmt || mgmtReason.trim() !== '') &&
     equipOk !== null &&
     clockOut !== ''
   );
@@ -295,6 +297,7 @@ export default function EodPage() {
         clock_out_time: clockOut,
         pockets_checked: pockets,
         needs_management_contact: mgmt,
+        management_contact_reason: mgmt ? mgmtReason.trim() : null,
         all_equipment_present: equipOk,
         missing_equipment: equipOk ? null : missingEquip,
       };
@@ -627,6 +630,12 @@ export default function EodPage() {
         <div style={s.section}>
           <label style={s.label}>Do you need to speak with HR or management about any issue?</label>
           <YN value={mgmt} onChange={setMgmt} yesColor='#f59e0b' noColor='#16a34a' />
+          {mgmt && (
+            <>
+              <label style={s.label}>What would you like to discuss? (required so HR knows how to help)</label>
+              <input style={s.input} placeholder="Briefly describe what's going on" value={mgmtReason} onChange={e => setMgmtReason(e.target.value)} />
+            </>
+          )}
         </div>
 
         {/* Submit */}

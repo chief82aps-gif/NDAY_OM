@@ -1068,13 +1068,17 @@ def submit_callout(req: CalloutRequest, db: Session = Depends(get_db)):
                 func.lower(DriverScheduleEntry.driver_name) == roster_entry.payroll_name.lower(),
             ).first()
         if not scheduled:
-            name_tokens = frozenset(roster_entry.payroll_name.lower().replace(",", "").split())
+            from api.src.driver_identity import _tokens, TOKEN_MATCH_THRESHOLD
+            name_tokens = _tokens(roster_entry.payroll_name)
             if name_tokens:
+                best_candidate = None
+                best_score = 0
                 for candidate in db.query(DriverScheduleEntry).filter(DriverScheduleEntry.schedule_date == shift_date).all():
-                    c_tokens = frozenset((candidate.driver_name or "").lower().replace(",", "").split())
-                    if len(name_tokens & c_tokens) >= 2:
-                        scheduled = candidate
-                        break
+                    score = len(name_tokens & _tokens(candidate.driver_name))
+                    if score >= TOKEN_MATCH_THRESHOLD and score > best_score:
+                        best_candidate = candidate
+                        best_score = score
+                scheduled = best_candidate
         not_scheduled = scheduled is None
     except Exception:
         pass
@@ -1255,10 +1259,6 @@ def set_driver_pin(
     return {"status": "ok", "driver_name": entry.payroll_name}
 
 
-def _name_tokens(name: str) -> frozenset[str]:
-    return frozenset(re.sub(r"[^a-z\s]", "", name.lower()).split())
-
-
 @router.post("/roster/import-ssn-last4")
 def import_ssn_last4(
     file: UploadFile = File(...),
@@ -1283,8 +1283,7 @@ def import_ssn_last4(
     content = file.file.read()
     df = pd.read_excel(BytesIO(content))
 
-    roster = db.query(DriverRosterEntry).filter(DriverRosterEntry.is_active == True).all()
-    roster_tokens = [(_name_tokens(r.payroll_name), r) for r in roster]
+    from api.src.driver_identity import resolve_roster_entry
 
     matched = updated = skipped_custom_pin = 0
     unmatched: list[str] = []
@@ -1297,16 +1296,9 @@ def import_ssn_last4(
         if not first or not last or not last4:
             continue
 
-        target = _name_tokens(f"{first} {last}")
-        best: Optional[DriverRosterEntry] = None
-        best_score = 0
-        for tokens, entry in roster_tokens:
-            score = len(target & tokens)
-            if score > best_score:
-                best_score = score
-                best = entry
+        best = resolve_roster_entry(f"{first} {last}", db)
 
-        if best and best_score >= 2:
+        if best:
             matched += 1
             if best.ssn_last4 in (None, "", "1234"):
                 if not dry_run:

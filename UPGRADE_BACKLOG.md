@@ -283,6 +283,14 @@ This section defines the timed operational rhythm that all system automations, n
 - 🔲 Dashboard trigger buttons for on-demand automation runs
 - 🔲 Scheduling for recurring automations
 
+### 2.6 — Route Time Tracking (Expected vs. Actual)
+
+Idea logged 2026-08-03, not yet scoped.
+
+- 🔲 Track expected route duration (from route sheet / DOP) vs. actual time taken
+- 🔲 If actual time exceeds 98% of expected, notify the driver and require a reply explaining what happened
+- 🔲 Needs scoping: what counts as "actual" completion time (last stop delivered? RTS clock-out?), where the reply gets recorded/reviewed, and whether this feeds the reliability score or stays a standalone log
+
 ---
 
 ## Phase 3 — Medium Term (1–3 Months)

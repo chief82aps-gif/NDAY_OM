@@ -45,7 +45,7 @@ All loops start on FastAPI startup in `api/main.py`:
 ### Key Architectural Notes
 - **Database:** SQLite for local dev (`api/nday_om.db`); PostgreSQL for production (env var `DATABASE_URL`). All migrations use safe `ensure_*` helpers that use try/except for both engines.
 - **Name matching:** Token-intersection algorithm handles "Last, First" vs "First Last" cross-system matching.
-- **Van assignment:** Electric routes → electric-only (no fallback); GROUNDED always skipped; CDV14→CDV16→XL fallback chain; 7-day driver affinity.
+- **Van assignment:** Electric routes never take a gas van in the exact-match chain, but a fleet-wide shortage pass gives an electric route with no EDV available an XL substitute instead of going unassigned (biggest-load routes claim scarce EDVs first, smallest-load leftover routes take the XL substitute first — see `Governance/VAN_INGEST_RULES.md` §4.1, corrected 2026-08-04); GROUNDED always skipped; CDV14→CDV16→XL fallback chain; 7-day driver affinity.
 - **Callout rule:** Called-out drivers drop below all non-callout drivers in the assignment priority queue; only routed when pool is exhausted (`is_callout_coverage=True`).
 
 See [Progress Snapshot](Archive/PROGRESS_SNAPSHOT_2026-07-03.md) for the complete module list, database tables, and outstanding items.
@@ -139,7 +139,13 @@ DSP_OM/
   - Multiple time formats supported (e.g., 09:30, 9:30 AM, 480).
 - **Vehicle Assignment:**
   - Auto-assigned by service type and operational status.
-  - Fallbacks: CDV14 → CDV16, Electric → any operational electric.
+  - Fallbacks: CDV14 → CDV16 → XL. Electric routes do NOT fall back to a
+    different electric type or any other electric van — the exact-match
+    chain is electric-only. When no exact-match EDV is available, a
+    separate fleet-wide shortage pass substitutes an XL/ICE van instead
+    of leaving the route unassigned (see `Governance/VAN_INGEST_RULES.md`
+    §4.1 — corrected 2026-08-04; this line previously said "any
+    operational electric," which was never true in code).
   - If no eligible vehicle, user is prompted (409 error).
 - **Driver Assignment:**
   - If ambiguous or missing, user is prompted (409 error).

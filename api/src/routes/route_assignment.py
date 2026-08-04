@@ -65,10 +65,20 @@ def _is_electric_service(service_type: str) -> bool:
     return "electric" in s or "rivian" in s or "nursery" in s
 
 def _van_fallback_chain(service_type: str) -> list[str]:
-    """Return acceptable Vehicle.service_type values in preference order."""
+    """Return acceptable Vehicle.service_type values in preference order.
+
+    Electric routes intentionally have no fallback *at this level* --
+    an electric route only ever matches its own exact service_type here.
+    That's deliberate, not a gap: real electric->XL substitution when an
+    EDV is unavailable is handled one level up, in
+    assign_vans_for_routes()'s fleet-wide shortage pass (biggest-load
+    electric routes get first claim on scarce real EDVs; any that miss
+    out take an XL/ICE substitute, smallest leftover load first -- see
+    Governance/VAN_INGEST_RULES.md). Don't add electric fallback here;
+    it would double up with that pass."""
     s = (service_type or "").lower()
     if "electric" in s or "rivian" in s or "nursery" in s:
-        return [service_type]          # electric routes: NO fallback
+        return [service_type]          # electric routes: NO fallback here (see docstring)
     if "14ft" in s or "cdv14" in s or "custom delivery van 14" in s:
         return ["CDV14", "CDV16", "Extra Large Van", "XL"]
     if "16ft" in s or "cdv16" in s or "custom delivery van 16" in s:
@@ -625,12 +635,21 @@ def _auto_assign(target: date, db: Session) -> dict:
     drivers only if no other option exists.
 
     Writes DailyRouteAssignment rows and returns a summary.
+
+    Van assignment (fixed 2026-08-04): previously called _assign_van()
+    directly per route, which only ever tries _van_fallback_chain()'s
+    exact-type match -- for electric routes that's [service_type] only,
+    so an electric route with no EDV available went straight to
+    unassigned. assign_vans_for_routes() already implements the correct
+    fleet-wide behavior (biggest-load electric routes claim scarce real
+    EDVs first; any that miss out take an XL/ICE substitute, smallest
+    leftover load first) but was previously only reachable from
+    daily_notify.py -- this now runs through the same shared function so
+    the dashboard's Auto-Assign button gets identical behavior.
     """
     cortex_rows = _load_cortex_for_date(target, db)
     dop_map = _load_dop_map(target, db)
     quality_map = _load_quality_map(db)
-    affinity = _load_van_affinity(target, db)
-    fleet = _load_fleet(db)
     callout_set = _load_callout_set(target, db)
 
     # Build sorted driver list: non-callout first (by rank), then callout (by rank)
@@ -645,32 +664,20 @@ def _auto_assign(target: date, db: Session) -> dict:
     available_pool = non_callout + callout_drivers   # callouts at bottom
 
     assigned_tids: set[str] = set()
-    used_vans: set[str] = set()
 
-    # First pass: assign already-confirmed non-callout routes
+    # First pass: determine already-confirmed non-callout routes (no van
+    # assignment yet -- that happens once, fleet-wide, below)
+    confirmed: list[tuple[Cortex, str]] = []
     for cr in cortex_rows:
         tid = getattr(cr, "transporter_id", None)
         if tid and tid not in callout_set:
             assigned_tids.add(tid)
-            q = quality_map.get(tid, {})
-            dop = dop_map.get(cr.route_code)
-            van_name, van_vin, van_warn = _assign_van(
-                cr.service_type or "", tid, affinity, fleet, used_vans
-            )
-            if van_vin:
-                used_vans.add(van_vin)
-            elif van_name:
-                used_vans.add(van_name)
-            _upsert_assignment(
-                db, target, cr, dop, tid, van_name, q,
-                is_callout_coverage=False,
-                status="confirmed",
-            )
+            confirmed.append((cr, tid))
 
-    # Second pass: fill callout vacancies
+    # Second pass: determine callout-vacancy replacements
     callout_routes = [cr for cr in cortex_rows
                       if getattr(cr, "transporter_id", None) in callout_set]
-    replacements = []
+    replacement_info: list[tuple[Cortex, Optional[str], bool]] = []
     for cr in callout_routes:
         replacement_tid = None
         is_coverage = False
@@ -681,17 +688,31 @@ def _auto_assign(target: date, db: Session) -> dict:
             replacement_tid = tid
             assigned_tids.add(tid)
             break
+        replacement_info.append((cr, replacement_tid, is_coverage))
 
+    # Van assignment — one fleet-wide pass for every route this call
+    # produced a driver for, so the electric-shortage substitution logic
+    # sees the whole day at once rather than one route at a time.
+    routes_for_vans = (
+        [(cr.route_code, tid, cr.service_type or "") for cr, tid in confirmed]
+        + [(cr.route_code, replacement_tid, cr.service_type or "") for cr, replacement_tid, _ in replacement_info]
+    )
+    van_map = assign_vans_for_routes(target, db, routes_for_vans)
+
+    for cr, tid in confirmed:
+        q = quality_map.get(tid, {})
+        dop = dop_map.get(cr.route_code)
+        _upsert_assignment(
+            db, target, cr, dop, tid, van_map.get(cr.route_code), q,
+            is_callout_coverage=False,
+            status="confirmed",
+        )
+
+    replacements = []
+    for cr, replacement_tid, is_coverage in replacement_info:
         dop = dop_map.get(cr.route_code)
         q = quality_map.get(replacement_tid, {}) if replacement_tid else {}
-        van_name, van_vin, van_warn = _assign_van(
-            cr.service_type or "", replacement_tid, affinity, fleet, used_vans
-        )
-        if van_vin:
-            used_vans.add(van_vin)
-        elif van_name:
-            used_vans.add(van_name)
-
+        van_name = van_map.get(cr.route_code)
         _upsert_assignment(
             db, target, cr, dop, replacement_tid, van_name, q,
             is_callout_coverage=is_coverage,
@@ -703,7 +724,7 @@ def _auto_assign(target: date, db: Session) -> dict:
             "replacement_tid": replacement_tid,
             "is_callout_coverage": is_coverage,
             "van": van_name,
-            "van_warning": van_warn,
+            "van_warning": None if van_name else "no_van_available",
         })
 
     db.commit()

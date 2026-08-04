@@ -91,24 +91,58 @@ Recognized service type inputs that map to canonical names:
 
 ### 4.1 Auto-Assignment by Service Type (Primary Fallback Chain)
 
-When routes are auto-assigned to vehicles, they automatically match vehicles based on route service type. The assignment engine follows this fallback hierarchy:
+**Corrected 2026-08-04** — this section previously said electric routes
+have no fallback at all when no EDV is available. That was wrong, and
+the code had a real gap to match: `_auto_assign()` (the dashboard's
+"Auto-Assign" button) used to leave an electric route unassigned if no
+exact-match EDV existed, rather than falling back to an XL van the way
+`assign_vans_for_routes()` (used by the daily automated pipeline)
+already did since 2026-07-20. Both now share the same logic.
+
+When routes are auto-assigned to vehicles, they match on exact service
+type first:
 
 ```
-Route Service Type → Fallback Chain (priority order)
-CDV14             → [CDV14, CDV16, Extra Large Van, DEFAULT]
-CDV16             → [CDV16, Extra Large Van, DEFAULT]
-Extra Large Van   → [Extra Large Van, CDV16, DEFAULT]
-Electric - Rivian MEDIUM → [Electric - Rivian MEDIUM] (NO FALLBACK)
-Electric - Rivian LARGE  → [Electric - Rivian LARGE] (NO FALLBACK)
-4WD P31           → [AmFlex] (SPECIFIC FALLBACK)
-AmFlex            → [AmFlex] (NO FALLBACK)
+Route Service Type → Exact-match fallback chain (priority order)
+CDV14             → [CDV14, CDV16, Extra Large Van, XL]
+CDV16             → [CDV16, Extra Large Van, XL]
+Extra Large Van   → [Extra Large Van, XL, CDV16]
+Electric - Rivian MEDIUM → [Electric - Rivian MEDIUM] (no fallback at this level)
+Electric - Rivian LARGE  → [Electric - Rivian LARGE] (no fallback at this level)
+4WD P31           → [4WD P31] (no fallback)
+AmFlex            → [AmFlex] (no fallback)
 ```
+
+**Electric-route shortage substitution (the real fallback):** when the
+exact-match pass above can't find a real EDV for an electric route, a
+separate fleet-wide pass runs before anything is left unassigned:
+
+1. **Real EDVs go to the biggest-load electric routes first** (load =
+   totes + oversized packages from the Route Sheet) — the scarcest
+   resource goes where it matters most.
+2. **Any electric route that still has no real EDV takes an XL/ICE
+   substitute instead**, smallest-load leftover route first — if XL
+   availability is also tight, the biggest remaining route is the one
+   left needing direct dispatcher attention rather than losing out
+   arbitrarily.
+3. If a route has no real EDV *and* no XL substitute left, it's ranked
+   by adjacency + load size (see `_rank_unassigned_for_redistribution()`)
+   and reported to #nday-mgt as the best candidate for manual
+   redistribution at loadout.
+
+Every substitution and every fully-unassigned route is reported to
+`#nday-mgt` in one batch message so dispatch can watch those specific
+routes at loadout.
 
 **Rationale**:
 - Standard gas vehicles (CDV14/16/XL) share elastic fallback chains
-- Electric routes MUST use electric vehicles (no gas fallback allowed)
-- 4WD routes map to AmFlex when no 4WD available
-- Electric van constraint enforced at assignment time
+- Electric routes never take a gas van directly in the exact-match
+  chain — the shortage pass's XL/ICE substitute is a deliberate,
+  reported exception, not a silent one
+- 4WD routes have no fallback (per fleet composition — no AmFlex
+  substitute currently configured in code, despite what an earlier
+  version of this doc implied)
+- Electric van constraint (§4.2) is enforced at both stages
 
 ### 4.2 Electric Van Constraint (CRITICAL)
 **RULE**: Electric vans can ONLY be assigned to electric routes (unless explicitly user-authorized)

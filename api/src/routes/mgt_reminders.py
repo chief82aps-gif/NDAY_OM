@@ -39,7 +39,6 @@ import logging
 import os
 from datetime import datetime, date
 from typing import Optional
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -49,13 +48,13 @@ from api.src.database import (
     get_latest_dop_rows, get_latest_route_sheet_rows, get_latest_cortex_rows,
 )
 from api.src.feature_flags import get_flag
+from api.src.timezone import PACIFIC as PT
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/mgt-reminders", tags=["mgt-reminders"])
 
 MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
 APP_URL = os.getenv("APP_URL", "https://nday-om.vercel.app")
-PT = ZoneInfo("America/Los_Angeles")
 
 REMINDER_INTERVAL_SECONDS = 10 * 60
 

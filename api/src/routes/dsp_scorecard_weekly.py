@@ -21,6 +21,7 @@ from api.src.database import (
     DspScorecardWeeklySnapshot, DspScorecardWeeklyMetric,
 )
 from api.src.ingest.dsp_scorecard_weekly import parse_dsp_scorecard, STANDING_RANK
+from api.src.timezone import PACIFIC
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/dsp-scorecard-weekly", tags=["dsp-scorecard-weekly"])
@@ -204,9 +205,7 @@ def _store_scorecard(
 
 def run_dsp_scorecard_reminder() -> None:
     """Called every 60s from main.py. Fires Wednesday 12:30–17:00 PST every 30 min."""
-    import zoneinfo
-    tz = zoneinfo.ZoneInfo("America/Los_Angeles")
-    now = datetime.now(tz)
+    now = datetime.now(PACIFIC)
 
     if now.weekday() != 2:   # 2 = Wednesday
         return

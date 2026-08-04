@@ -30,6 +30,7 @@ from api.src.driver_matching import (
     best_ssn_match, best_slack_match, best_slack_match_via_associates,
 )
 from api.src.feature_flags import get_flag
+from api.src.timezone import PACIFIC
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/drivers", tags=["drivers"])
@@ -368,9 +369,7 @@ def run_weekly_slack_relink(db: Session, force: bool = False) -> dict:
     if not get_flag("WEEKLY_SLACK_RELINK_ACTIVE"):
         return {"status": "inactive", "note": "Set WEEKLY_SLACK_RELINK_ACTIVE=true on Render to enable"}
 
-    import zoneinfo
-    tz = zoneinfo.ZoneInfo("America/Los_Angeles")
-    now = datetime.now(tz)
+    now = datetime.now(PACIFIC)
     today = now.date()
 
     if not force:

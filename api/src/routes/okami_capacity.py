@@ -58,7 +58,6 @@ import math
 import os
 from datetime import date, datetime, timezone
 from typing import Optional
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -66,13 +65,13 @@ from sqlalchemy.orm import Session
 
 from api.src.database import get_db, OkamiCapacityLog, OkamiSettings, Vehicle, get_reminder_state, set_reminder_state
 from api.src.feature_flags import get_flag
+from api.src.timezone import PACIFIC as PT
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/okami-capacity", tags=["okami-capacity"])
 
 MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")     # #nday-mgt
 FLEET_CHANNEL = os.getenv("SLACK_FLEET_CHANNEL", "C0BJ8J5LGAU")  # #nday-fleet
-PT = ZoneInfo("America/Los_Angeles")
 
 # Reminder-only, never auto-finalizes (added 2026-07-20, explicit
 # decision) — finalize() does real work (recomputes coverage against

@@ -17,6 +17,7 @@ from api.src.database import (
 )
 from api.src.driver_identity import resolve_roster_entry
 from api.src.feature_flags import get_flag
+from api.src.timezone import PACIFIC
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/rescue", tags=["rescue"])
@@ -821,9 +822,7 @@ def send_weekly_hr_report(db: Session, force: bool = False) -> dict:
     if not get_flag("RESCUE_PAYROLL_REPORT_ACTIVE"):
         return {"status": "inactive", "note": "Set RESCUE_PAYROLL_REPORT_ACTIVE=true on Render to enable"}
 
-    import zoneinfo
-    tz = zoneinfo.ZoneInfo("America/Los_Angeles")
-    today = datetime.now(tz).date()
+    today = datetime.now(PACIFIC).date()
 
     if not force:
         if today.weekday() != 6:   # Monday=0 ... Sunday=6

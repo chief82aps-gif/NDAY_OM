@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from api.src.database import get_db, OpsIngestJob, MisroutedFileAlert, get_reminder_state, set_reminder_state
 from api.src.feature_flags import get_flag
+from api.src.timezone import PACIFIC
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ops-ingest", tags=["ops-ingest"])
@@ -1076,8 +1077,7 @@ def is_type_ingested_today(db: Session, detected_type: str, today: date) -> bool
     auto-ingested type (fleet, driver_schedule, ...) can fail mid-run.
     Single source of truth so mgt_reminders.py's reminder-resolution check
     and slack_dispatch_home.py's Re-Run missing-doc report agree."""
-    from zoneinfo import ZoneInfo
-    start_local = datetime(today.year, today.month, today.day, tzinfo=ZoneInfo("America/Los_Angeles"))
+    start_local = datetime(today.year, today.month, today.day, tzinfo=PACIFIC)
     start_utc = start_local.astimezone(timezone.utc)
     return (
         db.query(OpsIngestJob)

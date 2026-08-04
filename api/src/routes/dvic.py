@@ -45,6 +45,7 @@ from api.src.database import (
 )
 from api.src.ingest.dvic import parse_dvic_xlsx, extract_week
 from api.src.driver_identity import resolve_roster_entry
+from api.src.timezone import PACIFIC
 from api.src.authorization import require_any_role
 from api.src.feature_flags import get_flag
 
@@ -567,8 +568,7 @@ def run_dvic_upload_reminder() -> None:
     At 3:00–18:00 Pacific, if no DVIC file was uploaded today, remind #nday-mgt.
     Fires initial reminder at 15:00, then every 10 min until upload or 18:00.
     """
-    from zoneinfo import ZoneInfo
-    now = datetime.now(ZoneInfo("America/Los_Angeles"))
+    now = datetime.now(PACIFIC)
     today = now.date()
     _reminder_state = _load_reminder_state()
 

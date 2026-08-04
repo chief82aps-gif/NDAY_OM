@@ -34,6 +34,15 @@
 | S2 | **Rotate SLACK_USER_TOKEN** (xoxp-) on Render | ✅ Done 2026-07-13 — was exposed in chat history |
 | S3 | **Populate driver PINs** — enter actual SSN last-4 for all active drivers via Admin Panel | All 114 drivers default to `1234` — PIN auth is currently meaningless |
 
+### 🔴 Revenue — Weekly Incentive Parser (Unbuilt)
+
+> Flagged 2026-08-04 during a codebase scrub. Not just docs debt — per explicit direction, this weekly incentive calculation (distinct from the per-driver bonus in `DRIVER_SCORING_RULES.md`) is the DSP's primary profit lever, so it's called out here rather than left buried in general backlog.
+
+| # | Task | Why Now |
+|---|---|---|
+| REV1 | **Build `parse_weekly_incentive_pdf()` for real** (`api/src/ingest/weekly_incentive.py`) — currently a stub returning `{}, []` | See `Governance/WEEKLY_INCENTIVE_RULES.md` for the target rates/formula (Fantastic Plus $0.15/pkg, Fantastic $0.07/pkg, else $0.00). Need a real sample weekly incentive PDF to build against. |
+| REV2 | **Wire storage + validation** — week/rating/packages/rate/calculated amount/invoice amount, plus the calculated-vs-invoice comparison the doc already specifies | Currently nothing downstream of ingest detection touches this data at all |
+
 ### 🟡 Route Assignment — Finish the Loop
 
 | # | Task | Why Now |

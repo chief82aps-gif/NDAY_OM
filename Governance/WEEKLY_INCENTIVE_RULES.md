@@ -2,6 +2,19 @@
 
 > Discovery: Browse all governance docs in [Governance Index](README.md).
 
+## Status: NOT YET IMPLEMENTED (confirmed 2026-08-04)
+
+This document describes the target rules — none of it is live yet.
+`api/src/ingest/weekly_incentive.py`'s `parse_weekly_incentive_pdf()` is
+a stub (`return {}, []`) with no parsing, rate calculation, or storage
+logic. `ops_ingest.py` recognizes and labels a weekly-incentive file by
+type/filename, but nothing downstream actually extracts or validates
+its contents against the rates below. This is the DSP's primary revenue
+calculation (not the per-driver bonus — see `DRIVER_SCORING_RULES.md`
+for that, a separate and unrelated NDAY-computed metric), so it's
+tracked as a real priority in `UPGRADE_BACKLOG.md`, not just background
+debt.
+
 ## Purpose
 Store weekly incentive invoice values driven by DSP scorecard rating and total packages delivered.
 

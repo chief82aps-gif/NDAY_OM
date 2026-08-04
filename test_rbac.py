@@ -267,7 +267,6 @@ def test_rbac():
 
 5. Check documentation at:
    - RBAC_QUICK_REFERENCE.md
-   - RBAC_INTEGRATION_EXAMPLES.py
    - ROLE_HIERARCHY_IMPLEMENTATION.md
 """)
     

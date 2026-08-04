@@ -85,7 +85,7 @@ PT = ZoneInfo("America/Los_Angeles")
 OKAMI_NAG_START_HOUR = 15
 OKAMI_NAG_START_MINUTE = 30    # nagging starts 3:30 PM
 OKAMI_DEADLINE_HOUR = 17       # hard deadline 5:00 PM ("aka ECP")
-OKAMI_NAG_INTERVAL_SECONDS = 300  # every 5 minutes until finalized
+OKAMI_NAG_INTERVAL_SECONDS = 600  # every 10 minutes until finalized
 
 
 def _fmt_time(dt: Optional[datetime]) -> str:

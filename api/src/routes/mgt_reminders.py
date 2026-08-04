@@ -57,7 +57,7 @@ MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
 APP_URL = os.getenv("APP_URL", "https://nday-om.vercel.app")
 PT = ZoneInfo("America/Los_Angeles")
 
-REMINDER_INTERVAL_SECONDS = 5 * 60
+REMINDER_INTERVAL_SECONDS = 10 * 60
 
 # window = (start_hour, start_minute, end_hour, end_minute) in Pacific time —
 # checked against our own server clock, never a Slack message timestamp.

@@ -570,7 +570,7 @@ def run_dvic_upload_reminder() -> None:
     """
     Called every minute from the background loop.
     At 3:00–18:00 Pacific, if no DVIC file was uploaded today, remind #nday-mgt.
-    Fires initial reminder at 15:00, then every 5 min until upload or 18:00.
+    Fires initial reminder at 15:00, then every 10 min until upload or 18:00.
     """
     from zoneinfo import ZoneInfo
     now = datetime.now(ZoneInfo("America/Los_Angeles"))
@@ -619,9 +619,9 @@ def run_dvic_upload_reminder() -> None:
         _save_reminder_state(_reminder_state)
         return
 
-    # Throttle to every 5 minutes
+    # Throttle to every 10 minutes
     last_remind = _reminder_state.get("last_reminded_at")
-    if last_remind and (now - last_remind).total_seconds() < 300:
+    if last_remind and (now - last_remind).total_seconds() < 600:
         return
 
     count = _reminder_state.get("reminder_count", 0) + 1
@@ -636,7 +636,7 @@ def run_dvic_upload_reminder() -> None:
             ":bell: *DVIC Pre-Trip Under-90 Report* — Please upload this week's file to "
             f"<#{OPS_CHANNEL}|nday-operations-management>.\n"
             "This report tracks drivers who completed their vehicle inspection in under 90 seconds. "
-            "Reminders will continue every 5 minutes until uploaded.\n"
+            "Reminders will continue every 10 minutes until uploaded.\n"
             f"{page_link}"
         )
     else:

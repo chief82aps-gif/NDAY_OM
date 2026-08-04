@@ -3334,6 +3334,36 @@ class SafetyEvent(Base):
     video_watched_at = Column(DateTime, nullable=True)   # inert until a future SAFETY_VIOLATION_VIDEO_ACTIVE gate exists
 
 
+class CustomerFeedbackEvent(Base):
+    """Negative customer delivery feedback event (wrong address, DA
+    unprofessional, mishandled package, etc.) from the "DSP Customer
+    Delivery Feedback - negative" CSV export -- added 2026-08-04.
+
+    One row per real-world feedback event, deduped by Amazon's own
+    Delivery Group ID (unique) -- the export is a rolling window (a
+    single file can span several delivery dates), same pattern as
+    SafetyEvent above.
+    """
+    __tablename__ = "customer_feedback_events"
+
+    id = Column(Integer, primary_key=True)
+    delivery_group_id = Column(String(64), nullable=False, unique=True, index=True)
+    driver_name = Column(String(150), index=True)          # "Delivery Associate Name"
+    transporter_id = Column(String(50), index=True)         # "Delivery Associate"
+    tracking_id = Column(String(50), index=True)
+    mishandled_package = Column(Boolean, default=False)
+    unprofessional = Column(Boolean, default=False)
+    did_not_follow_instructions = Column(Boolean, default=False)
+    wrong_address = Column(Boolean, default=False)
+    never_received = Column(Boolean, default=False)
+    wrong_item = Column(Boolean, default=False)
+    feedback_details = Column(Text)
+    delivery_date = Column(Date, index=True)
+    reporting_week = Column(Integer)
+    source_file = Column(String(255))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class OkamiCapacityLog(Base):
     """Daily Okami capacity planning numbers — added 2026-07-14. Posted
     today as free-text in Slack by ops (e.g. "61 DAs / Okami 44 /
@@ -3910,6 +3940,41 @@ class DailyQualityRecord(Base):
     packages_rts_da_controllable = Column(Integer)          # "Packages Returned to Station - DA Controllable"
     pod_pct = Column(DECIMAL(5, 4))                          # fraction, e.g. 0.9917 for "99.17%"
     dsb_count = Column(Integer)                              # raw count, not a normalized score
+
+
+class QualityRtsSnapshot(Base):
+    """One row per ingested "Quality RTS" daily CSV -- added 2026-08-04.
+    Per-package RTS (Return to Station) events. A blank/"NO RTS CODE
+    SELECTED" reason code defaults to a DC DPMO scorecard defect (per
+    Amazon's own RTS Dashboard documentation) unless the package was
+    reprocessed by the station while the driver was still on the road --
+    this is the file used to identify which drivers need coaching on
+    always selecting a code before returning a package. First real file:
+    Quality_RTS_NDAY_DLV3_2026-08-03.csv."""
+    __tablename__ = "quality_rts_snapshots"
+
+    id = Column(Integer, primary_key=True)
+    report_date = Column(Date, nullable=False, index=True, unique=True)
+    source_file = Column(String(255))
+    slack_file_id = Column(String(50))
+    imported_at = Column(DateTime, default=datetime.utcnow)
+    package_count = Column(Integer, default=0)
+
+
+class QualityRtsRecord(Base):
+    """One row per returned package. See QualityRtsSnapshot's docstring."""
+    __tablename__ = "quality_rts_records"
+
+    id = Column(Integer, primary_key=True)
+    snapshot_id = Column(Integer, ForeignKey("quality_rts_snapshots.id"), nullable=False, index=True)
+    driver_name = Column(String(150), index=True)
+    transporter_id = Column(String(50), index=True)
+    tracking_id = Column(String(50), index=True)
+    impacts_scorecard = Column(Boolean, default=False)
+    rts_code = Column(String(100))              # "DA Selected RTS Code" -- blank/"NO RTS CODE SELECTED" = defect by default
+    additional_information = Column(String(255))
+    exemption_reason = Column(String(150))
+    service_area = Column(String(50))
 
 
 class NdayPointsLedger(Base):

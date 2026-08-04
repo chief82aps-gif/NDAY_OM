@@ -2,7 +2,7 @@
 Manager reminder DMs — nags #nday-mgt members individually when a required
 file hasn't landed in its monitored channel yet.
 
-Nine reminders, all DM-only to every member of #nday-mgt (never posted to
+Eleven reminders, all DM-only to every member of #nday-mgt (never posted to
 the channel itself, never sent to drivers):
 
   1. DOP file                — window 9:00-10:00 AM PT, every 10 min until posted (#dlv3-nday-info)
@@ -14,6 +14,8 @@ the channel itself, never sent to drivers):
   7. Tenured Workforce DAs Report — Fridays only, window 5:00 PM-11:59 PM PT ("by COB"), every 10 min until posted (#nday-operations-management) — includes where to find/export it in Amazon's portal
   8. Quality Overview (daily CSV) — window 3:30-9:00 PM PT, every 10 min until posted (#nday-operations-management) — added 2026-08-04, ingest already existed (api/src/ingest/daily_quality.py) but nothing prompted anyone to actually post it daily
   9. Safety Dashboard / Netradyne Events (daily CSV) — window 3:30-9:00 PM PT, every 10 min until posted (#nday-operations-management) — added 2026-08-04, same story (api/src/ingest/safety_events.py)
+  10. Quality RTS (daily CSV) — window 3:30-9:00 PM PT, every 10 min until posted (#nday-operations-management) — added 2026-08-04, flagged urgent: most scorecard-impacting RTS lacked a reason code (defaults to a defect)
+  11. DSP Customer Delivery Feedback - negative (daily CSV) — window 3:30-9:00 PM PT, every 10 min until posted (#nday-operations-management) — added 2026-08-04
 
 Windows are all against our own server clock in Pacific local time (never
 against a Slack message timestamp, which we don't control on the Amazon
@@ -101,6 +103,23 @@ _REMINDERS = {
     "safety_events": {
         "detected_type": "safety_events",
         "label": "Safety Dashboard / Netradyne Events (daily CSV)",
+        "window": (15, 30, 21, 0),
+        "page": "/ops-ingest",
+    },
+    # Added 2026-08-04 alongside daily_quality/safety_events above -- same
+    # "ingest existed, nobody prompted to post it" gap. Quality RTS in
+    # particular flagged as urgent: most scorecard-impacting RTS on a real
+    # day had no reason code selected (defaults to a DC DPMO defect), a
+    # driver-coaching signal that goes stale without a daily upload.
+    "quality_rts": {
+        "detected_type": "quality_rts",
+        "label": "Quality RTS (daily CSV)",
+        "window": (15, 30, 21, 0),
+        "page": "/ops-ingest",
+    },
+    "customer_feedback": {
+        "detected_type": "customer_feedback",
+        "label": "DSP Customer Delivery Feedback - negative (daily CSV)",
         "window": (15, 30, 21, 0),
         "page": "/ops-ingest",
     },

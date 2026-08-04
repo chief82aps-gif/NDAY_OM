@@ -160,6 +160,8 @@ _TYPE_LABELS = {
     "pod_report":        "POD Report (PDF)",
     "safety_events":     "Safety Dashboard / Netradyne Events (CSV)",
     "daily_quality":     "Quality Overview (Daily CSV)",
+    "quality_rts":       "Quality RTS (Daily CSV)",
+    "customer_feedback": "DSP Customer Delivery Feedback - negative (CSV)",
     "tenured_workforce": "Tenured Workforce DAs Report (CSV/Excel)",
     "unknown":           "Unknown — needs manual review",
 }
@@ -204,6 +206,16 @@ def _classify(filename: str, message: str, channel_id: str = "") -> str:
         # set) -- added 2026-07-31.
         if any(k in combined for k in ("quality_overview", "quality overview")):
             return "daily_quality"
+        # "Quality_RTS_NDAY_DLV3_2026-08-03.csv" -- per-package Return to
+        # Station reason-code export. Matched narrowly (before the generic
+        # "quality" catch-all below) same reasoning as daily_quality above --
+        # added 2026-08-04.
+        if any(k in combined for k in ("quality_rts", "quality rts")):
+            return "quality_rts"
+        # "DSP_Customer_Delivery_Feedback_negative_DLV3_2026-08-03.csv" --
+        # per-package negative customer feedback export -- added 2026-08-04.
+        if any(k in combined for k in ("customer_delivery_feedback", "customer delivery feedback", "delivery_feedback", "delivery feedback")):
+            return "customer_feedback"
         if any(k in combined for k in ("quality", "trailing", "overview", "scorecard")):
             return "quality_csv"
         if re.search(r"\bw\d{2}\b", combined):   # W27, W03, etc.
@@ -481,6 +493,16 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
     if t == "daily_quality":
         from api.src.routes.daily_quality import _store_daily_quality
         return _store_daily_quality(content, job.file_name, job.slack_file_id, db)
+
+    # ── Quality RTS (Daily CSV) ───────────────────────────────────────────────
+    if t == "quality_rts":
+        from api.src.routes.quality_rts import _store_quality_rts
+        return _store_quality_rts(content, job.file_name, job.slack_file_id, db)
+
+    # ── DSP Customer Delivery Feedback - negative (CSV) ──────────────────────
+    if t == "customer_feedback":
+        from api.src.routes.customer_feedback import _store_customer_feedback
+        return _store_customer_feedback(content, job.file_name, job.slack_file_id, db)
 
     # ── Tenured Workforce DAs Report (CSV/Excel) ─────────────────────────────
     if t == "tenured_workforce":
@@ -989,7 +1011,7 @@ def manual_misrouted_scan(db: Session = Depends(get_db)):
 # real driver DM to fire on its own.
 # ─────────────────────────────────────────────────────────────────────────────
 
-_AUTO_INGEST_TYPES = ("dvic", "driver_schedule", "fleet", "quality_csv", "safety_events", "dsp_scorecard", "tenured_workforce", "daily_quality")
+_AUTO_INGEST_TYPES = ("dvic", "driver_schedule", "fleet", "quality_csv", "safety_events", "dsp_scorecard", "tenured_workforce", "daily_quality", "quality_rts", "customer_feedback")
 
 
 def run_ops_auto_ingest(db: Session) -> dict:

@@ -654,6 +654,42 @@ def _run_event_triggered_notify() -> None:
         db.close()
 
 
+def _relay_driver_dm_reply(slack_user_id: str, text: str) -> None:
+    """A driver replying to any bot DM (e.g. a "Respond as Blake" message
+    from sentiment_survey.py) has nowhere for that reply to go today --
+    Slack DMs are bidirectional, but nothing forwarded the driver's side
+    of the conversation anywhere a human would see it. Relays it to every
+    #nday-hr staffer via DM, tagged with the driver's name -- added
+    2026-08-04. Not limited to actual Blake replies specifically (Slack
+    doesn't give us a clean way to say "this message is a reply to that
+    one" in a DM), so this relays any free-text DM a driver sends the bot."""
+    from api.src.database import SessionLocal, DriverRosterEntry
+    from api.src.routes.document_routing import get_role_slack_ids
+
+    db = SessionLocal()
+    try:
+        driver = db.query(DriverRosterEntry).filter(
+            DriverRosterEntry.slack_member_id == slack_user_id,
+            DriverRosterEntry.is_active == True,
+        ).first()
+        if not driver:
+            return   # not a known active driver -- ignore (could be staff, or an unlinked account)
+
+        token = os.getenv("SLACK_BOT_TOKEN")
+        if not token:
+            return
+        from slack_sdk import WebClient
+        client = WebClient(token=token)
+        relay_text = f"💬 *{driver.payroll_name}* replied:\n>{text}"
+        for hr_id in get_role_slack_ids(db, "hr"):
+            try:
+                client.chat_postMessage(channel=hr_id, text=relay_text)
+            except Exception as exc:
+                logger.warning("Driver DM relay to HR failed (%s): %s", hr_id, exc)
+    finally:
+        db.close()
+
+
 @router.post("/events")
 async def slack_events(request: Request, background_tasks: BackgroundTasks):
     """Slack Events API Request URL. Configure in the Slack app's Event
@@ -680,6 +716,20 @@ async def slack_events(request: Request, background_tasks: BackgroundTasks):
         has_files = bool(event.get("files")) or event.get("subtype") == "file_share"
         if event.get("type") == "message" and event.get("channel") == NOTIFY_CHANNEL and has_files:
             background_tasks.add_task(_run_event_triggered_notify)
+
+        # A driver replying in their own DM with the bot (e.g. to a
+        # "Respond as Blake" message) -- relay to HR. Requires message.im
+        # added to the Slack app's Event Subscriptions (manual step, same
+        # category as message.channels above) -- added 2026-08-04.
+        is_dm_reply = (
+            event.get("type") == "message"
+            and event.get("channel_type") == "im"
+            and not event.get("bot_id")
+            and not event.get("subtype")
+            and (event.get("text") or "").strip()
+        )
+        if is_dm_reply:
+            background_tasks.add_task(_relay_driver_dm_reply, event["user"], event["text"].strip())
 
     # Slack requires a 200 response within 3 seconds
     return {"ok": True}

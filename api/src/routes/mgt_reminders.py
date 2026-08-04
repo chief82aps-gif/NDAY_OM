@@ -2,16 +2,18 @@
 Manager reminder DMs — nags #nday-mgt members individually when a required
 file hasn't landed in its monitored channel yet.
 
-Seven reminders, all DM-only to every member of #nday-mgt (never posted to
+Nine reminders, all DM-only to every member of #nday-mgt (never posted to
 the channel itself, never sent to drivers):
 
-  1. DOP file                — window 9:00-10:00 AM PT, every 5 min until posted (#dlv3-nday-info)
-  2. Route Sheets file       — window 9:00-10:00 AM PT, every 5 min until posted (#dlv3-nday-info)
-  3. Cortex Routes file      — window 9:00-10:00 AM PT, every 5 min until posted (#nday-operations-management)
-  4. Fleet / Vehicle Data    — window 9:00-10:00 AM PT, every 5 min until posted (#nday-operations-management)
-  5. Okami capacity forecast — window 3:30-9:00 PM PT,  every 5 min until posted (#nday-operations-management)
-  6. Driver schedule (post-rostering) — window 5:30-8:00 PM PT, every 5 min until posted (#nday-operations-management)
-  7. Tenured Workforce DAs Report — Fridays only, window 5:00 PM-11:59 PM PT ("by COB"), every 5 min until posted (#nday-operations-management) — includes where to find/export it in Amazon's portal
+  1. DOP file                — window 9:00-10:00 AM PT, every 10 min until posted (#dlv3-nday-info)
+  2. Route Sheets file       — window 9:00-10:00 AM PT, every 10 min until posted (#dlv3-nday-info)
+  3. Cortex Routes file      — window 9:00-10:00 AM PT, every 10 min until posted (#nday-operations-management)
+  4. Fleet / Vehicle Data    — window 9:00-10:00 AM PT, every 10 min until posted (#nday-operations-management)
+  5. Okami capacity forecast — window 3:30-9:00 PM PT,  every 10 min until posted (#nday-operations-management)
+  6. Driver schedule (post-rostering) — window 5:30-8:00 PM PT, every 10 min until posted (#nday-operations-management)
+  7. Tenured Workforce DAs Report — Fridays only, window 5:00 PM-11:59 PM PT ("by COB"), every 10 min until posted (#nday-operations-management) — includes where to find/export it in Amazon's portal
+  8. Quality Overview (daily CSV) — window 3:30-9:00 PM PT, every 10 min until posted (#nday-operations-management) — added 2026-08-04, ingest already existed (api/src/ingest/daily_quality.py) but nothing prompted anyone to actually post it daily
+  9. Safety Dashboard / Netradyne Events (daily CSV) — window 3:30-9:00 PM PT, every 10 min until posted (#nday-operations-management) — added 2026-08-04, same story (api/src/ingest/safety_events.py)
 
 Windows are all against our own server clock in Pacific local time (never
 against a Slack message timestamp, which we don't control on the Amazon
@@ -81,6 +83,26 @@ _REMINDERS = {
             "Supplementary Reports -> *TWF Dashboard*. Export via the three-stacked-dots "
             "menu (⋮) -> *Export to CSV*."
         ),
+    },
+    # Added 2026-08-04 -- both ingest pipelines already existed
+    # (api/src/ingest/daily_quality.py, api/src/ingest/safety_events.py,
+    # both in ops_ingest.py's _AUTO_INGEST_TYPES) but nothing prompted
+    # #nday-mgt to actually post either file daily. Freshens driver
+    # rankings between weekly DSP Scorecard cycles and sets up a future
+    # daily-vs-weekly scorecard audit. Window matches Okami's (afternoon)
+    # per explicit direction -- adjust if the real arrival time turns out
+    # different once this runs for a few days.
+    "daily_quality": {
+        "detected_type": "daily_quality",
+        "label": "Quality Overview (daily CSV)",
+        "window": (15, 30, 21, 0),
+        "page": "/ops-ingest",
+    },
+    "safety_events": {
+        "detected_type": "safety_events",
+        "label": "Safety Dashboard / Netradyne Events (daily CSV)",
+        "window": (15, 30, 21, 0),
+        "page": "/ops-ingest",
     },
 }
 

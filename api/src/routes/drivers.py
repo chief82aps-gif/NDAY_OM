@@ -3,11 +3,15 @@ Driver Profiles
 ================
 Interim driver-profile module: for now, DriverRosterEntry (fed by ADP
 import + schedule-upload auto-creation in ops_ingest.py) is the source of
-truth. This module only reads/reviews it — it never creates, deactivates,
-or deletes a driver. A future HR module will own create/terminate and
-become the real source of truth; this module is designed to hand off to
-it without disruption (see the `source` column: "adp_import" |
-"schedule_upload" | "hr_module").
+truth. This module mostly reads/reviews it, with one deliberate
+exception (added 2026-08-04): import_ssn_slack() auto-deactivates a
+roster entry when the uploaded Associate Data export shows them as
+anything other than "Active" -- Amazon's own status, not a guess.
+Deactivation never deletes anything; historic records (routes, DVIC,
+quality, attendance) stay intact for if/when they return. A future HR
+module will own create/terminate and become the real source of truth;
+this module is designed to hand off to it without disruption (see the
+`source` column: "adp_import" | "schedule_upload" | "hr_module").
 """
 from __future__ import annotations
 
@@ -27,7 +31,7 @@ from api.src.database import (
 )
 from api.src.driver_matching import (
     load_ssn, load_slack, load_associates,
-    best_ssn_match, best_slack_match, best_slack_match_via_associates,
+    best_ssn_match, best_slack_match, best_slack_match_via_associates, best_associate_match,
 )
 from api.src.feature_flags import get_flag
 from api.src.timezone import PACIFIC
@@ -602,22 +606,31 @@ def import_ssn_slack(
     require handing raw DB credentials to a local script).
 
     associate_file (optional, added 2026-07-16): an Amazon associate/
-    Transporter roster export ("AssociateData (N).csv"), used only
-    alongside slack_file. For each driver, first tries bridging through
-    this file's legal name -> email local-part -> Slack username (a
-    strict/deterministic match); only falls back to fuzzy-matching the
-    roster name directly against Slack's display/real name if that
-    bridge doesn't resolve. The direct fuzzy match alone regularly misses
-    real matches because Slack's "Real Name" field is often an
-    auto-generated placeholder derived from the username (e.g.
-    "A Laporte Ndl"), not something with the driver's actual middle name
-    or full legal name in it.
+    Transporter roster export ("AssociateData (N).csv"). Alongside
+    slack_file, first tries bridging through this file's legal name ->
+    email local-part -> Slack username (a strict/deterministic match);
+    only falls back to fuzzy-matching the roster name directly against
+    Slack's display/real name if that bridge doesn't resolve. The direct
+    fuzzy match alone regularly misses real matches because Slack's
+    "Real Name" field is often an auto-generated placeholder derived from
+    the username (e.g. "A Laporte Ndl"), not something with the driver's
+    actual middle name or full legal name in it.
 
-    Pass at least one of ssn_file / slack_file. Defaults to dry_run=true —
-    pass ?dry_run=false to actually write changes.
+    associate_file also drives auto-termination (added 2026-08-04, works
+    on its own, without slack_file/ssn_file): "Active" in this export's
+    own Status column means employed and should be on the schedule;
+    anything else means not routing, likely no longer employed but
+    welcome back if they return. A roster entry matched to a non-Active
+    row gets is_active=False -- never deleted, so historic data (routes,
+    DVIC, quality, attendance) stays intact for if/when they return.
+    Unmatched roster entries are left untouched (no status data to act
+    on, not assumed terminated).
+
+    Pass at least one of ssn_file / slack_file / associate_file. Defaults
+    to dry_run=true — pass ?dry_run=false to actually write changes.
     """
-    if not ssn_file and not slack_file:
-        raise HTTPException(400, "Provide at least one of ssn_file or slack_file.")
+    if not ssn_file and not slack_file and not associate_file:
+        raise HTTPException(400, "Provide at least one of ssn_file, slack_file, or associate_file.")
 
     ssn_path = slack_path = associate_path = None
     try:
@@ -644,9 +657,17 @@ def import_ssn_slack(
         ssn_misses = 0
         slack_hits: list[dict] = []
         slack_misses = 0
+        terminated: list[dict] = []
 
         for entry in roster:
             name = entry.payroll_name
+
+            if associate_rows:
+                assoc_row, assoc_score = best_associate_match(name, associate_rows)
+                if assoc_row and assoc_row["status"] and assoc_row["status"].strip().lower() != "active":
+                    terminated.append({"driver": name, "score": round(assoc_score, 2), "status": assoc_row["status"]})
+                    if not dry_run:
+                        entry.is_active = False
 
             if ssn_rows:
                 last4, score = best_ssn_match(name, ssn_rows)
@@ -692,6 +713,7 @@ def import_ssn_slack(
             "roster_size": len(roster),
             "ssn": {"matched": len(ssn_hits), "unmatched": ssn_misses, "sample": ssn_hits[:10]} if ssn_rows else None,
             "slack": {"matched": len(slack_hits), "unmatched": slack_misses, "sample": slack_hits[:20]} if slack_rows else None,
+            "terminated": {"count": len(terminated), "drivers": terminated} if associate_rows else None,
         }
     finally:
         for p in (ssn_path, slack_path, associate_path):

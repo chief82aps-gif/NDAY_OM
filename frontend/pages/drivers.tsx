@@ -63,11 +63,18 @@ interface ImportMatchSample {
   method?: string;
 }
 
+interface TerminatedDriver {
+  driver: string;
+  score: number;
+  status: string;
+}
+
 interface ImportResult {
   status: string;
   roster_size: number;
   ssn: { matched: number; unmatched: number; sample: ImportMatchSample[] } | null;
   slack: { matched: number; unmatched: number; sample: ImportMatchSample[] } | null;
+  terminated: { count: number; drivers: TerminatedDriver[] } | null;
 }
 
 function toForm(d: Driver): EditForm {
@@ -103,8 +110,8 @@ export default function DriversPage() {
   const api = resolveApi();
 
   const runImport = async () => {
-    if (!ssnFile && !slackFile) {
-      setImportError('Provide at least an SSN export or a Slack export.');
+    if (!ssnFile && !slackFile && !associateFile) {
+      setImportError('Provide at least an SSN export, a Slack export, or an Associate Data export.');
       return;
     }
     setImporting(true);
@@ -234,6 +241,8 @@ export default function DriversPage() {
               <p style={{ margin: '0 0 16px', fontSize: 13, color: '#64748b' }}>
                 Fuzzy-matches fresh exports against the active roster. Runs as a dry run first so you can review
                 matches before writing anything — flip off "Dry run" and re-run once the sample looks right.
+                Associate Data also auto-deactivates anyone it shows as not Active (never deletes — historic data
+                stays, and they're welcomed back if they return).
               </p>
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14, marginBottom: 14 }}>
@@ -273,7 +282,7 @@ export default function DriversPage() {
                 </label>
                 <button
                   onClick={runImport}
-                  disabled={importing || (!ssnFile && !slackFile)}
+                  disabled={importing || (!ssnFile && !slackFile && !associateFile)}
                   style={{
                     background: importing ? '#1e293b' : dryRun ? '#0ea5e9' : '#dc2626', color: '#fff', border: 'none',
                     borderRadius: 8, padding: '10px 20px', cursor: importing ? 'default' : 'pointer', fontWeight: 600, fontSize: 14,
@@ -330,6 +339,32 @@ export default function DriversPage() {
                           </table>
                         </div>
                       )}
+                    </div>
+                  )}
+                  {importResult.terminated && importResult.terminated.count > 0 && (
+                    <div style={{ background: '#0f172a', border: '1px solid #7f1d1d33', borderRadius: 8, padding: 12, fontSize: 13 }}>
+                      <strong style={{ color: '#ef4444' }}>⚠ Auto-terminated (non-Active in Associate Data):</strong>{' '}
+                      <span style={{ color: '#ef4444' }}>{importResult.terminated.count} driver(s)</span>
+                      <div style={{ marginTop: 8, maxHeight: 220, overflowY: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                          <thead>
+                            <tr style={{ color: '#64748b', textAlign: 'left' }}>
+                              <th style={{ padding: '4px 8px' }}>Driver</th>
+                              <th style={{ padding: '4px 8px' }}>Associate Status</th>
+                              <th style={{ padding: '4px 8px' }}>Score</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {importResult.terminated.drivers.map((row, i) => (
+                              <tr key={i} style={{ borderTop: '1px solid #1e293b', color: '#cbd5e1' }}>
+                                <td style={{ padding: '4px 8px' }}>{row.driver}</td>
+                                <td style={{ padding: '4px 8px' }}>{row.status}</td>
+                                <td style={{ padding: '4px 8px' }}>{row.score}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   )}
                 </div>

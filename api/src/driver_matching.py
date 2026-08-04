@@ -94,18 +94,39 @@ def load_slack(path: str) -> list[dict]:
 
 def load_associates(path: str) -> list[dict]:
     """Load an Amazon associate/Transporter roster export (xlsx or CSV,
-    e.g. "AssociateData (N).csv") → list of {name, email}. Bridges a
-    roster driver's legal name to a Slack account via email local-part —
+    e.g. "AssociateData (N).csv") → list of {name, email, status}. Bridges
+    a roster driver's legal name to a Slack account via email local-part —
     far more reliable than fuzzy-matching directly against Slack's often
     auto-generated "Real Name" field (e.g. "A Laporte Ndl", generated
-    from the username, not a real display name someone typed in)."""
+    from the username, not a real display name someone typed in).
+
+    status (added 2026-08-04): the export's own "Status" column, used to
+    auto-terminate a roster entry Amazon no longer lists as active — see
+    api/src/routes/drivers.py's import_ssn_slack()."""
     rows = []
     for row in _read_rows(path):
         name = str(row.get("Name and ID") or row.get("Name") or "").strip()
         email = str(row.get("Email") or "").strip()
+        status = str(row.get("Status") or "").strip()
         if name and email and "@" in email:
-            rows.append({"name": name, "email": email})
+            rows.append({"name": name, "email": email, "status": status})
     return rows
+
+
+def best_associate_match(roster_name: str, associate_rows: list[dict]) -> tuple[dict | None, float]:
+    """Find the associate row whose legal name best matches roster_name.
+    Shared by best_slack_match_via_associates() (bridging to Slack) and
+    the associate-status termination check in drivers.py — one matching
+    pass, not two independent ones."""
+    best_row, best_score = None, 0.0
+    for a in associate_rows:
+        score = _ratio(roster_name, a["name"])
+        if score > best_score:
+            best_score = score
+            best_row = a
+    if best_score < ASSOCIATE_MATCH_THRESHOLD:
+        return None, best_score
+    return best_row, best_score
 
 
 def best_slack_match_via_associates(
@@ -120,13 +141,8 @@ def best_slack_match_via_associates(
         r["username"].strip().lower(): r for r in slack_rows if r["username"]
     }
 
-    best_assoc, best_score = None, 0.0
-    for a in associate_rows:
-        score = _ratio(roster_name, a["name"])
-        if score > best_score:
-            best_score = score
-            best_assoc = a
-    if best_score < ASSOCIATE_MATCH_THRESHOLD or not best_assoc:
+    best_assoc, best_score = best_associate_match(roster_name, associate_rows)
+    if not best_assoc:
         return None, None, best_score
 
     local_part = best_assoc["email"].split("@")[0].strip().lower()

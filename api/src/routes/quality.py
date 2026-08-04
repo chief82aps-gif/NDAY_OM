@@ -309,6 +309,15 @@ def get_rankings(week: Optional[str] = None, db: Session = Depends(get_db)):
         .all()
     )
 
+    # Terminated/inactive DAs stay in this raw ingest table (historical
+    # data is never deleted, see drivers.py's associate-upload auto-
+    # termination) but shouldn't show up on the Mentoring Dashboard --
+    # nobody needs to see a former employee's performance. resolve_roster_entry()
+    # already filters to is_active==True on both its exact and fuzzy paths,
+    # so "not found" here means "not currently active," not "unresolvable."
+    from api.src.driver_identity import resolve_roster_entry
+    drivers = [d for d in drivers if resolve_roster_entry(d.driver_name, db) is not None]
+
     from api.src.routes.driver_scoring import compute_driver_scores
 
     tier_by_tid = {

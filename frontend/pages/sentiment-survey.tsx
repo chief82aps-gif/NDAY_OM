@@ -89,11 +89,31 @@ export default function SentimentSurveyPage() {
       });
   }, [token, api]);
 
+  // A rating this low or lower needs a note -- otherwise a bad rating
+  // with zero context ("ghost complaint") is unactionable for management.
+  const LOW_RATING_NOTE_THRESHOLD = 2;
+
+  function missingRequiredNotes(): string[] {
+    return questions
+      .filter(q => {
+        const r = ratings[q.key];
+        return r != null && r <= LOW_RATING_NOTE_THRESHOLD && !(notes[q.key] ?? '').trim();
+      })
+      .map(q => q.text);
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!token) return;
-    setSubmitting(true);
     setErrorMsg('');
+
+    const missing = missingRequiredNotes();
+    if (missing.length > 0) {
+      setErrorMsg(`Please add a quick note explaining the low rating for: ${missing.join('; ')}`);
+      return;
+    }
+
+    setSubmitting(true);
     try {
       const ratingPayload: Record<string, number | string | null> = {};
       for (const q of questions) {
@@ -188,12 +208,24 @@ export default function SentimentSurveyPage() {
                 <span>Least positive</span>
                 <span>Most positive</span>
               </div>
-              <textarea
-                style={s.noteInput}
-                placeholder="Anything you'd like to add? (optional)"
-                value={notes[q.key] ?? ''}
-                onChange={e => setNotes(p => ({ ...p, [q.key]: e.target.value }))}
-              />
+              {(() => {
+                const isLow = ratings[q.key] != null && (ratings[q.key] as number) <= LOW_RATING_NOTE_THRESHOLD;
+                return (
+                  <>
+                    {isLow && (
+                      <p style={{ margin: '0 0 6px', fontSize: 12, color: '#f87171', fontWeight: 600 }}>
+                        Please add a quick note so management knows what happened.
+                      </p>
+                    )}
+                    <textarea
+                      style={isLow ? { ...s.noteInput, border: '1px solid #f87171' } : s.noteInput}
+                      placeholder={isLow ? 'What happened? (required for a low rating)' : "Anything you'd like to add? (optional)"}
+                      value={notes[q.key] ?? ''}
+                      onChange={e => setNotes(p => ({ ...p, [q.key]: e.target.value }))}
+                    />
+                  </>
+                );
+              })()}
             </div>
           ))}
 

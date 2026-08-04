@@ -441,6 +441,14 @@ class SentimentSubmitRequest(BaseModel):
 _RATING_FIELDS = [f"rating_{q['key']}" for q in SENTIMENT_QUESTIONS]
 _NOTE_FIELDS = [f"note_{q['key']}" for q in SENTIMENT_QUESTIONS]
 
+# A rating this low or lower requires its note field -- added 2026-08-04
+# per explicit request: a bad rating with zero context ("ghost
+# complaint") was invisible in the daily AI report, since _run_ai_analysis
+# only ever included a question's rating in its input when a note was
+# also present. Enforced here (not just the frontend) since this is the
+# one place every submission path funnels through.
+LOW_RATING_NOTE_THRESHOLD = 2
+
 
 @router.post("/submit")
 def submit_sentiment_survey(req: SentimentSubmitRequest, db: Session = Depends(get_db)):
@@ -460,6 +468,12 @@ def submit_sentiment_survey(req: SentimentSubmitRequest, db: Session = Depends(g
         value = getattr(req, field)
         if value is not None and not (1 <= value <= 5):
             raise HTTPException(status_code=400, detail=f"{field} must be 1-5.")
+
+    for q in SENTIMENT_QUESTIONS:
+        rating = getattr(req, f"rating_{q['key']}")
+        note = getattr(req, f"note_{q['key']}")
+        if rating is not None and rating <= LOW_RATING_NOTE_THRESHOLD and not (note or "").strip():
+            raise HTTPException(status_code=400, detail=f"Please add a note explaining the low rating for: {q['text']}")
 
     if not any(
         [req.feeling, req.van_equipment_issues, req.suggestions, req.treatment_concerns]
@@ -663,6 +677,9 @@ management-facing language:
 3. VAN/EQUIPMENT ISSUES — any claims that vehicles or equipment are damaged, unsafe, or malfunctioning.
 4. TREATMENT CONCERNS — any claims of mistreatment, unfair treatment, or concerns about how management has
    treated them.
+5. UNEXPLAINED LOW RATINGS — some question ratings are marked "no explanation given" in the input. List
+   which question(s) these are and how many responses, so management knows to follow up even though there's
+   no free text to go on. Do not guess at a reason.
 
 Do NOT include any names, even if a response happens to mention one — refer to responses generically
 ("one driver said...", "another response noted..."). If a category has nothing to report, say so briefly.
@@ -691,6 +708,11 @@ def _run_ai_analysis(rows: list[SentimentSurveyResponse]) -> Optional[str]:
             rating = getattr(r, f"rating_{q['key']}")
             if note:
                 lines.append(f"  [{q['text']}] (rated {rating}/5 if given): {note}")
+            elif rating is not None and rating <= LOW_RATING_NOTE_THRESHOLD:
+                # No note (pre-2026-08-04 submission, before notes were
+                # required for a low rating) -- still surface the bare
+                # rating so it isn't a silent "ghost complaint."
+                lines.append(f"  [{q['text']}] rated {rating}/5, no explanation given.")
     raw_text = "\n".join(lines)
 
     try:
@@ -733,9 +755,29 @@ def send_daily_sentiment_report(db: Session, force: bool = False) -> dict:
         set_reminder_state(db, _DAILY_REPORT_KEY, {"last_sent_date": today.isoformat()})
         return {"status": "no_responses", "date": target.isoformat()}
 
+    # Raw counts of low ratings (<=LOW_RATING_NOTE_THRESHOLD), independent
+    # of the AI call below -- so a bad rating is never silently lost even
+    # if ANTHROPIC_API_KEY is missing or the API call fails. Notes are
+    # required for new low ratings (see submit_sentiment_survey()), but
+    # this also still catches any pre-2026-08-04 no-note ones.
+    low_counts: dict[str, int] = {}
+    for r in rows:
+        for q in SENTIMENT_QUESTIONS:
+            rating = getattr(r, f"rating_{q['key']}")
+            if rating is not None and rating <= LOW_RATING_NOTE_THRESHOLD:
+                low_counts[q["text"]] = low_counts.get(q["text"], 0) + 1
+    low_rating_line = (
+        "⚠️ *Low ratings (≤2/5):* " + "; ".join(f"{txt} ×{ct}" for txt, ct in low_counts.items())
+        if low_counts else None
+    )
+
     summary = _run_ai_analysis(rows)
     if not summary:
-        return {"status": "analysis_failed", "date": target.isoformat()}
+        if not low_rating_line:
+            return {"status": "analysis_failed", "date": target.isoformat()}
+        # AI summary failed, but there are low ratings to flag -- don't
+        # silently drop them just because the narrative half failed.
+        summary = "_AI analysis unavailable today — raw low-rating counts below._"
 
     from api.src.routes.document_routing import get_role_slack_ids
     recipient_ids = set(get_role_slack_ids(db, "owner")) | set(get_role_slack_ids(db, "hr"))
@@ -744,6 +786,8 @@ def send_daily_sentiment_report(db: Session, force: bool = False) -> dict:
         return {"status": "no_recipient", "date": target.isoformat()}
 
     text = f"🗣️ *Sentiment Survey Summary — {target.strftime('%A, %B %-d')}* ({len(rows)} response(s))\n\n{summary}"
+    if low_rating_line:
+        text += f"\n\n{low_rating_line}"
     token = os.getenv("SLACK_BOT_TOKEN")
     if token:
         try:

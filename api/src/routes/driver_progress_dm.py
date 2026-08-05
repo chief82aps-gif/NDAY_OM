@@ -87,6 +87,16 @@ def build_progress_stats(driver_name: str, target_date: date, db: Session) -> Op
         (planned_duration - elapsed_minutes) if (planned_duration and elapsed_minutes is not None) else None
     )
 
+    # pace_ratio: (fraction of packages done) / (fraction of planned time
+    # elapsed) -- >1 means completing faster than the plan implies (ahead
+    # of pace), <1 means behind. More meaningful than raw time_remaining
+    # alone, which doesn't account for how much work is actually done.
+    pace_ratio = None
+    if pct is not None and planned_duration and elapsed_minutes is not None and elapsed_minutes > 0:
+        time_fraction = elapsed_minutes / planned_duration
+        if time_fraction > 0:
+            pace_ratio = round((pct / 100) / time_fraction, 2)
+
     return {
         "driver_name": driver_name,
         "date": target_date.isoformat(),
@@ -97,6 +107,7 @@ def build_progress_stats(driver_name: str, target_date: date, db: Session) -> Op
         "elapsed_minutes": round(elapsed_minutes) if elapsed_minutes is not None else None,
         "planned_duration_minutes": planned_duration,
         "time_remaining_minutes": round(time_remaining_minutes) if time_remaining_minutes is not None else None,
+        "pace_ratio": pace_ratio,
         "van_number": assignment.van_number,
         "wave": assignment.wave,
     }
@@ -132,9 +143,41 @@ def _fmt_minutes(m: Optional[int]) -> str:
     return f"{h}h {mm}m" if h else f"{mm}m"
 
 
-def build_progress_message_text(stats: dict) -> str:
+_VERY_FAR_AHEAD_PACE_RATIO = 1.5   # completing ~50%+ faster than the plan implies
+_SAFETY_QUALITY_NUDGE_THRESHOLD = 90.0   # only nudge if there's real room to improve
+
+
+def _safety_quality_nudge_line(driver_name: str, db: Session) -> str:
+    """Only for the very-far-ahead tier: a good pace is only actually good
+    if safety/quality come with it, per explicit direction ("A good pace
+    at high safety/quality is a good thing") -- frames it as a positive
+    combination, not a scolding, and only appears at all if the driver's
+    own current safety/quality scores show real room to improve."""
+    try:
+        from api.src.routes.driver_scoring import compute_driver_scores
+        scores = compute_driver_scores(db)
+        match = next((s for s in scores if s["driver_name"].strip().lower() == driver_name.strip().lower()), None)
+    except Exception:
+        match = None
+
+    if not match:
+        return ""
+    safety, quality = match.get("safety"), match.get("quality")
+    low_scores = [n for n, v in (("safety", safety), ("quality", quality)) if v is not None and v < _SAFETY_QUALITY_NUDGE_THRESHOLD]
+    if not low_scores:
+        return "\n\n🌟 And your safety/quality scores back it up — that's the winning combo, fast AND careful!"
+    topic = " and ".join(low_scores)
+    return f"\n\n💡 One thing worth a look: your {topic} score has some room to grow. A great pace paired with strong safety and quality is the real win — don't let the speed come at the cost of either."
+
+
+def build_progress_message_text(stats: dict, db: Optional[Session] = None) -> str:
     pct = stats["pct_complete"]
-    if pct is not None and pct >= 85:
+    pace = stats.get("pace_ratio")
+    very_far_ahead = pace is not None and pace >= _VERY_FAR_AHEAD_PACE_RATIO
+
+    if very_far_ahead:
+        opener = "🏆 Whoa — you're way ahead of pace today, awesome work!"
+    elif pct is not None and pct >= 85:
         opener = random.choice(_OPENERS_STRONG)
     elif pct is not None and pct >= 50:
         opener = random.choice(_OPENERS_MID)
@@ -155,8 +198,12 @@ def build_progress_message_text(stats: dict) -> str:
         else:
             lines.append(f"⏱️ You're {_fmt_minutes(-trm)} past our usual estimate — no worries, every route's different!")
 
+    nudge = ""
+    if very_far_ahead and db is not None:
+        nudge = _safety_quality_nudge_line(stats["driver_name"], db)
+
     lines.append("")
-    lines.append(random.choice(_CLOSERS))
+    lines.append(random.choice(_CLOSERS) + nudge)
     return "\n".join(lines)
 
 
@@ -179,7 +226,7 @@ def send_progress_dm(driver_name: str, db: Session, target_date: Optional[date] 
     if not client:
         return {"status": "no_slack_token"}
 
-    text = build_progress_message_text(stats)
+    text = build_progress_message_text(stats, db)
     try:
         client.chat_postMessage(channel=slack_id, text=text)
     except Exception as exc:
@@ -196,7 +243,7 @@ def preview_progress(driver_name: str = "Collin Jonathan LaTour", target_date: O
     stats = build_progress_stats(driver_name, d, db)
     if not stats:
         return {"status": "no_assignment", "driver_name": driver_name, "date": d.isoformat()}
-    return {"stats": stats, "text": build_progress_message_text(stats)}
+    return {"stats": stats, "text": build_progress_message_text(stats, db)}
 
 
 @router.post("/send-test")
@@ -204,3 +251,47 @@ def send_test(driver_name: str = "Collin Jonathan LaTour", db: Session = Depends
     """Manual on-demand trigger for testing rounds. Restricted to
     _TESTING_DRIVER_NAMES regardless of what's passed here."""
     return send_progress_dm(driver_name, db)
+
+
+MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
+
+
+def send_sample_to_mgt(driver_name: str, db: Session, target_date: Optional[date] = None) -> dict:
+    """Posts what a given real driver's progress DM would look like to
+    #nday-mgt (labeled with their name/pace), instead of actually DMing
+    them -- for reviewing tone/format across different real pace
+    scenarios (behind/on-time/ahead/very-far-ahead) before this goes out
+    to anyone directly. NOT gated by _TESTING_DRIVER_NAMES -- this never
+    reaches the driver's own DM, so the testing-allowlist restriction
+    (which exists specifically to limit who gets directly messaged)
+    doesn't apply here."""
+    target_date = target_date or datetime.now(PT).date()
+    stats = build_progress_stats(driver_name, target_date, db)
+    if not stats:
+        return {"status": "no_assignment", "driver_name": driver_name, "date": target_date.isoformat()}
+
+    client = _client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    text = build_progress_message_text(stats, db)
+    pace = stats.get("pace_ratio")
+    pace_label = (
+        "very far ahead" if pace is not None and pace >= _VERY_FAR_AHEAD_PACE_RATIO else
+        "ahead" if pace is not None and pace >= 1.1 else
+        "behind" if pace is not None and pace < 0.85 else
+        "on time" if pace is not None else "unknown pace"
+    )
+    header = f"*Sample progress DM* — {driver_name} ({pace_label}, pace ratio {pace if pace is not None else 'n/a'})\n\n"
+    try:
+        client.chat_postMessage(channel=MGT_CHANNEL, text=header + text)
+    except Exception as exc:
+        logger.warning("Progress DM sample post to #nday-mgt failed for %s: %s", driver_name, exc)
+        return {"status": "send_failed", "error": str(exc)}
+
+    return {"status": "sent", "driver_name": driver_name, "pace_label": pace_label, "text": text, "stats": stats}
+
+
+@router.post("/send-sample-to-mgt")
+def send_sample_to_mgt_endpoint(driver_name: str, db: Session = Depends(get_db)):
+    return send_sample_to_mgt(driver_name, db)

@@ -35,6 +35,7 @@ from datetime import datetime, date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from api.src.database import (
@@ -69,13 +70,17 @@ _SCAN_STATE_KEY = "coaching_notifications_scanned_message_ids"
 
 # Best-effort mapping to the same CAP/BOC video topics wave_lead.py's Team
 # Focus page already uses (Governance/06_NDL_CAP_Compliance_Monitoring_SRD.md)
-# -- reuses the same library rather than starting a second one. None of
-# these behaviors have been seen yet get their own dedicated video; add
-# entries here as more Behavior strings show up in real weekly digests.
+# -- reuses the same library rather than starting a second one. Matched
+# case-insensitively (fixed 2026-08-05 -- Amazon's real export sends
+# Behavior in ALL CAPS, e.g. "DELIVERED TO INCORRECT ADDRESS", which never
+# matched this dict's Title Case keys, so the video line silently never
+# appeared). Add entries here as more Behavior strings show up in real
+# weekly digests.
 _BEHAVIOR_TO_VIDEO = {
-    "Delivered to Incorrect Address": "Delivery completion",
-    "Not Following Delivery/customer Instructions": "Customer experience / professionalism",
-    "Package Scanned Far Away From Delivery Location": "Proof-of-delivery photos",
+    "delivered to incorrect address": "Delivery completion",
+    "not following delivery/customer instructions": "Customer experience / professionalism",
+    "package scanned far away from delivery location": "Proof-of-delivery photos",
+    "low severity damage: lawn, driveway, mailbox, parked vehicle, house, garage, or other non-essential items": "Vehicle & property care",
 }
 
 _APPROVAL_STAGES = [(1, "driver"), (2, "ops_manager"), (3, "hr")]
@@ -108,7 +113,8 @@ def _store_coaching_notifications(html_content: str, source_email_id: str, db: S
             week=rec["week"], da_name=rec["da_name"], transporter_id=rec["transporter_id"],
             station=rec["station"], case_number=rec["case_number"],
             occurrence_info=rec["occurrence_info"], behavior=rec["behavior"],
-            coaching_tip=rec["coaching_tip"], source_email_id=rec["source_email_id"],
+            coaching_tip=rec["coaching_tip"], status=rec.get("status"),
+            source_email_id=rec["source_email_id"],
             roster_id=roster.id if roster else None,
         )
         db.add(notification)
@@ -188,6 +194,24 @@ def trigger_scan(db: Session = Depends(get_db)):
     return scan_for_coaching_notifications(db)
 
 
+class IngestEmailRequest(BaseModel):
+    html_content: str
+    source_email_id: str
+
+
+@router.post("/ingest-email")
+def ingest_email(request: IngestEmailRequest, db: Session = Depends(get_db)):
+    """Direct-email ingest path -- added 2026-08-05, alongside a daily
+    scheduled check (outside this app, since the backend itself has no
+    mailbox access) that searches Outlook for the latest Consolidated
+    Coaching Notification email and posts its HTML body here. Calls the
+    exact same _store_coaching_notifications() the Slack-scan path uses,
+    so case_number dedup (Amazon re-sending the same event more than
+    once) is identical either way -- no separate storage logic to keep
+    in sync."""
+    return _store_coaching_notifications(request.html_content, request.source_email_id, db)
+
+
 def _notify_driver_stage(notification: CoachingNotification, roster: DriverRosterEntry, db: Session) -> None:
     """Stage 1 — low-key, positive DM to the specific driver. Deliberately
     NOT framed as a write-up on its face; the acknowledgment is what
@@ -201,13 +225,25 @@ def _notify_driver_stage(notification: CoachingNotification, roster: DriverRoste
         return
 
     first = (notification.da_name or "Driver").split()[0]
-    video_topic = _BEHAVIOR_TO_VIDEO.get(notification.behavior or "")
-    video_line = f"\n\n🎥 There's a short training video on *{video_topic}* if you want a quick refresher." if video_topic else ""
+    video_topic = _BEHAVIOR_TO_VIDEO.get((notification.behavior or "").strip().lower())
+    video_line = ""
+    if video_topic:
+        from api.src.database import TrainingVideoLink
+        link = db.query(TrainingVideoLink).filter(TrainingVideoLink.metric_label == video_topic).first()
+        if link:
+            video_line = f"\n\n🎥 There's a short training video on *{video_topic}* if you want a quick refresher: {link.video_url}"
+        else:
+            video_line = f"\n\n🎥 There's a training topic on *{video_topic}* that covers this — worth a look when you get a chance."
+
+    # Amazon's real export sends Behavior in ALL CAPS -- reads as shouting
+    # in a message meant to be upbeat/low-key, so display it title-cased.
+    behavior_display = notification.behavior.title() if notification.behavior else "a delivery behavior"
+    tip_line = f"_{notification.coaching_tip}_\n\n" if notification.coaching_tip else ""
 
     text = (
         f":wave: Hey {first} — quick heads up, nothing to stress about.\n\n"
-        f"Amazon flagged one of your deliveries this week: *{notification.behavior}*.\n\n"
-        f"_{notification.coaching_tip}_"
+        f"Amazon flagged one of your deliveries this week: *{behavior_display}*.\n\n"
+        f"{tip_line}"
         f"{video_line}\n\n"
         "Just tap Acknowledge below so we know you saw it — that's all this needs from you."
     )

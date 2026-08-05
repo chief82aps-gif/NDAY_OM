@@ -3950,6 +3950,41 @@ class AppSuggestion(Base):
     resolved_by = Column(String(100))
 
 
+class TeamRoomFlag(Base):
+    """An AI-detected mention in #nday-team-room of an equipment issue,
+    injury, incident, dog bite, or customer complaint -- added 2026-08-05
+    (see team_room_monitor.py and Governance/TEAM_ROOM_AI_MONITOR.md).
+    Draft-first by design: draft_reply_text/prior_driver_draft_text are
+    never posted back to the channel until a human clicks Approve on the
+    #nday-mgt review card -- nothing here is a live/automatic bot reply."""
+    __tablename__ = "team_room_flags"
+
+    id = Column(Integer, primary_key=True)
+    detected_at = Column(DateTime, default=datetime.utcnow, index=True)
+    message_ts = Column(String(50))
+    channel_id = Column(String(50))
+    reporter_slack_id = Column(String(50))
+    reporter_name = Column(String(150))
+    roster_id = Column(Integer, ForeignKey("driver_roster.id"), nullable=True)
+
+    category = Column(String(30))       # equipment_issue | injury | incident | dog_bite | customer_complaint
+    raw_text = Column(Text)
+    van_number = Column(String(50))
+    vin = Column(String(50))
+    equipment_description = Column(String(200))
+
+    draft_reply_text = Column(Text)
+    reply_status = Column(String(20), default="pending")   # pending | approved | dismissed
+    reply_sent_at = Column(DateTime)
+
+    prior_driver_name = Column(String(150))     # most recent OTHER driver assigned this VIN before today, if resolved
+    prior_driver_draft_text = Column(Text)
+    prior_driver_reply_status = Column(String(20), default="pending")
+    prior_driver_reply_sent_at = Column(DateTime)
+
+    review_message_ts = Column(String(50))      # the #nday-mgt review-card message, for updating after action
+
+
 class DailyQualitySnapshot(Base):
     """One row per ingested "Quality Overview" daily CSV -- added
     2026-07-31. Amazon releases this ~30-48 hours after delivery
@@ -4181,6 +4216,7 @@ class CoachingNotification(Base):
     occurrence_info = Column(Text)                          # raw "date: TBA...; date: TBA..." text
     behavior = Column(String(200))                          # e.g. "Delivered to Incorrect Address"; blank on some rows
     coaching_tip = Column(Text)                              # Amazon's own tip text; blank on some rows
+    status = Column(String(30))                             # e.g. "COACHING TIP" / "APPROACHING THRESHOLD" / "RCTD" -- new column Amazon's format added 2026-08-05, not in the original weeks-28-30 template
     source_email_id = Column(String(255))                    # internetMessageId of the source email, for dedup/reference
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 

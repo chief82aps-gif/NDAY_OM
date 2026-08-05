@@ -392,13 +392,28 @@ class SetPasswordRequest(BaseModel):
 
 
 def _verify_admin_password(db: Session, username: str, password: str) -> bool:
-    """Requires the account's role to actually be admin — used to gate
-    create/delete-user, invites, and resets so a valid non-admin login can't
-    pass its own credentials as "admin creds"."""
+    """Requires the account's role to be admin OR super_user — used to gate
+    create/delete-user, invites, role changes, and resets so a valid
+    lower-privilege login can't pass its own credentials as "admin creds".
+    Widened 2026-08-05 to admit super_user (explicit request: "super users
+    can add and delete accounts just not the admin account") — see
+    _is_true_admin() for the extra protection that keeps super_user callers
+    away from the literal admin account specifically."""
     user = get_user_by_username(db, username)
     if not user:
         return False
-    return user.role == "admin" and verify_password(password, user.password_hash)
+    return user.role in ("admin", "super_user") and verify_password(password, user.password_hash)
+
+
+def _is_true_admin(db: Session, username: str) -> bool:
+    """Distinguishes a real admin caller from a super_user caller, once
+    _verify_admin_password has already confirmed the credentials are
+    valid for one of the two. Used to block super_user from creating
+    another admin-role account, changing anyone's role to/from admin,
+    or touching the literal "admin" account — the one carve-out from
+    "super_user gets all functions"."""
+    user = get_user_by_username(db, username)
+    return bool(user and user.role == "admin")
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -638,6 +653,8 @@ async def create_user_endpoint(request: CreateUserRequest, db: Session = Depends
     admin_username = request.admin_username.lower().strip()
     if not _verify_admin_password(db, admin_username, request.admin_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin credentials")
+    if request.role.strip().lower() == "admin" and not _is_true_admin(db, admin_username):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="super_user cannot create another admin account")
 
     new_username = request.username.lower().strip()
     if not new_username or not request.password:
@@ -755,6 +772,13 @@ async def update_role_endpoint(request: UpdateRoleRequest, db: Session = Depends
     user = get_user_by_username(db, target_username)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    caller_is_true_admin = _is_true_admin(db, admin_username)
+    if not caller_is_true_admin:
+        if target_username == "admin":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="super_user cannot change the admin account's role")
+        if new_role == "admin":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="super_user cannot promote an account to admin")
 
     old_role = user.role
     user.role = new_role
@@ -911,6 +935,8 @@ async def invite_user_endpoint(request: InviteRequest, db: Session = Depends(get
     admin_username = request.admin_username.lower().strip()
     if not _verify_admin_password(db, admin_username, request.admin_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin credentials")
+    if request.role.strip().lower() == "admin" and not _is_true_admin(db, admin_username):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="super_user cannot invite another admin account")
 
     try:
         user, token = create_invite(db, request.username, request.name, request.role, request.slack_user_id)
@@ -927,6 +953,8 @@ async def request_reset_endpoint(request: RequestResetRequest, db: Session = Dep
     admin_username = request.admin_username.lower().strip()
     if not _verify_admin_password(db, admin_username, request.admin_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin credentials")
+    if request.username.strip().lower() == "admin" and not _is_true_admin(db, admin_username):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="super_user cannot reset the admin account's password")
 
     try:
         user, token = create_password_reset(db, request.username)

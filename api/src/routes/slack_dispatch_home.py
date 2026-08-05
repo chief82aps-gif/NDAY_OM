@@ -286,6 +286,12 @@ def build_dispatch_home_view_blocks(db: Session, dash_user, dash_token: str, is_
                     "action_id": "dispatch_reset_password_button",
                     "text": {"type": "plain_text", "text": "🔑 Reset Password", "emoji": True},
                 },
+                {
+                    "type": "button",
+                    "action_id": "dispatch_open_admin_panel",
+                    "text": {"type": "plain_text", "text": "🔐 Admin Panel", "emoji": True},
+                    "url": _slack_login_url("/admin", dash_user, dash_token),
+                },
             ],
         },
         {

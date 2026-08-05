@@ -76,7 +76,7 @@ export default function AdminHomePage() {
   };
 
   return (
-    <ProtectedRoute allowedRoles={['admin']}>
+    <ProtectedRoute allowedRoles={['admin', 'super_user']}>
       <div style={{ minHeight: '100vh', background: '#0f172a', color: '#e2e8f0', fontFamily: 'system-ui, sans-serif', padding: '32px 24px' }}>
         <div style={{ maxWidth: 960, margin: '0 auto' }}>
           <div style={{ marginBottom: 24 }}>

@@ -5,5 +5,5 @@ export const adminPanelModule: DashboardModule = {
   title: 'Admin Panel',
   description: 'Manage users, credentials, and administrative controls.',
   href: '/admin',
-  allowedRoles: ['admin'],
+  allowedRoles: ['admin', 'super_user'],
 };

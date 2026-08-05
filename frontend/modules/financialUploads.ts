@@ -5,5 +5,5 @@ export const financialUploadsModule: DashboardModule = {
   title: 'Financial Uploads',
   description: 'Run WST vs Cortex/DOP daily comparisons and weekly dispute reports; invoice ingest itself lives under Invoice Ingest Tools.',
   href: '/upload?view=financial',
-  allowedRoles: ['admin', 'manager'],
+  allowedRoles: ['admin', 'manager', 'super_user'],
 };

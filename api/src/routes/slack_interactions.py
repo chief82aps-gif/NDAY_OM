@@ -630,6 +630,16 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
         from api.src.routes.crash_report import _handle_crash_report_drug_screen_done
         _handle_crash_report_drug_screen_done(payload, db)
 
+    elif action_id in ("team_room_flag_approve", "team_room_flag_dismiss", "team_room_flag_prior_approve", "team_room_flag_prior_dismiss"):
+        from api.src.routes.team_room_monitor import _handle_approve, _handle_dismiss, _handle_prior_approve, _handle_prior_dismiss
+        flag_id = int((payload.get("actions") or [{}])[0].get("value", "0"))
+        {
+            "team_room_flag_approve": _handle_approve,
+            "team_room_flag_dismiss": _handle_dismiss,
+            "team_room_flag_prior_approve": _handle_prior_approve,
+            "team_room_flag_prior_dismiss": _handle_prior_dismiss,
+        }[action_id](flag_id, db)
+
     # Slack requires a 200 response within 3 seconds
     return {"ok": True}
 
@@ -737,6 +747,32 @@ async def slack_events(request: Request, background_tasks: BackgroundTasks):
         )
         if is_dm_reply:
             background_tasks.add_task(_relay_driver_dm_reply, event["user"], event["text"].strip())
+
+        # #nday-team-room chat monitor -- added 2026-08-05. AI-classifies
+        # each real driver message for equipment/injury/incident/dog-bite/
+        # customer-complaint mentions and drafts a reply, but NEVER posts
+        # automatically -- see team_room_monitor.py's module docstring.
+        # Uses the same message.channels subscription already required for
+        # NOTIFY_CHANNEL above; no separate Slack app config needed.
+        is_team_room_message = (
+            event.get("type") == "message"
+            and event.get("channel") == DRIVER_CHANNEL
+            and not event.get("bot_id")
+            and not event.get("subtype")
+            and (event.get("text") or "").strip()
+        )
+        if is_team_room_message:
+            from api.src.database import SessionLocal
+            from api.src.routes.team_room_monitor import handle_team_room_message
+
+            def _team_room_task(evt: dict) -> None:
+                db = SessionLocal()
+                try:
+                    handle_team_room_message(evt, db)
+                finally:
+                    db.close()
+
+            background_tasks.add_task(_team_room_task, event)
 
         # Home tab open -- added 2026-08-05. slack_home.py registers its
         # OWN "/events" handler for this (same intent, same Request URL

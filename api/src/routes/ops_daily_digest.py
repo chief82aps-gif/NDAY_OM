@@ -234,12 +234,15 @@ def build_digest_text(db: Session, today: date) -> str:
     requests); MGT is aggregate stats only; Fleet stays van issues."""
     date_str = today.strftime("%A, %B ") + str(today.day)
 
+    from api.src.routes.team_room_monitor import chat_flagged_hr_lines, chat_flagged_equipment_lines
+
     hr_lines = (
         _incident_lines(db, today)
         + _callout_lines(db, today)
         + _injury_lines(db, today)
         + _mgmt_contact_lines(db, today)
         + _crash_lines(db, today)   # not in the explicit list but a real write-up needing HR eyes -- flagged, remove if not wanted
+        + chat_flagged_hr_lines(db, today)   # AI-detected injury/incident/dog-bite/customer-complaint mentions in #nday-team-room
     )
     hr_section = "\n".join(hr_lines) or "_Nothing to report._"
 
@@ -256,7 +259,8 @@ def build_digest_text(db: Session, today: date) -> str:
 
     grounded_lines = _grounded_van_lines(db)
     van_issue_lines = _van_issue_lines(db, today)
-    fleet_lines = grounded_lines + van_issue_lines
+    chat_equipment_lines = chat_flagged_equipment_lines(db, today)   # AI-detected equipment mentions in #nday-team-room
+    fleet_lines = grounded_lines + van_issue_lines + chat_equipment_lines
     fleet_section = "\n".join(fleet_lines) or "_No van issues reported._"
 
     return (

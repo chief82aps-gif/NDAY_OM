@@ -271,3 +271,14 @@ def run_ops_cadence_check(db: Session, force: bool = False) -> dict:
 def manual_check(force: bool = False, db: Session = Depends(get_db)):
     """Manual trigger — same call the background loop makes every 60s."""
     return run_ops_cadence_check(db, force=force)
+
+
+@router.post("/resend-all-in")
+def resend_all_in():
+    """One-off duplicate post -- added 2026-08-05 for a night where the
+    automated All In already fired once (based on earlier uploads) but a
+    second, up-to-date post was wanted after the truly final uploads
+    landed. Does not touch the once-per-day state, so tomorrow's cycle is
+    unaffected either way."""
+    _post_all_in(date.today())
+    return {"status": "sent"}

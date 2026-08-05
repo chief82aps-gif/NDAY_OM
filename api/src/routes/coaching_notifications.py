@@ -216,6 +216,47 @@ def ingest_email(request: IngestEmailRequest, db: Session = Depends(get_db)):
     return _store_coaching_notifications(request.html_content, request.source_email_id, db)
 
 
+@router.post("/send-test")
+def send_test(
+    driver_name: str = "Collin Jonathan LaTour",
+    behavior: str = "Delivered To Incorrect Address",
+    db: Session = Depends(get_db),
+):
+    """Sends one real driver the real mentoring DM (not a fake preview --
+    exercises the exact same _notify_driver_stage()/video-lookup/approval-
+    chain-creation code path as a genuine Amazon-sourced notification),
+    bypassing DRIVER_DM_ACTIVE/COACHING_NOTIFICATIONS_ACTIVE deliberately
+    so it works even while those gates are being tested. Uses a synthetic
+    case_number (TEST-<timestamp>) so it never collides with a real
+    Amazon case_number and each call creates a fresh row rather than
+    deduping against a prior test send."""
+    roster = resolve_roster_entry(driver_name, db)
+    if not roster:
+        raise HTTPException(status_code=404, detail=f"No roster entry found for '{driver_name}'")
+    if not roster.slack_member_id:
+        raise HTTPException(status_code=400, detail=f"'{driver_name}' has no linked Slack account")
+
+    case_number = f"TEST-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
+    notification = CoachingNotification(
+        week="TEST", da_name=roster.payroll_name, transporter_id=roster.position_id,
+        case_number=case_number, behavior=behavior,
+        coaching_tip="This is a test send -- verifying the mentoring DM format and tone.",
+        status="TEST", source_email_id="manual-test-send",
+        roster_id=roster.id,
+    )
+    db.add(notification)
+    db.commit()
+    db.refresh(notification)
+
+    for stage_order, role in _APPROVAL_STAGES:
+        db.add(CoachingNotificationApproval(notification_id=notification.id, stage_order=stage_order, role=role, status="pending"))
+    db.commit()
+
+    _notify_driver_stage(notification, roster, db)
+
+    return {"status": "sent", "driver_name": roster.payroll_name, "notification_id": notification.id, "case_number": case_number}
+
+
 def _notify_driver_stage(notification: CoachingNotification, roster: DriverRosterEntry, db: Session) -> None:
     """Stage 1 — low-key, positive DM to the specific driver. Deliberately
     NOT framed as a write-up on its face; the acknowledgment is what

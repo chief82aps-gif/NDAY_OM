@@ -470,6 +470,9 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
         if callback_id == "home_glitch_report_submit":
             from api.src.routes.slack_home import _handle_glitch_report_submit
             return _handle_glitch_report_submit(payload, db)
+        if callback_id == "home_suggestion_submit":
+            from api.src.routes.slack_home import _handle_suggestion_submit
+            return _handle_suggestion_submit(payload, db)
         if callback_id == "home_nday_points_redeem_submit":
             from api.src.routes.slack_home import _handle_home_nday_points_redeem_submit
             return _handle_home_nday_points_redeem_submit(payload, db)
@@ -550,6 +553,10 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
     elif action_id in ("home_report_glitch", "dispatch_report_glitch", "hr_report_glitch"):
         from api.src.routes.slack_home import _handle_glitch_report_button
         _handle_glitch_report_button(payload, db, action_id)
+
+    elif action_id in ("home_submit_suggestion", "dispatch_submit_suggestion", "hr_submit_suggestion"):
+        from api.src.routes.slack_home import _handle_suggestion_button
+        _handle_suggestion_button(payload, db, action_id)
 
     elif action_id == "home_nday_points_redeem_button":
         from api.src.routes.slack_home import _handle_home_nday_points_redeem_button

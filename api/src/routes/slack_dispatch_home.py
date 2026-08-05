@@ -381,6 +381,11 @@ def build_dispatch_home_view_blocks(db: Session, dash_user, dash_token: str) -> 
                     "action_id": "dispatch_report_glitch",
                     "text": {"type": "plain_text", "text": "🐛 Report an App Glitch", "emoji": True},
                 },
+                {
+                    "type": "button",
+                    "action_id": "dispatch_submit_suggestion",
+                    "text": {"type": "plain_text", "text": "💡 Submit a Suggestion", "emoji": True},
+                },
             ],
         },
         {

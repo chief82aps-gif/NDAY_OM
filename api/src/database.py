@@ -3931,6 +3931,25 @@ class AppGlitchReport(Base):
     resolved_by = Column(String(100))
 
 
+class AppSuggestion(Base):
+    """A driver/dispatch/HR-submitted suggestion or database/system
+    upgrade idea from the "Submit a Suggestion" button on every Slack
+    Home tab -- added 2026-08-05, same shape as AppGlitchReport (open/
+    resolved tracked list) but for ideas rather than bugs."""
+    __tablename__ = "app_suggestions"
+
+    id = Column(Integer, primary_key=True)
+    reporter_name = Column(String(150))          # roster payroll_name if resolvable, else Slack display name
+    reporter_slack_id = Column(String(50))
+    source_page = Column(String(50))              # "driver_home" | "dispatch_home" | "hr_home"
+    category = Column(String(30), default="suggestion")   # "suggestion" | "database_upgrade"
+    description = Column(Text, nullable=False)
+    status = Column(String(20), default="open")   # "open" | "resolved"
+    reported_at = Column(DateTime, default=datetime.utcnow)
+    resolved_at = Column(DateTime)
+    resolved_by = Column(String(100))
+
+
 class DailyQualitySnapshot(Base):
     """One row per ingested "Quality Overview" daily CSV -- added
     2026-07-31. Amazon releases this ~30-48 hours after delivery

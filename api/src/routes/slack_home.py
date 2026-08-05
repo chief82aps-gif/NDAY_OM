@@ -712,6 +712,11 @@ def build_home_view_blocks(driver: Optional[DriverRosterEntry], db: Session) -> 
                 "action_id": "home_report_glitch",
                 "text": {"type": "plain_text", "text": "🐛 Report an App Glitch", "emoji": True},
             },
+            {
+                "type": "button",
+                "action_id": "home_submit_suggestion",
+                "text": {"type": "plain_text", "text": "💡 Submit a Suggestion", "emoji": True},
+            },
         ],
     })
 
@@ -1112,6 +1117,100 @@ def _handle_glitch_report_submit(payload: dict, db: Session) -> dict:
             _dm_driver(client, user_id, "✅ Thanks — your glitch report was logged.")
         except Exception as exc:
             logger.warning("Glitch report confirmation DM failed: %s", exc)
+
+    return {"response_action": "clear"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# "Submit a Suggestion" — added 2026-08-05, on every Slack Home tab (driver,
+# dispatch, HR). Same pattern as "Report an App Glitch" immediately above:
+# persists to a real tracked list (suggestions.py's AppSuggestion) and DMs
+# the owner role directly, rather than a Slack message that scrolls away.
+# Distinguishes plain suggestions from database/system upgrade ideas via a
+# category selector, per the user's own phrasing ("log suggestions or
+# database upgrades").
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SUGGESTION_SOURCE_BY_ACTION = {
+    "home_submit_suggestion": "driver_home",
+    "dispatch_submit_suggestion": "dispatch_home",
+    "hr_submit_suggestion": "hr_home",
+}
+
+
+def _suggestion_modal(source_page: str) -> dict:
+    return {
+        "type": "modal",
+        "callback_id": "home_suggestion_submit",
+        "private_metadata": source_page,
+        "title": {"type": "plain_text", "text": "Submit a Suggestion"},
+        "submit": {"type": "plain_text", "text": "Submit"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": [
+            {
+                "type": "input",
+                "block_id": "category_block",
+                "label": {"type": "plain_text", "text": "What kind of suggestion is this?"},
+                "element": {
+                    "type": "static_select",
+                    "action_id": "category",
+                    "initial_option": {"text": {"type": "plain_text", "text": "Suggestion"}, "value": "suggestion"},
+                    "options": [
+                        {"text": {"type": "plain_text", "text": "Suggestion"}, "value": "suggestion"},
+                        {"text": {"type": "plain_text", "text": "Database / System Upgrade Idea"}, "value": "database_upgrade"},
+                    ],
+                },
+            },
+            {
+                "type": "input",
+                "block_id": "description_block",
+                "label": {"type": "plain_text", "text": "What's your idea?"},
+                "element": {"type": "plain_text_input", "action_id": "description", "multiline": True},
+            },
+            {
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": "This goes straight onto the tracked suggestions list — thanks for the idea!"}],
+            },
+        ],
+    }
+
+
+def _handle_suggestion_button(payload: dict, db: Session, action_id: str) -> None:
+    source_page = _SUGGESTION_SOURCE_BY_ACTION.get(action_id, "driver_home")
+    trigger_id = payload.get("trigger_id")
+    client = _client()
+    if not client or not trigger_id:
+        return
+    try:
+        client.views_open(trigger_id=trigger_id, view=_suggestion_modal(source_page))
+    except Exception as exc:
+        logger.warning("views_open failed for suggestion modal: %s", exc)
+
+
+def _handle_suggestion_submit(payload: dict, db: Session) -> dict:
+    view = payload.get("view", {})
+    source_page = view.get("private_metadata") or "driver_home"
+    user_id = payload.get("user", {}).get("id", "")
+    values = view.get("state", {}).get("values", {})
+    category = (values.get("category_block", {}).get("category", {}).get("selected_option", {}) or {}).get("value") or "suggestion"
+    description = (values.get("description_block", {}).get("description", {}).get("value") or "").strip()
+    if not description:
+        return {"response_action": "clear"}
+
+    driver = _resolve_driver(user_id, db)
+    reporter_name = driver.payroll_name if driver else (
+        payload.get("user", {}).get("username") or payload.get("user", {}).get("name") or user_id
+    )
+
+    from api.src.routes.suggestions import submit_suggestion
+    submit_suggestion(reporter_name, user_id, source_page, category, description, db)
+
+    client = _client()
+    if client:
+        try:
+            _dm_driver(client, user_id, "✅ Thanks — your suggestion was logged.")
+        except Exception as exc:
+            logger.warning("Suggestion confirmation DM failed: %s", exc)
 
     return {"response_action": "clear"}
 

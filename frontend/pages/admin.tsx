@@ -9,7 +9,10 @@ import { useRouter } from 'next/router';
 interface User {
   username: string;
   name: string;
+  role: string;
 }
+
+const ROLE_OPTIONS = ['admin', 'super_user', 'manager', 'ops_manager', 'hr', 'owner', 'dispatcher', 'driver'];
 
 interface StatusMessage {
   type: 'success' | 'error' | 'info';
@@ -39,6 +42,11 @@ export default function AdminPage() {
   const [passwordChangeUser, setPasswordChangeUser] = useState('');
   const [newPasswordForUser, setNewPasswordForUser] = useState('');
   const [confirmNewPasswordForUser, setConfirmNewPasswordForUser] = useState('');
+
+  // Role change modal
+  const [showRoleModal, setShowRoleModal] = useState(false);
+  const [roleChangeUser, setRoleChangeUser] = useState('');
+  const [newRoleForUser, setNewRoleForUser] = useState('driver');
 
   const showMessage = (type: 'success' | 'error' | 'info', text: string) => {
     setMessage({ type, text });
@@ -211,6 +219,43 @@ export default function AdminPage() {
     setNewPasswordForUser('');
     setConfirmNewPasswordForUser('');
     setShowPasswordModal(true);
+  };
+
+  const openRoleModal = (username: string, currentRole: string) => {
+    setRoleChangeUser(username);
+    setNewRoleForUser(currentRole);
+    setShowRoleModal(true);
+  };
+
+  const handleChangeRole = async () => {
+    if (!authenticated) {
+      showMessage('error', 'Please authenticate first');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/auth/update-role`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: roleChangeUser,
+          new_role: newRoleForUser,
+          admin_username: user?.username,
+          admin_password: adminPassword,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to change role');
+      }
+
+      showMessage('success', `Role for '${roleChangeUser}' changed to '${newRoleForUser}'`);
+      setShowRoleModal(false);
+      await loadUsers();
+    } catch (error) {
+      showMessage('error', error instanceof Error ? error.message : 'Failed to change role');
+    }
   };
 
   const handleChangePassword = async () => {
@@ -452,6 +497,9 @@ export default function AdminPage() {
                               <th className="text-left py-2 px-4 font-semibold text-gray-700">
                                 Display Name
                               </th>
+                              <th className="text-left py-2 px-4 font-semibold text-gray-700">
+                                Role
+                              </th>
                               <th className="text-right py-2 px-4 font-semibold text-gray-700">
                                 Actions
                               </th>
@@ -462,11 +510,18 @@ export default function AdminPage() {
                               <tr key={u.username} className="border-b border-gray-100 hover:bg-gray-50">
                                 <td className="py-3 px-4 font-mono text-gray-800">{u.username}</td>
                                 <td className="py-3 px-4 text-gray-700">{u.name}</td>
+                                <td className="py-3 px-4 text-gray-700 font-mono text-xs">{u.role}</td>
                                 <td className="py-3 px-4 text-right space-x-3">
                                   {u.username === 'admin' ? (
                                     <span className="text-xs text-gray-500 italic">Protected</span>
                                   ) : (
                                     <>
+                                      <button
+                                        onClick={() => openRoleModal(u.username, u.role)}
+                                        className="text-purple-600 hover:text-purple-800 font-semibold text-xs transition"
+                                      >
+                                        Change Role
+                                      </button>
                                       <button
                                         onClick={() => openPasswordModal(u.username)}
                                         className="text-blue-600 hover:text-blue-800 font-semibold text-xs transition"
@@ -556,6 +611,51 @@ export default function AdminPage() {
                   className="flex-1 px-4 py-2 bg-ndl-blue hover:bg-blue-700 text-white rounded-lg font-semibold transition"
                 >
                   Change Password
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Role Change Modal */}
+        {showRoleModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg shadow-2xl max-w-md w-full p-6">
+              <h2 className="text-2xl font-bold text-ndl-blue mb-4">Change Role</h2>
+              <p className="text-gray-600 mb-4">
+                Changing role for: <span className="font-semibold text-gray-900">{roleChangeUser}</span>
+              </p>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  New Role
+                </label>
+                <select
+                  value={newRoleForUser}
+                  onChange={(e) => setNewRoleForUser(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-ndl-blue"
+                >
+                  {ROLE_OPTIONS.map((r) => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  super_user = authorized for all functions except creating/editing code
+                </p>
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => setShowRoleModal(false)}
+                  className="flex-1 px-4 py-2 bg-gray-300 hover:bg-gray-400 rounded-lg font-semibold transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleChangeRole}
+                  className="flex-1 px-4 py-2 bg-ndl-blue hover:bg-blue-700 text-white rounded-lg font-semibold transition"
+                >
+                  Change Role
                 </button>
               </div>
             </div>

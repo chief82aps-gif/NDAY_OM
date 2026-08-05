@@ -360,6 +360,7 @@ class CreateUserRequest(BaseModel):
 class UserListResponse(BaseModel):
     username: str
     name: str
+    role: str
 
 
 class ChangePasswordRequest(BaseModel):
@@ -720,7 +721,7 @@ async def list_users(request: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin credentials")
 
     users_list = [
-        UserListResponse(username=u.username, name=u.name or u.username.capitalize())
+        UserListResponse(username=u.username, name=u.name or u.username.capitalize(), role=u.role)
         for u in db.query(User).order_by(User.username).all()
     ]
     return {"users": users_list}

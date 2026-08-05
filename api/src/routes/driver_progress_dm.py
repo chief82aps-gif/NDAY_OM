@@ -40,7 +40,12 @@ from api.src.timezone import PACIFIC as PT
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/driver-progress", tags=["driver-progress"])
 
-_TESTING_DRIVER_NAMES = {"Collin Jonathan LaTour"}
+# Both name forms needed: "Collin Jonathan LaTour" is the ADP roster
+# payroll_name (used for Slack ID resolution), "Collin LaTour" is the
+# shorter form DOP/Route Sheet ingest stores on DailyRouteAssignment
+# (used for the actual package/duration stats lookup) -- same person,
+# two different upstream sources' naming conventions.
+_TESTING_DRIVER_NAMES = {"Collin Jonathan LaTour", "Collin LaTour"}
 
 
 def _client():

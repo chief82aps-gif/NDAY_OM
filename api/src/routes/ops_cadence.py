@@ -209,6 +209,21 @@ def _post_all_in(today: date) -> None:
             logger.warning("All In post failed (%s): %s", channel, exc)
 
 
+def _post_all_in_blocked_notice() -> None:
+    """#nday-mgt only, never #dlv3-nday-info -- that channel only ever gets
+    the one-line All In / incidents comment, never internal ops issues."""
+    client = _client()
+    if not client:
+        return
+    try:
+        client.chat_postMessage(
+            channel=MGT_CHANNEL,
+            text="🚫 All In summary withheld tonight — tomorrow's Showtime DMs haven't gone out. Check the escalation DM from Blake.",
+        )
+    except Exception as exc:
+        logger.warning("All-In-blocked notice failed: %s", exc)
+
+
 def run_ops_cadence_check(db: Session, force: bool = False) -> dict:
     """Called every 60s from main.py's background loop. Two jobs:
       1. Nag #nday-mgt every ~75 min (once the last wave has launched)
@@ -240,6 +255,13 @@ def run_ops_cadence_check(db: Session, force: bool = False) -> dict:
 
     if now_pt >= cob_dt:
         if packages_ok and cortex_ok:
+            from api.src.routes.rostering import is_all_in_blocked_today
+            if is_all_in_blocked_today(db):
+                if force or not last_sent or (now_naive - last_sent).total_seconds() >= PAST_COB_NAG_SECONDS:
+                    _post_all_in_blocked_notice()
+                    state["last_sent_at"] = now_naive
+                    _save_state(db, state)
+                return {"status": "all_in_blocked_showtime", "date": today.isoformat()}
             _post_all_in(today)
             state["all_in_posted_date"] = today
             _save_state(db, state)

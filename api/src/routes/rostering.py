@@ -734,7 +734,12 @@ def send_driver_shift_dms(shift_date: date, db: Session) -> dict:
         dm_record.showtime = showtime
         dm_record.wave_lead = wave_lead_name
         dm_record.dm_ts = dm_ts
-        dm_record.dm_sent_at = datetime.utcnow()
+        # Only mark sent on a real confirmed send (dm_ts present) --
+        # previously set unconditionally, so a failed chat_postMessage (or
+        # no slack_id at all) got permanently marked "sent" and could never
+        # be retried. Fixed 2026-08-05 alongside the Showtime watchdog.
+        if dm_ts:
+            dm_record.dm_sent_at = datetime.utcnow()
 
     db.commit()
 
@@ -745,6 +750,146 @@ def send_driver_shift_dms(shift_date: date, db: Session) -> dict:
         "skipped": skipped,
         "no_slack_id": no_slack,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Showtime Watchdog -- added 2026-08-05, after a real incident: the driver-
+# schedule ingest reported status="ingested" (success) while Showtime DMs
+# silently never went out (see the fixed cascading try/except in
+# ops_ingest.py). If drivers never get their showtime the night before, they
+# have no assigned arrival window at all and can show up whenever they want
+# (e.g. at 10 AM) -- explicit user direction: this must escalate loudly
+# rather than fail silently, and if it's still not resolved by the deadline,
+# that night's "All In" summary must not post (declaring the day "all in"
+# would be false when tomorrow's drivers have no showtime).
+#
+# Escalation tiers (Pacific time, tunable): 18:00-19:59 one heads-up DM/hour,
+# 20:00-21:29 every 30 min, 21:30+ every 15 min. At 22:00 the hard deadline
+# passes: one final loud alert, and is_all_in_blocked_today() starts
+# returning True for ops_cadence.py to check before posting All In.
+# Continues alerting every 15 min past 22:00 until resolved ("send messages
+# until it posts"), not just once.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SHOWTIME_WATCHDOG_KEY_PREFIX = "showtime_watchdog_"
+_SHOWTIME_DEADLINE_HOUR = 22   # 10 PM Pacific -- hard cutoff, blocks All In
+_SHOWTIME_WARNING_HOUR = 20    # 8 PM -- escalate to every 30 min
+_SHOWTIME_CRITICAL_HOUR = 21.5  # 9:30 PM -- escalate to every 15 min
+_SHOWTIME_FIRST_CHECK_HOUR = 18  # 6 PM -- first heads-up if incomplete
+
+
+def _showtime_completion_status(target_date: date, db: Session) -> dict:
+    """Read-only: has target_date's schedule been ingested yet, and if so,
+    what fraction of those drivers have a confirmed-sent Showtime DM."""
+    scheduled = db.query(DriverScheduleEntry).filter(DriverScheduleEntry.schedule_date == target_date).all()
+    if not scheduled:
+        return {"has_schedule": False, "total": 0, "sent": 0, "complete": False}
+    total = len(scheduled)
+    sent = (
+        db.query(DriverShiftDM)
+        .filter(DriverShiftDM.shift_date == target_date, DriverShiftDM.dm_sent_at.isnot(None))
+        .count()
+    )
+    return {"has_schedule": True, "total": total, "sent": sent, "complete": sent >= total}
+
+
+def is_all_in_blocked_today(db: Session) -> bool:
+    """Called by ops_cadence.py before posting All In. True only once
+    tonight's watchdog has actually recorded a past-deadline, unresolved
+    Showtime failure -- never speculative."""
+    today = datetime.now(PACIFIC).date()
+    state = get_reminder_state(db, f"{_SHOWTIME_WATCHDOG_KEY_PREFIX}{today.isoformat()}")
+    return bool(state.get("blocked_all_in"))
+
+
+def run_showtime_watchdog(db: Session, now: Optional[datetime] = None) -> dict:
+    """Called every 60s from main.py's background loop. Watches TOMORROW's
+    Showtime DM completeness during the evening escalation window, retrying
+    the (idempotent) send on every check and DMing the owner with increasing
+    urgency if it's still incomplete."""
+    now = now or datetime.now(PACIFIC)
+    hour = now.hour + now.minute / 60
+    if hour < _SHOWTIME_FIRST_CHECK_HOUR:
+        return {"status": "before_window"}
+
+    target_date = (now + timedelta(days=1)).date()
+    state_key = f"{_SHOWTIME_WATCHDOG_KEY_PREFIX}{target_date.isoformat()}"
+    state = get_reminder_state(db, state_key)
+    if state.get("resolved"):
+        return {"status": "already_resolved", "date": target_date.isoformat()}
+
+    status = _showtime_completion_status(target_date, db)
+    if status["has_schedule"] and status["complete"]:
+        set_reminder_state(db, state_key, {**state, "resolved": True, "blocked_all_in": False})
+        return {"status": "resolved", "date": target_date.isoformat(), **status}
+
+    # Retry the (idempotent) send every check -- if the schedule landed late
+    # or a transient Slack failure caused a partial send, this closes the gap
+    # on its own without waiting for a human.
+    if status["has_schedule"]:
+        try:
+            send_driver_shift_dms(target_date, db)
+            status = _showtime_completion_status(target_date, db)
+            if status["complete"]:
+                set_reminder_state(db, state_key, {**state, "resolved": True, "blocked_all_in": False})
+                return {"status": "resolved_on_retry", "date": target_date.isoformat(), **status}
+        except Exception as exc:
+            logger.warning("Showtime watchdog retry failed for %s: %s", target_date, exc)
+
+    if hour >= _SHOWTIME_CRITICAL_HOUR:
+        tier, cadence_minutes = "critical", 15
+    elif hour >= _SHOWTIME_WARNING_HOUR:
+        tier, cadence_minutes = "warning", 30
+    else:
+        tier, cadence_minutes = "notice", 60
+
+    last_alert_at = state.get("last_alert_at")
+    should_alert = True
+    if last_alert_at:
+        elapsed = (now - datetime.fromisoformat(last_alert_at)).total_seconds() / 60
+        should_alert = elapsed >= cadence_minutes
+
+    blocked_all_in = state.get("blocked_all_in", False) or hour >= _SHOWTIME_DEADLINE_HOUR
+
+    if should_alert:
+        from api.src.routes.auth import _OWNER_SLACK_USER_ID
+        client = _slack_client()
+        if client:
+            if not status["has_schedule"]:
+                detail = f"tomorrow's ({target_date.strftime('%A, %B %-d')}) driver schedule hasn't been ingested yet"
+            else:
+                detail = f"only {status['sent']}/{status['total']} drivers have a confirmed Showtime DM for {target_date.strftime('%A, %B %-d')}"
+            if hour >= _SHOWTIME_DEADLINE_HOUR:
+                prefix = "🚨🚨🚨 SHOWTIME DEADLINE PASSED (10 PM) 🚨🚨🚨"
+                suffix = "\nAll In summary is being withheld tonight until this is fixed."
+            elif tier == "critical":
+                prefix = "🚨🚨 SHOWTIME STILL NOT OUT"
+                suffix = "\nApproaching the 10 PM deadline — drivers will have no assigned arrival time tomorrow."
+            elif tier == "warning":
+                prefix = "🚨 Showtime DMs incomplete"
+                suffix = ""
+            else:
+                prefix = "⚠️ Heads up — Showtime DMs incomplete"
+                suffix = ""
+            try:
+                client.chat_postMessage(
+                    channel=_OWNER_SLACK_USER_ID,
+                    text=f"{prefix}: {detail}.{suffix}",
+                )
+            except Exception as exc:
+                logger.warning("Showtime watchdog alert DM failed: %s", exc)
+
+        set_reminder_state(db, state_key, {
+            **state,
+            "last_alert_at": now.isoformat(),
+            "tier": tier,
+            "blocked_all_in": blocked_all_in,
+            "resolved": False,
+        })
+    elif blocked_all_in != state.get("blocked_all_in", False):
+        set_reminder_state(db, state_key, {**state, "blocked_all_in": blocked_all_in})
+
+    return {"status": "alerting" if should_alert else "waiting", "tier": tier, "date": target_date.isoformat(), **status}
 
 
 def send_test_shift_dm(shift_date: date, sample_driver_name: str, target_slack_id: str, db: Session) -> dict:

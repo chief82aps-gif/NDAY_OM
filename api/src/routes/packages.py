@@ -188,3 +188,131 @@ def no_reason_worklist(db: Session = Depends(get_db)):
         .all()
     )
     return {"snapshot": _serialize_snapshot(snap), "records": [_serialize_record(r) for r in rows]}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Non-delivered-marking offender scrub -- added 2026-08-05, per explicit
+# direction: drivers are supposed to seek permission from Blake BEFORE
+# marking a package Reattemptable/Undeliverable/Missing/Returned to
+# station/Pickup failed, but that permission workflow doesn't exist yet
+# (see Governance backlog note -- future: pre-marking permission request,
+# a package detail/dispute view, and DS text-conversation capture).
+# Until that exists, this scrubs the Packages export itself for anyone
+# using these codes heavily -- human review of who might be marking
+# packages undeliverable without actually working the problem first,
+# not an automatic accusation. "Reattemptable" is excluded from the
+# offender count itself (a reattempt is still a plausible delivery, not
+# a claim of being unable to deliver) but still shown for context.
+# ─────────────────────────────────────────────────────────────────────────────
+
+UNABLE_TO_DELIVER_STATUSES = ("Undeliverable", "Missing", "Returned to station", "Pickup failed")
+MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
+
+
+def get_driver_status_counts(db: Session, snapshot: PackagesSnapshot) -> list[dict]:
+    """Per-driver breakdown of package_status counts for one snapshot,
+    sorted by unable-to-deliver count descending."""
+    rows = db.query(PackagesRecord).filter(PackagesRecord.snapshot_id == snapshot.id).all()
+    by_driver: dict[str, dict] = {}
+    for r in rows:
+        name = r.transporter_name or "Unknown"
+        entry = by_driver.setdefault(name, {"transporter_id": r.transporter_id, "statuses": {}, "unable_to_deliver": 0})
+        entry["statuses"][r.package_status] = entry["statuses"].get(r.package_status, 0) + 1
+        if r.package_status in UNABLE_TO_DELIVER_STATUSES:
+            entry["unable_to_deliver"] += 1
+    result = [{"driver_name": name, **data} for name, data in by_driver.items()]
+    result.sort(key=lambda d: d["unable_to_deliver"], reverse=True)
+    return result
+
+
+def get_trailing_offender_report(db: Session, days: int = 7) -> list[dict]:
+    """Sums unable-to-deliver counts across the latest snapshot per
+    report_date over the trailing N days -- the "systematic/habitual"
+    view, as opposed to get_driver_status_counts()'s single-snapshot
+    picture. Uses only the LATEST snapshot per date (not every re-pull)
+    so a busy upload day doesn't inflate a driver's count."""
+    since = date.today() - timedelta(days=days - 1)
+    dates_with_data = (
+        db.query(PackagesSnapshot.report_date)
+        .filter(PackagesSnapshot.report_date >= since)
+        .distinct()
+        .all()
+    )
+    by_driver: dict[str, dict] = {}
+    for (report_date,) in dates_with_data:
+        snap = get_latest_snapshot(db, report_date)
+        if not snap:
+            continue
+        for entry in get_driver_status_counts(db, snap):
+            d = by_driver.setdefault(entry["driver_name"], {"transporter_id": entry["transporter_id"], "unable_to_deliver": 0, "days_flagged": 0})
+            if entry["unable_to_deliver"] > 0:
+                d["unable_to_deliver"] += entry["unable_to_deliver"]
+                d["days_flagged"] += 1
+    result = [{"driver_name": name, **data} for name, data in by_driver.items() if data["unable_to_deliver"] > 0]
+    result.sort(key=lambda d: d["unable_to_deliver"], reverse=True)
+    return result
+
+
+def _client():
+    token = os.getenv("SLACK_BOT_TOKEN")
+    if not token:
+        return None
+    from slack_sdk import WebClient
+    return WebClient(token=token)
+
+
+def send_offender_alert_to_mgt(db: Session, snapshot: Optional[PackagesSnapshot] = None, trailing_days: int = 7) -> dict:
+    """Posts today's snapshot breakdown + the trailing-N-day habitual
+    view to #nday-mgt for human review. Framed as "worth a look," never
+    as an automatic write-up -- these drivers haven't been through any
+    permission/dispute process, this is raw pattern-of-use data."""
+    snapshot = snapshot or get_latest_snapshot(db)
+    if not snapshot:
+        return {"status": "no_snapshot"}
+
+    today_counts = [d for d in get_driver_status_counts(db, snapshot) if d["unable_to_deliver"] > 0]
+    trailing = get_trailing_offender_report(db, days=trailing_days)
+
+    if not today_counts and not trailing:
+        return {"status": "nothing_to_report"}
+
+    lines = ["📦 *Non-Delivered Marking Review* — for human review, not an automatic write-up.\n"]
+    if today_counts:
+        lines.append(f"*Today's snapshot ({snapshot.report_date.isoformat()}):*")
+        for d in today_counts[:10]:
+            status_str = ", ".join(f"{k}: {v}" for k, v in d["statuses"].items() if k in UNABLE_TO_DELIVER_STATUSES)
+            lines.append(f"• *{d['driver_name']}* — {d['unable_to_deliver']} unable-to-deliver ({status_str})")
+    if trailing:
+        lines.append(f"\n*Trailing {trailing_days} days (habitual pattern):*")
+        for d in trailing[:10]:
+            flag = " ⚠️ _repeat pattern_" if d["days_flagged"] >= 3 else ""
+            lines.append(f"• *{d['driver_name']}* — {d['unable_to_deliver']} total across {d['days_flagged']} day(s){flag}")
+    lines.append("\n_Reminder: drivers should confirm with Blake before marking a package this way — this list is to help spot who may not be doing that yet, not a punishment list._")
+
+    client = _client()
+    if not client:
+        return {"status": "no_slack_token", "text": "\n".join(lines)}
+    try:
+        client.chat_postMessage(channel=MGT_CHANNEL, text="\n".join(lines))
+    except Exception as exc:
+        logger.warning("Non-delivered marking alert post failed: %s", exc)
+        return {"status": "send_failed", "error": str(exc)}
+    return {"status": "sent", "today_count": len(today_counts), "trailing_count": len(trailing)}
+
+
+@router.get("/offender-report")
+def offender_report(trailing_days: int = 7, db: Session = Depends(get_db)):
+    """Read-only view of the same data send_offender_alert_to_mgt posts."""
+    snap = get_latest_snapshot(db)
+    if not snap:
+        raise HTTPException(404, "No Packages snapshot found for today.")
+    return {
+        "snapshot": _serialize_snapshot(snap),
+        "today": get_driver_status_counts(db, snap),
+        "trailing": get_trailing_offender_report(db, days=trailing_days),
+    }
+
+
+@router.post("/send-offender-alert")
+def send_offender_alert_endpoint(trailing_days: int = 7, db: Session = Depends(get_db)):
+    return send_offender_alert_to_mgt(db, trailing_days=trailing_days)

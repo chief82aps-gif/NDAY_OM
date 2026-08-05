@@ -527,6 +527,11 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
                 send_progress_dm(name, db)
         except Exception as e:
             logger.warning("Driver progress DM trigger failed: %s", e)
+        try:
+            from api.src.routes.packages import send_offender_alert_to_mgt
+            send_offender_alert_to_mgt(db)
+        except Exception as e:
+            logger.warning("Non-delivered marking offender alert failed: %s", e)
         return result
 
     # ── Tenured Workforce DAs Report (CSV/Excel) ─────────────────────────────

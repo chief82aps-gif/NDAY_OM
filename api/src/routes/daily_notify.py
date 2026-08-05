@@ -1626,6 +1626,44 @@ def join_cortex_channel():
         raise HTTPException(status_code=400, detail=error)
 
 
+@router.post("/daily-notify/join-channel-by-id")
+def join_channel_by_id(channel_id: str):
+    """Generic version of join_channel()/join_cortex_channel() above --
+    added 2026-08-05 after discovering #nday-fleet is private and the bot
+    was never invited, so every van-issue alert (_alert_mgt_on_serious_flags()
+    in eod_survey.py) had been failing silently for a private channel
+    nobody previously needed this endpoint for. Takes an explicit
+    channel_id instead of a hardcoded one so any future private channel
+    can reuse this without another copy-pasted endpoint."""
+    user_token = os.getenv("SLACK_USER_TOKEN")
+    if not user_token:
+        raise HTTPException(status_code=400, detail="SLACK_USER_TOKEN not set.")
+    bot_token = os.getenv("SLACK_BOT_TOKEN")
+    if not bot_token:
+        raise HTTPException(status_code=400, detail="SLACK_BOT_TOKEN not set.")
+
+    try:
+        from slack_sdk import WebClient
+
+        bot_client = WebClient(token=bot_token)
+        bot_user_id = bot_client.auth_test()["user_id"]
+
+        user_client = WebClient(token=user_token)
+        resp = user_client.conversations_invite(channel=channel_id, users=bot_user_id)
+        name = resp.get("channel", {}).get("name", channel_id)
+        return {
+            "joined": True,
+            "channel": name,
+            "bot_user_id": bot_user_id,
+            "message": f"Bot ({bot_user_id}) added to #{name}",
+        }
+    except Exception as exc:
+        error = str(exc)
+        if "already_in_channel" in error:
+            return {"joined": True, "message": "Bot is already in the channel."}
+        raise HTTPException(status_code=400, detail=error)
+
+
 @router.get("/daily-notify/status")
 def notify_status(date: Optional[str] = None, db: Session = Depends(get_db)):
     """Today's ingest status, assignment roster, and roll call."""

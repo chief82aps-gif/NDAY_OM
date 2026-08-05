@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, CSSProperties } from 'react';
 import ProtectedRoute from '../components/ProtectedRoute';
 
 function resolveApi(): string {
@@ -16,6 +16,7 @@ interface RollCallRow {
   rts_status: 'not_started' | 'in_progress' | 'complete';
   rts_at: string | null;
   eod_at: string | null;
+  efficiency_pct: number | null;
 }
 
 function todayStr(): string {
@@ -30,13 +31,40 @@ function fmtTime(t: string | null): string {
   } catch { return ''; }
 }
 
-function StepIcon({ done, inProgress, time }: { done: boolean; inProgress?: boolean; time: string | null }) {
-  const icon = done ? '✅' : inProgress ? '🟡' : '⬜';
+const MISSING_CELL_STYLE: CSSProperties = {
+  background: '#3b1e1e',
+  color: '#fca5a5',
+  fontWeight: 600,
+};
+
+function TimeCell({ time, inProgress }: { time: string | null; inProgress?: boolean }) {
+  if (!time) {
+    return (
+      <td style={{ padding: '8px 12px', textAlign: 'center', ...MISSING_CELL_STYLE }}>
+        MISSING
+      </td>
+    );
+  }
   return (
-    <div style={{ textAlign: 'center' }}>
-      <div style={{ fontSize: 18 }}>{icon}</div>
-      {time && <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>{fmtTime(time)}</div>}
-    </div>
+    <td style={{ padding: '8px 12px', textAlign: 'center', color: inProgress ? '#fbbf24' : '#e2e8f0' }}>
+      {fmtTime(time)}{inProgress ? ' (in progress)' : ''}
+    </td>
+  );
+}
+
+function EfficiencyCell({ pct }: { pct: number | null }) {
+  if (pct === null) {
+    return (
+      <td style={{ padding: '8px 12px', textAlign: 'center', ...MISSING_CELL_STYLE }}>
+        MISSING
+      </td>
+    );
+  }
+  const color = pct >= 100 ? '#4ade80' : pct >= 80 ? '#fbbf24' : '#f87171';
+  return (
+    <td style={{ padding: '8px 12px', textAlign: 'center', color, fontWeight: 700 }}>
+      {pct}%
+    </td>
   );
 }
 
@@ -47,6 +75,7 @@ export default function DriverRollCallPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
+  const [missingOnly, setMissingOnly] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -65,7 +94,9 @@ export default function DriverRollCallPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const filtered = rows.filter(r => !search || r.driver_name.toLowerCase().includes(search.toLowerCase()));
+  const filtered = rows
+    .filter(r => !search || r.driver_name.toLowerCase().includes(search.toLowerCase()))
+    .filter(r => !missingOnly || !r.eod_at);
 
   const counts = {
     acknowledged: rows.filter(r => r.acknowledged_at).length,
@@ -73,6 +104,7 @@ export default function DriverRollCallPage() {
     rts: rows.filter(r => r.rts_status === 'complete').length,
     eod: rows.filter(r => r.eod_at).length,
   };
+  const missingEod = rows.filter(r => !r.eod_at);
 
   return (
     <ProtectedRoute>
@@ -80,11 +112,11 @@ export default function DriverRollCallPage() {
         <div style={{ marginBottom: 20 }}>
           <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>📋 Driver Roll Call</h1>
           <p style={{ color: '#94a3b8', marginTop: 4, fontSize: 13 }}>
-            Each driver's progress through today's checkpoints: schedule acknowledged (night before), arrived for shift, RTS debrief, EOD survey.
+            Acknowledged (night before) → Arrived → RTS submission → EOD submission, plus worked-time-vs-planned-route efficiency. Missing data is flagged in red.
           </p>
         </div>
 
-        <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
           <input
             type="date"
             value={dateStr}
@@ -97,6 +129,10 @@ export default function DriverRollCallPage() {
             onChange={e => setSearch(e.target.value)}
             style={{ background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155', borderRadius: 6, padding: '6px 12px', fontSize: 13, width: 220 }}
           />
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#94a3b8', cursor: 'pointer' }}>
+            <input type="checkbox" checked={missingOnly} onChange={e => setMissingOnly(e.target.checked)} />
+            Missing EOD only ({missingEod.length})
+          </label>
         </div>
 
         {!loading && rows.length > 0 && (
@@ -113,9 +149,10 @@ export default function DriverRollCallPage() {
               <span style={{ color: '#94a3b8' }}>RTS: </span>
               <span style={{ fontWeight: 700 }}>{counts.rts}/{rows.length}</span>
             </div>
-            <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, padding: '6px 16px', fontSize: 12 }}>
+            <div style={{ background: counts.eod < rows.length ? '#3b1e1e' : '#1e293b', border: `1px solid ${counts.eod < rows.length ? '#7f1d1d' : '#334155'}`, borderRadius: 8, padding: '6px 16px', fontSize: 12 }}>
               <span style={{ color: '#94a3b8' }}>EOD: </span>
               <span style={{ fontWeight: 700 }}>{counts.eod}/{rows.length}</span>
+              {missingEod.length > 0 && <span style={{ color: '#fca5a5', marginLeft: 8 }}>{missingEod.length} missing</span>}
             </div>
           </div>
         )}
@@ -136,21 +173,21 @@ export default function DriverRollCallPage() {
                 <tr style={{ background: '#1a3c6e' }}>
                   <th style={{ padding: '8px 12px', textAlign: 'left', color: '#fff', fontWeight: 600 }}>Driver</th>
                   <th style={{ padding: '8px 12px', color: '#fff', fontWeight: 600 }}>Acknowledged</th>
-                  <th style={{ padding: '8px 12px', color: '#fff', fontWeight: 600 }}>Arrived</th>
-                  <th style={{ padding: '8px 12px', color: '#fff', fontWeight: 600 }}>RTS</th>
-                  <th style={{ padding: '8px 12px', color: '#fff', fontWeight: 600 }}>EOD</th>
+                  <th style={{ padding: '8px 12px', color: '#fff', fontWeight: 600 }}>I&apos;ve Arrived</th>
+                  <th style={{ padding: '8px 12px', color: '#fff', fontWeight: 600 }}>RTS Submission</th>
+                  <th style={{ padding: '8px 12px', color: '#fff', fontWeight: 600 }}>EOD Submission</th>
+                  <th style={{ padding: '8px 12px', color: '#fff', fontWeight: 600 }}>Efficiency %</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((r, i) => (
                   <tr key={r.driver_name} style={{ background: i % 2 === 1 ? '#161b22' : '#0d1117' }}>
                     <td style={{ padding: '8px 12px' }}>{r.driver_name}</td>
-                    <td style={{ padding: '8px 12px' }}><StepIcon done={!!r.acknowledged_at} time={r.acknowledged_at} /></td>
-                    <td style={{ padding: '8px 12px' }}><StepIcon done={!!r.arrived_at} time={r.arrived_at} /></td>
-                    <td style={{ padding: '8px 12px' }}>
-                      <StepIcon done={r.rts_status === 'complete'} inProgress={r.rts_status === 'in_progress'} time={r.rts_at} />
-                    </td>
-                    <td style={{ padding: '8px 12px' }}><StepIcon done={!!r.eod_at} time={r.eod_at} /></td>
+                    <TimeCell time={r.acknowledged_at} />
+                    <TimeCell time={r.arrived_at} />
+                    <TimeCell time={r.rts_at} inProgress={r.rts_status === 'in_progress'} />
+                    <TimeCell time={r.eod_at} />
+                    <EfficiencyCell pct={r.efficiency_pct} />
                   </tr>
                 ))}
               </tbody>

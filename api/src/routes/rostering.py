@@ -3097,7 +3097,14 @@ def get_roll_call(shift_date: str, db: Session = Depends(get_db)):
     """Per-driver status across the day's sequential checkpoints --
     Acknowledged (schedule_acked_at, from the night before) -> Arrived
     (arrived_at) -> RTS (RtsDebrief) -> EOD (EodSurveyResponse) -- added
-    2026-08-05 for a single roll-call view, one row per driver."""
+    2026-08-05 for a single roll-call view, one row per driver.
+
+    efficiency_pct (added same day, per explicit request for a per-driver
+    column) mirrors ops_daily_digest.py's _mgt_stats() aggregate formula,
+    just per-row instead of summed: (EOD time - Arrived time) / that
+    driver's own planned route_duration. None whenever any of the three
+    inputs is missing -- the frontend renders that as a flagged/missing
+    cell rather than a false 0%, same as every other column here."""
     try:
         target = date.fromisoformat(shift_date)
     except ValueError:
@@ -3105,6 +3112,7 @@ def get_roll_call(shift_date: str, db: Session = Depends(get_db)):
 
     assignments = db.query(DailyRouteAssignment).filter(DailyRouteAssignment.assignment_date == target).all()
     driver_names = sorted({a.driver_name for a in assignments})
+    duration_by_name = {a.driver_name: a.route_duration for a in assignments if a.route_duration}
 
     shift_dms = {r.driver_name: r for r in db.query(DriverShiftDM).filter(DriverShiftDM.shift_date == target).all()}
     rts_debriefs = {r.driver_name: r for r in db.query(RtsDebrief).filter(RtsDebrief.shift_date == target).all()}
@@ -3121,13 +3129,24 @@ def get_roll_call(shift_date: str, db: Session = Depends(get_db)):
             rts_status, rts_at = "in_progress", rts.started_at
         else:
             rts_status, rts_at = "not_started", None
+
+        arrived_at = dm.arrived_at if dm else None
+        eod_at = eod.submitted_at if eod else None
+        planned_duration = duration_by_name.get(name)
+        efficiency_pct = None
+        if arrived_at and eod_at and planned_duration:
+            worked_minutes = (eod_at - arrived_at).total_seconds() / 60
+            if worked_minutes > 0:
+                efficiency_pct = round(100 * worked_minutes / planned_duration, 1)
+
         rows.append({
             "driver_name": name,
             "acknowledged_at": dm.schedule_acked_at.isoformat() if dm and dm.schedule_acked_at else None,
-            "arrived_at": dm.arrived_at.isoformat() if dm and dm.arrived_at else None,
+            "arrived_at": arrived_at.isoformat() if arrived_at else None,
             "rts_status": rts_status,
             "rts_at": rts_at.isoformat() if rts_at else None,
-            "eod_at": eod.submitted_at.isoformat() if eod else None,
+            "eod_at": eod_at.isoformat() if eod_at else None,
+            "efficiency_pct": efficiency_pct,
         })
     return {"date": shift_date, "drivers": rows}
 

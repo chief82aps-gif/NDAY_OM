@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session
 
 from api.src.database import (
     get_db, get_reminder_state, set_reminder_state,
-    CrashReport, InjuryReport, AttendanceEvent, Vehicle, CortexSnapshot,
+    CrashReport, InjuryReport, AttendanceEvent, Vehicle, CortexSnapshot, EodSurveyResponse,
 )
 from api.src.timezone import PACIFIC as PT
 
@@ -77,6 +77,24 @@ def _callout_lines(db: Session, today: date) -> list[str]:
 def _grounded_van_lines(db: Session) -> list[str]:
     rows = db.query(Vehicle).filter(func.lower(Vehicle.status) == "grounded").all()
     return [f"• {r.vehicle_name} ({r.vin}) — {r.service_type}" for r in rows]
+
+
+def _van_issue_lines(db: Session, today: date) -> list[str]:
+    """Driver-reported van problems from today's EOD survey -- added
+    2026-08-05. This was the actual gap behind "the daily summary showed
+    no van issues" even though several EOD submissions had flagged one:
+    this digest's Fleet section only ever queried grounded vans (Fleet
+    ingest data), never EodSurveyResponse.van_issues at all."""
+    rows = (
+        db.query(EodSurveyResponse)
+        .filter(EodSurveyResponse.survey_date == today, EodSurveyResponse.van_issues == True)  # noqa: E712
+        .all()
+    )
+    return [
+        f"• *{r.driver_name}*" + (f" (Van {r.van_number})" if r.van_number else "")
+        + f": {r.van_issue_description or 'see survey'}"
+        for r in rows
+    ]
 
 
 def _route_progress(db: Session, today: date) -> Optional[dict]:
@@ -126,8 +144,10 @@ def build_digest_text(db: Session, today: date) -> str:
         ops_section = "_No Cortex progress data today._"
 
     grounded_lines = _grounded_van_lines(db)
-    fleet_section = "\n".join(grounded_lines) or "_No grounded vans._"
-    fleet_header = f"*Fleet* ({len(grounded_lines)} grounded)" if grounded_lines else "*Fleet*"
+    van_issue_lines = _van_issue_lines(db, today)
+    fleet_lines = grounded_lines + van_issue_lines
+    fleet_section = "\n".join(fleet_lines) or "_No grounded vans or reported van issues._"
+    fleet_header = f"*Fleet* ({len(grounded_lines)} grounded, {len(van_issue_lines)} reported issue(s))" if fleet_lines else "*Fleet*"
 
     return (
         f"📋 *Daily Ops Digest — {date_str}*\n\n"

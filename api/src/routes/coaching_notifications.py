@@ -300,11 +300,10 @@ def build_driver_stage_message(notification: CoachingNotification, db: Session) 
     # uses. A coaching tip this early is expected, not a red flag.
     nursery_line = ""
     if notification.transporter_id:
-        from api.src.database import get_latest_tenure_record
-        from api.src.routes.driver_scoring import get_tenure_phase, is_non_tenured_phase
-        tenure_rec = get_latest_tenure_record(db, notification.transporter_id)
-        if tenure_rec:
-            phase = get_tenure_phase(tenure_rec.lifetime_routes)
+        from api.src.routes.driver_scoring import get_estimated_lifetime_routes, is_non_tenured_phase
+        estimate = get_estimated_lifetime_routes(db, notification.transporter_id, notification.da_name or "")
+        if estimate:
+            phase = estimate["tenure_phase"]
             if is_non_tenured_phase(phase):
                 nursery_line = (
                     "\n\nAnd hey — you're still early in your NDAY journey, so getting a coaching tip like this "

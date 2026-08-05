@@ -103,16 +103,18 @@ def build_progress_stats(driver_name: str, target_date: date, db: Session) -> Op
             pace_ratio = round((pct / 100) / time_fraction, 2)
 
     # Tenure phase (ORE/NL1/NL2/NL3/pre_tenured/tenured) -- per explicit
-    # direction to boost encouragement for still-learning drivers. None
-    # if this driver has no transporter_id on file or never appeared in
-    # a Tenured Workforce report yet.
+    # direction to boost encouragement for still-learning drivers. Uses
+    # the real-time estimate (Amazon's last-reported baseline + our own
+    # route-days counted since), not the raw last-known lifetime_routes,
+    # so this doesn't go stale for up to 6 days waiting on Amazon's next
+    # weekly file. None if this driver never appeared in a Tenured
+    # Workforce report at all yet.
     tenure_phase = None
     if assignment.transporter_id:
-        from api.src.database import get_latest_tenure_record
-        from api.src.routes.driver_scoring import get_tenure_phase
-        tenure_rec = get_latest_tenure_record(db, assignment.transporter_id)
-        if tenure_rec:
-            tenure_phase = get_tenure_phase(tenure_rec.lifetime_routes)
+        from api.src.routes.driver_scoring import get_estimated_lifetime_routes
+        estimate = get_estimated_lifetime_routes(db, assignment.transporter_id, driver_name)
+        if estimate:
+            tenure_phase = estimate["tenure_phase"]
 
     return {
         "driver_name": driver_name,

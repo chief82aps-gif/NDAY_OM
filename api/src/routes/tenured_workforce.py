@@ -22,12 +22,14 @@ import tempfile
 from typing import Optional
 
 import pandas as pd
+from fastapi import APIRouter, Depends, UploadFile, File
 from sqlalchemy.orm import Session
 
 from api.src.column_mapping import read_tabular_file
-from api.src.database import TenuredWorkforceRecord
+from api.src.database import get_db, TenuredWorkforceRecord
 
 logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/tenured-workforce", tags=["tenured-workforce"])
 
 
 def _str_or_none(value) -> Optional[str]:
@@ -128,3 +130,12 @@ def _store_tenured_workforce(content: bytes, filename: str, slack_file_id: Optio
             os.unlink(tmp_path)
         except Exception:
             pass
+
+
+@router.post("/ingest-upload")
+async def ingest_upload(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Direct upload, for when the file was downloaded by hand rather
+    than shared in Slack -- same pattern as packages.py's endpoint of
+    the same name."""
+    content = await file.read()
+    return _store_tenured_workforce(content, file.filename or "upload.xlsx", None, db)

@@ -106,6 +106,7 @@ from api.src.database import (
     QualityMetricSnapshot,
     DriverRosterEntry,
     TrainingVideoLink,
+    DailyRouteAssignment,
     get_trailing_route_count,
     get_latest_tenure_record,
 )
@@ -288,6 +289,66 @@ def is_non_tenured_phase(phase: Optional[str]) -> bool:
     return phase is not None and phase != "tenured"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Real-time route-count tracking -- added 2026-08-05, per explicit
+# direction: "This will be the baseline moving forward we can simply
+# count how many we route them on." Amazon's Tenured Workforce report
+# only arrives weekly and lags, so a driver's tenure phase/lifetime
+# route count would otherwise go stale for up to 6 days. Instead: take
+# the most recent real TenuredWorkforceRecord.lifetime_routes as of its
+# (year, week) as a baseline, then add our OWN count of DailyRouteAssignment
+# days since that baseline date -- self-updating every day we actually
+# route someone, no dependency on the next Amazon file landing.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_route_count_baseline(db: Session, transporter_id: str) -> Optional[dict]:
+    """Most recent real Amazon-reported lifetime_routes + the date it was
+    as-of (the Friday of that ISO year/week -- matches the report's own
+    Friday COB cadence). None if this driver has never appeared in a
+    Tenured Workforce report."""
+    rec = get_latest_tenure_record(db, transporter_id)
+    if not rec or rec.lifetime_routes is None:
+        return None
+    from datetime import date as _date
+    try:
+        as_of_date = _date.fromisocalendar(rec.year, rec.week, 5)   # ISO weekday 5 = Friday
+    except ValueError:
+        return None
+    return {"baseline_routes": rec.lifetime_routes, "baseline_as_of": as_of_date, "tenure_status": rec.tenure_status}
+
+
+def get_estimated_lifetime_routes(db: Session, transporter_id: str, driver_name: str) -> Optional[dict]:
+    """baseline_routes + every day since the baseline we have a real
+    DailyRouteAssignment for this driver (by transporter_id OR
+    driver_name -- DOP/Route Sheet doesn't always carry transporter_id
+    cleanly, confirmed 2026-08-05, so driver_name is a necessary
+    fallback, not a redundant check). One route == one route-day,
+    matching how this whole report already counts them. None if there's
+    no baseline to start counting from at all."""
+    baseline = get_route_count_baseline(db, transporter_id)
+    if not baseline:
+        return None
+
+    routes_since = (
+        db.query(DailyRouteAssignment.assignment_date)
+        .filter(
+            DailyRouteAssignment.assignment_date > baseline["baseline_as_of"],
+            (DailyRouteAssignment.transporter_id == transporter_id) | (DailyRouteAssignment.driver_name == driver_name),
+        )
+        .distinct()
+        .count()
+    )
+    estimated = baseline["baseline_routes"] + routes_since
+    return {
+        "baseline_routes": baseline["baseline_routes"],
+        "baseline_as_of": baseline["baseline_as_of"].isoformat(),
+        "routes_since_baseline": routes_since,
+        "estimated_lifetime_routes": estimated,
+        "tenure_status": baseline["tenure_status"],
+        "tenure_phase": get_tenure_phase(estimated),
+    }
+
+
 def compute_driver_scores(db: Session) -> list[dict]:
     """Overall/Safety/Quality/Attendance percentages + color + eligibility
     for every driver in the most recently ingested quality snapshot."""
@@ -458,6 +519,18 @@ def get_driver_breakdown(driver_name: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail=f"No quality data found for {driver_name}")
     highlights = get_driver_metric_highlights(driver_name, db)
     return {**match, **highlights}
+
+
+@router.get("/route-count/{transporter_id}")
+def get_route_count(transporter_id: str, driver_name: str = "", db: Session = Depends(get_db)):
+    """Real-time lifetime-route estimate for one driver -- Amazon's last-
+    reported baseline plus our own count of route-days assigned since
+    then. 404 if this driver has never appeared in a Tenured Workforce
+    report at all (no baseline to count from)."""
+    estimate = get_estimated_lifetime_routes(db, transporter_id, driver_name)
+    if not estimate:
+        raise HTTPException(status_code=404, detail=f"No Tenured Workforce baseline found for transporter_id {transporter_id}")
+    return {"transporter_id": transporter_id, "driver_name": driver_name, **estimate}
 
 
 @router.get("/training-videos")

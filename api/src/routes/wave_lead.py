@@ -37,7 +37,7 @@ from sqlalchemy.orm import Session
 from api.src.database import (
     get_db, DriverRosterEntry, DriverScheduleEntry, DailyRouteAssignment,
     WaveLeadRole, WaveTeam, WaveTeamMembership,
-    WaveRosterSuggestion, WaveRosterDiscrepancy,
+    WaveRosterSuggestion, WaveRosterDiscrepancy, EodSurveyResponse,
     get_reminder_state, set_reminder_state,
 )
 from api.src.authorization import require_any_role
@@ -780,6 +780,181 @@ def send_wave_competition_standings(db: Session, force: bool = False) -> dict:
 def trigger_standings(force: bool = True, db: Session = Depends(get_db)):
     """Manual trigger for testing/recovery — same function the morning loop calls."""
     return send_wave_competition_standings(db, force=force)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Wave Leads channel + day/week standings -- added 2026-08-05 per explicit
+# request ("send a similar summary to every wave leads along with their
+# teams ranking for the day/week as compared to the other waves"). The
+# actual per-wave daily lead assignment doesn't exist yet (confirmed:
+# waves 1-4 currently only resolve to the 2 roving Senior Wave Leads, not
+# 4 distinct people) -- explicit direction was to stand up the channel
+# and this messaging now, and invite the real leads once populated via
+# the Wave Lead Admin page.
+# ─────────────────────────────────────────────────────────────────────────────
+
+WAVE_LEADS_CHANNEL_NAME = "nday-wave-leads"
+
+
+def get_wave_day_standings(db: Session, today: date) -> list[dict]:
+    """Today's EOD-survey completion rate per wave (1-4 only, Wave 5 has
+    no team concept and never gets a WaveTeam row at all) -- a same-day
+    complement to get_team_standings()'s weekly quality-score ranking.
+    Groups by each scheduled driver's STANDING team (WaveTeamMembership),
+    not the assignment's wave-time string, since "wave number" is a
+    roster/team concept, not a clock time."""
+    from api.src.driver_identity import resolve_roster_id
+
+    assignments = db.query(DailyRouteAssignment).filter(DailyRouteAssignment.assignment_date == today).all()
+    if not assignments:
+        return []
+    submitted_names = {
+        r.driver_name.lower() for r in db.query(EodSurveyResponse).filter(EodSurveyResponse.survey_date == today).all()
+    }
+
+    roster_id_by_driver: dict[str, int] = {}
+    for a in assignments:
+        rid = a.roster_id or resolve_roster_id(a.driver_name, db)
+        if rid:
+            roster_id_by_driver[a.driver_name] = rid
+
+    roster_ids = list(roster_id_by_driver.values())
+    team_id_by_roster: dict[int, int] = {
+        m.roster_id: m.team_id
+        for m in db.query(WaveTeamMembership).filter(WaveTeamMembership.roster_id.in_(roster_ids)).all()
+    } if roster_ids else {}
+    wave_number_by_team: dict[int, int] = {t.id: t.wave_number for t in db.query(WaveTeam).all()}
+
+    totals: dict[int, dict] = {w: {"scheduled": 0, "completed": 0} for w in WAVE_NUMBERS}
+    for a in assignments:
+        rid = roster_id_by_driver.get(a.driver_name)
+        team_id = team_id_by_roster.get(rid) if rid else None
+        wave_number = wave_number_by_team.get(team_id) if team_id else None
+        if wave_number is None:
+            continue   # driver not on a standing team yet -- can't attribute to a wave
+        totals[wave_number]["scheduled"] += 1
+        if a.driver_name.lower() in submitted_names:
+            totals[wave_number]["completed"] += 1
+
+    standings = []
+    for wave_number, counts in totals.items():
+        pct = round(100 * counts["completed"] / counts["scheduled"], 1) if counts["scheduled"] else None
+        standings.append({
+            "wave_number": wave_number,
+            "scheduled": counts["scheduled"],
+            "completed": counts["completed"],
+            "eod_pct": pct,
+        })
+    standings.sort(key=lambda w: (w["eod_pct"] is None, -(w["eod_pct"] or 0)))
+    for i, w in enumerate(standings):
+        w["rank"] = i + 1
+    return standings
+
+
+def _wave_leads_message_text(db: Session, today: date) -> str:
+    date_str = today.strftime("%A, %B ") + str(today.day)
+    day_standings = get_wave_day_standings(db, today)
+    week_standings = [t for t in get_team_standings(db) if t["wave_number"] != WAVE_5]
+
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+    lines = [f"🌊 *Wave Standings — {date_str}*", ""]
+
+    lines.append("*Today — EOD survey completion by wave*")
+    if not day_standings or all(d["scheduled"] == 0 for d in day_standings):
+        lines.append("_No scheduled drivers found for today yet._")
+    else:
+        for d in day_standings:
+            medal = medals.get(d["rank"], f"{d['rank']}.")
+            pct = f"{d['eod_pct']}%" if d["eod_pct"] is not None else "—"
+            lines.append(f"{medal} Wave {d['wave_number']} — {pct} ({d['completed']}/{d['scheduled']} drivers)")
+
+    lines.append("")
+    lines.append("*This week — team quality score*")
+    scored_week = [t for t in week_standings if t["avg_score"] is not None]
+    if not scored_week:
+        lines.append("_No scored teams yet (need drivers assigned + quality data ingested)._")
+    else:
+        for t in week_standings:
+            if t["avg_score"] is None:
+                continue
+            medal = medals.get(t["rank"], f"{t['rank']}.")
+            lines.append(f"{medal} *{t['team_label']}* — {t['avg_score']} avg ({t['scored_member_count']}/{t['member_count']} drivers scored)")
+
+    return "\n".join(lines)
+
+
+@router.post("/wave-leads-channel/create")
+def create_wave_leads_channel(db: Session = Depends(get_db)):
+    """Creates (or reuses) #nday-wave-leads and posts today's standings as
+    a first test message. Doesn't invite anyone yet -- the real per-wave
+    daily leads aren't populated; add them via Slack once assigned in
+    Wave Lead Admin."""
+    token = os.getenv("SLACK_BOT_TOKEN")
+    if not token:
+        raise HTTPException(status_code=503, detail="SLACK_BOT_TOKEN is not configured")
+    from slack_sdk import WebClient
+    client = WebClient(token=token)
+
+    try:
+        resp = client.conversations_create(name=WAVE_LEADS_CHANNEL_NAME, is_private=False)
+        channel_id = resp["channel"]["id"]
+    except Exception as exc:
+        if "name_taken" in str(exc):
+            channel_id = None
+            cursor = None
+            while True:
+                listing = client.conversations_list(types="public_channel", limit=200, cursor=cursor)
+                channel_id = next((c["id"] for c in listing["channels"] if c["name"] == WAVE_LEADS_CHANNEL_NAME), None)
+                if channel_id:
+                    break
+                cursor = listing.get("response_metadata", {}).get("next_cursor") or None
+                if not cursor:
+                    break
+            if not channel_id:
+                raise HTTPException(status_code=502, detail=f"Channel exists but could not be found: {exc}")
+        else:
+            raise HTTPException(status_code=502, detail=f"Channel creation failed: {exc}")
+
+    today = date.today()
+    text = _wave_leads_message_text(db, today)
+    try:
+        client.chat_postMessage(channel=channel_id, text=text)
+    except Exception as exc:
+        return {"status": "channel_created_but_post_failed", "channel_id": channel_id, "detail": str(exc)}
+
+    return {"status": "created", "channel_name": WAVE_LEADS_CHANNEL_NAME, "channel_id": channel_id}
+
+
+@router.post("/wave-leads-channel/send-standings")
+def send_wave_leads_standings(db: Session = Depends(get_db)):
+    """Post today's standings to the existing #nday-wave-leads channel
+    (does not create it -- use /wave-leads-channel/create first)."""
+    token = os.getenv("SLACK_BOT_TOKEN")
+    if not token:
+        raise HTTPException(status_code=503, detail="SLACK_BOT_TOKEN is not configured")
+    from slack_sdk import WebClient
+    client = WebClient(token=token)
+
+    cursor = None
+    channel_id = None
+    while True:
+        listing = client.conversations_list(types="public_channel", limit=200, cursor=cursor)
+        channel_id = next((c["id"] for c in listing["channels"] if c["name"] == WAVE_LEADS_CHANNEL_NAME), None)
+        if channel_id:
+            break
+        cursor = listing.get("response_metadata", {}).get("next_cursor") or None
+        if not cursor:
+            break
+    if not channel_id:
+        raise HTTPException(status_code=404, detail=f"#{WAVE_LEADS_CHANNEL_NAME} not found -- create it first.")
+
+    today = date.today()
+    text = _wave_leads_message_text(db, today)
+    try:
+        client.chat_postMessage(channel=channel_id, text=text)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {"status": "sent", "channel_id": channel_id}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

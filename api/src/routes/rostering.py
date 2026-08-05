@@ -44,6 +44,7 @@ from api.src.database import (
     CortexSnapshot,
     SlackIngestLog,
     RtsDebrief,
+    EodSurveyResponse,
     get_reminder_state,
     set_reminder_state,
 )
@@ -3089,6 +3090,46 @@ def get_shift_dm_status(shift_date: str, db: Session = Depends(get_db)):
             for r in records
         ],
     }
+
+
+@router.get("/roll-call/{shift_date}")
+def get_roll_call(shift_date: str, db: Session = Depends(get_db)):
+    """Per-driver status across the day's sequential checkpoints --
+    Acknowledged (schedule_acked_at, from the night before) -> Arrived
+    (arrived_at) -> RTS (RtsDebrief) -> EOD (EodSurveyResponse) -- added
+    2026-08-05 for a single roll-call view, one row per driver."""
+    try:
+        target = date.fromisoformat(shift_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="shift_date must be YYYY-MM-DD")
+
+    assignments = db.query(DailyRouteAssignment).filter(DailyRouteAssignment.assignment_date == target).all()
+    driver_names = sorted({a.driver_name for a in assignments})
+
+    shift_dms = {r.driver_name: r for r in db.query(DriverShiftDM).filter(DriverShiftDM.shift_date == target).all()}
+    rts_debriefs = {r.driver_name: r for r in db.query(RtsDebrief).filter(RtsDebrief.shift_date == target).all()}
+    eod_responses = {r.driver_name: r for r in db.query(EodSurveyResponse).filter(EodSurveyResponse.survey_date == target).all()}
+
+    rows = []
+    for name in driver_names:
+        dm = shift_dms.get(name)
+        rts = rts_debriefs.get(name)
+        eod = eod_responses.get(name)
+        if rts and rts.completed_at:
+            rts_status, rts_at = "complete", rts.completed_at
+        elif rts and rts.started_at:
+            rts_status, rts_at = "in_progress", rts.started_at
+        else:
+            rts_status, rts_at = "not_started", None
+        rows.append({
+            "driver_name": name,
+            "acknowledged_at": dm.schedule_acked_at.isoformat() if dm and dm.schedule_acked_at else None,
+            "arrived_at": dm.arrived_at.isoformat() if dm and dm.arrived_at else None,
+            "rts_status": rts_status,
+            "rts_at": rts_at.isoformat() if rts_at else None,
+            "eod_at": eod.submitted_at.isoformat() if eod else None,
+        })
+    return {"date": shift_date, "drivers": rows}
 
 
 # ─── Test scaffolding (end-to-end button-interactivity testing) ─────────────

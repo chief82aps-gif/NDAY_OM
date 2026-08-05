@@ -845,19 +845,21 @@ async def debug_publish_home(slack_user_id: str, dry_run: bool = False, db: Sess
 
 
 def run_republish_all_homes(db: Session) -> dict:
-    """Force a fresh views.publish for every actively Slack-linked driver
-    PLUS every #nday-mgt/#nday-hr member (dispatch/HR/owner) -- added
-    2026-07-30, widened 2026-08-05. Root cause: the App Home tab is a
-    static, server-published view -- Slack never refreshes it on its own,
-    only when the app calls views.publish again (normally triggered by
-    the user's own app_home_opened event, i.e. tapping away and back to
-    Home). Anyone whose Home tab was last published under a stale
-    view (or never published at all -- e.g. a brand-new bot identity
-    like Blake) stays stuck on Slack's placeholder until they happen to
+    """Force a fresh views.publish for every real member of the workspace
+    -- added 2026-07-30, widened 2026-08-05 (driver roster + #nday-mgt/
+    #nday-hr), widened again same day to simply cover every member per
+    explicit request ("the refresh button needs to simply refresh all
+    members home pages"). Root cause: the App Home tab is a static,
+    server-published view -- Slack never refreshes it on its own, only
+    when the app calls views.publish again (normally triggered by the
+    user's own app_home_opened event, i.e. tapping away and back to
+    Home). Anyone whose Home tab was last published under a stale view
+    (or never published at all -- e.g. a brand-new bot identity like
+    Blake) stays stuck on Slack's placeholder until they happen to
     reopen the tab. This forces the refresh proactively instead of
-    waiting on that -- originally driver-only, widened after discovering
-    non-driver staff (dispatch/HR/owner) have no other path to a fresh
-    Home tab on a new app install. Safe to re-run any time a gating flag
+    waiting on that. Uses users.list rather than any driver-roster/
+    channel-membership subset so nobody (owner included) can fall
+    outside the covered set. Safe to re-run any time a gating flag
     changes and views need to catch up. Shared by the HTTP endpoint below
     (JWT-gated) and the Dispatch Home Slack button (slack_dispatch_home.py,
     is_dispatch_staff-gated)."""
@@ -865,19 +867,20 @@ def run_republish_all_homes(db: Session) -> dict:
     if not client:
         return {"status": "no_slack_token"}
 
-    driver_ids = {
-        d.slack_member_id: d.payroll_name
-        for d in db.query(DriverRosterEntry)
-        .filter(DriverRosterEntry.is_active == True, DriverRosterEntry.slack_member_id.isnot(None))  # noqa: E712
-        .all()
-    }
-
-    from api.src.routes.document_routing import _live_channel_members
-    staff_ids = _live_channel_members(db, "dispatch") | _live_channel_members(db, "hr")
-
-    all_ids: dict[str, str] = dict(driver_ids)
-    for uid in staff_ids:
-        all_ids.setdefault(uid, "staff")
+    all_ids: dict[str, str] = {}
+    cursor = None
+    try:
+        while True:
+            resp = client.users_list(cursor=cursor, limit=200)
+            for member in resp.get("members", []):
+                if member.get("deleted") or member.get("is_bot") or member.get("id") == "USLACKBOT":
+                    continue
+                all_ids[member["id"]] = member.get("profile", {}).get("real_name") or member.get("name") or member["id"]
+            cursor = (resp.get("response_metadata") or {}).get("next_cursor")
+            if not cursor:
+                break
+    except Exception as exc:
+        return {"status": "error", "error": f"users_list failed: {exc}"}
 
     published = 0
     errors: list[str] = []

@@ -3,7 +3,7 @@ Daily Ops Digest — added 2026-08-04, per explicit request for a single
 end-of-day rollup of "every event required to act on": crashes,
 injuries, callouts, packages delivered/route progress, vans grounded.
 Formatted by type (HR / Operational / Fleet) as ONE report, sent
-identically to #nday-mgt, #nday-fleet, and #nday-hr at 8:00 PM Pacific.
+identically to #nday-mgt, #nday-fleet, and #nday-hr at 10:00 PM Pacific.
 
 Distinct from eod_survey.py's existing send_daily_eod_category_digests()
 (gated off by EOD_CATEGORY_DIGEST_ACTIVE, fires ~22:15 PT): that digest
@@ -43,7 +43,7 @@ MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")     # #nday-mgt
 FLEET_CHANNEL = os.getenv("SLACK_FLEET_CHANNEL", "C0BJ8J5LGAU")  # #nday-fleet
 HR_CHANNEL = os.getenv("SLACK_HR_CHANNEL", "C0BLRE793L0")        # #nday-hr
 
-DIGEST_HOUR = 20   # 8:00 PM Pacific
+DIGEST_HOUR = 22   # 10:00 PM Pacific
 _STATE_KEY = "ops_daily_digest"
 
 
@@ -82,7 +82,7 @@ def _grounded_van_lines(db: Session) -> list[str]:
 def _route_progress(db: Session, today: date) -> Optional[dict]:
     """Latest-snapshot-per-route totals for today, from CortexSnapshot's
     intraday progress data -- not daily_quality.py's file, which releases
-    30-48h after delivery and won't have today's figures yet at 8 PM."""
+    30-48h after delivery and won't have today's figures yet at 10 PM."""
     latest_subq = (
         db.query(CortexSnapshot.route_code, func.max(CortexSnapshot.snapshot_at).label("latest_at"))
         .filter(CortexSnapshot.route_date == today)
@@ -160,7 +160,7 @@ def _send_digest(db: Session, today: date) -> None:
 
 def run_daily_ops_digest(db: Session, force: bool = False) -> dict:
     """Called every 60s from main.py's background loop. Fires once daily
-    at/after 8:00 PM Pacific, dedup'd per day via ReminderThrottleState."""
+    at/after 10:00 PM Pacific, dedup'd per day via ReminderThrottleState."""
     now = datetime.now(PT)
     today = now.date()
 

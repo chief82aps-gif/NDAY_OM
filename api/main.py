@@ -354,7 +354,7 @@ async def _ops_cadence_loop():
 
 async def _ops_daily_digest_loop():
     """Every 60 s — delegates to ops_daily_digest.run_daily_ops_digest(),
-    which no-ops outside the 20:00+ Pacific window and respects an
+    which no-ops outside the 22:00+ Pacific window and respects an
     "already sent today" guard. Always on, no feature flag (matches
     mgt_reminders.py's pattern, not eod_survey.py's flag-gated one)."""
     while True:

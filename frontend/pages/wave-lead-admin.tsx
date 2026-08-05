@@ -46,6 +46,14 @@ interface TeamSuggestion {
   matches_current: boolean;
 }
 
+function authHeaders(): Record<string, string> {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
 function resolveApi(): string {
   if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
   if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
@@ -70,10 +78,10 @@ export default function WaveLeadAdminPage() {
   const [drivers, setDrivers] = useState<RosterDriver[]>([]);
   const [teams, setTeams] = useState<TeamStanding[]>([]);
   const [members, setMembers] = useState<Record<number, TeamMember[]>>({});
-  const [wave5Leads, setWave5Leads] = useState<{ id: number; roster_id: number; payroll_name: string }[]>([]);
+  const [wave5Leads, setWave5Leads] = useState<{ id: number; roster_id: number; payroll_name: string; half: string | null }[]>([]);
   const [seniorLeads, setSeniorLeads] = useState<WaveLeadRole[]>([]);
   const [selectedDriver, setSelectedDriver] = useState<Record<number, string>>({});
-  const [leadDriver, setLeadDriver] = useState<Record<number, string>>({});
+  const [wave5LeadDriver, setWave5LeadDriver] = useState<Record<string, string>>({});
   const [seniorLeadDriver, setSeniorLeadDriver] = useState<Record<string, string>>({});
   const [status, setStatus] = useState('');
   const [suggestions, setSuggestions] = useState<TeamSuggestion[] | null>(null);
@@ -93,7 +101,10 @@ export default function WaveLeadAdminPage() {
       setDrivers(driversData.drivers ?? []);
       setTeams(teamsData.teams ?? []);
       setWave5Leads((rolesData.roles ?? []).filter((r: WaveLeadRole) => r.wave_number === 5));
-      setSeniorLeads((rolesData.roles ?? []).filter((r: WaveLeadRole) => !!r.half));
+      // Senior Wave Lead rows have wave_number NULL -- Wave 5 leads now
+      // also carry `half` (added 2026-08-05), so half alone no longer
+      // distinguishes the two; wave_number does.
+      setSeniorLeads((rolesData.roles ?? []).filter((r: WaveLeadRole) => !!r.half && r.wave_number == null));
 
       const memberEntries = await Promise.all(
         (teamsData.teams ?? []).map((t: TeamStanding) =>
@@ -119,7 +130,7 @@ export default function WaveLeadAdminPage() {
     try {
       const res = await fetch(`${api}/wave-lead/teams/assign`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ roster_id: parseInt(rosterId, 10), team_id: teamId, assigned_by: user?.username ?? 'dispatch' }),
       });
       if (res.ok) { setStatus('Assigned.'); await loadAll(); } else { setStatus('Failed to assign.'); }
@@ -129,20 +140,20 @@ export default function WaveLeadAdminPage() {
   const removeFromTeam = async (rosterId: number) => {
     setStatus('Removing...');
     try {
-      const res = await fetch(`${api}/wave-lead/teams/members/${rosterId}`, { method: 'DELETE' });
+      const res = await fetch(`${api}/wave-lead/teams/members/${rosterId}`, { method: 'DELETE', headers: authHeaders() });
       if (res.ok) { setStatus('Removed.'); await loadAll(); } else { setStatus('Failed to remove.'); }
     } catch { setStatus('Network error.'); }
   };
 
-  const assignLead = async (waveNumber: number) => {
-    const rosterId = leadDriver[waveNumber];
+  const assignLead = async (waveNumber: number, half: 'front' | 'back') => {
+    const rosterId = wave5LeadDriver[half];
     if (!rosterId) return;
     setStatus('Saving...');
     try {
       const res = await fetch(`${api}/wave-lead/roles/assign`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ wave_number: waveNumber, roster_id: parseInt(rosterId, 10), assigned_by: user?.username ?? 'dispatch' }),
+        headers: authHeaders(),
+        body: JSON.stringify({ wave_number: waveNumber, half, roster_id: parseInt(rosterId, 10), assigned_by: user?.username ?? 'dispatch' }),
       });
       if (res.ok) { setStatus('Lead assigned.'); await loadAll(); } else { setStatus('Failed to assign lead.'); }
     } catch { setStatus('Network error.'); }
@@ -155,7 +166,7 @@ export default function WaveLeadAdminPage() {
     try {
       const res = await fetch(`${api}/wave-lead/senior/assign`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ half, roster_id: parseInt(rosterId, 10), assigned_by: user?.username ?? 'dispatch' }),
       });
       if (res.ok) { setStatus('Senior Wave Lead assigned.'); await loadAll(); } else { setStatus('Failed to assign lead.'); }
@@ -165,7 +176,7 @@ export default function WaveLeadAdminPage() {
   const deactivateLead = async (roleId: number) => {
     setStatus('Removing lead...');
     try {
-      const res = await fetch(`${api}/wave-lead/roles/${roleId}`, { method: 'DELETE' });
+      const res = await fetch(`${api}/wave-lead/roles/${roleId}`, { method: 'DELETE', headers: authHeaders() });
       if (res.ok) { setStatus('Lead removed.'); await loadAll(); } else { setStatus('Failed to remove lead.'); }
     } catch { setStatus('Network error.'); }
   };
@@ -186,7 +197,7 @@ export default function WaveLeadAdminPage() {
     try {
       const res = await fetch(`${api}/wave-lead/teams/assign`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ roster_id: s.roster_id, team_id: s.suggested_team_id, assigned_by: user?.username ?? 'dispatch' }),
       });
       if (res.ok) {
@@ -201,6 +212,13 @@ export default function WaveLeadAdminPage() {
   for (const t of teams) {
     if (!teamsByWave[t.wave_number]) teamsByWave[t.wave_number] = [];
     teamsByWave[t.wave_number].push(t);
+  }
+  // Front Half always renders in the left column, Back Half always right —
+  // whatever order the API returns teams in shouldn't determine this
+  // (it doesn't match the Senior Wave Lead grid above, which hardcodes
+  // front-then-back). Fixed 2026-08-05.
+  for (const waveNumber of Object.keys(teamsByWave)) {
+    teamsByWave[Number(waveNumber)].sort((a, b) => (a.half === 'front' ? 0 : 1) - (b.half === 'front' ? 0 : 1));
   }
 
   return (
@@ -298,21 +316,36 @@ export default function WaveLeadAdminPage() {
             </div>
           </div>
 
-          {/* Wave 5 — 4x4 truck */}
+          {/* Wave 5 — 4x4 truck, one lead per half (added 2026-08-05) */}
           <div style={s.card}>
             <h2 style={{ fontSize: 15, margin: '0 0 10px' }}>🚚 Wave 5 — 4x4 Truck (independent, no team)</h2>
-            {wave5Leads.map(l => (
-              <div key={l.id} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                <span>{l.payroll_name}</span>
-                <button style={s.btnDanger} onClick={() => deactivateLead(l.id)}>Remove</button>
-              </div>
-            ))}
-            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-              <select style={s.select} value={leadDriver[5] ?? ''} onChange={e => setLeadDriver(p => ({ ...p, 5: e.target.value }))}>
-                <option value="">— select driver —</option>
-                {drivers.map(d => <option key={d.id} value={d.id}>{d.payroll_name}</option>)}
-              </select>
-              <button style={s.btn} onClick={() => assignLead(5)}>Add Wave 5 Lead</button>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+              {(['front', 'back'] as const).map(half => {
+                const lead = wave5Leads.find(l => l.half === half);
+                return (
+                  <div key={half}>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>{half === 'front' ? 'Front Half' : 'Back Half'}</div>
+                    {lead ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span>{lead.payroll_name}</span>
+                        <button style={s.btnDanger} onClick={() => deactivateLead(lead.id)}>Remove</button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <select
+                          style={{ ...s.select, flex: 1 }}
+                          value={wave5LeadDriver[half] ?? ''}
+                          onChange={e => setWave5LeadDriver(p => ({ ...p, [half]: e.target.value }))}
+                        >
+                          <option value="">— select driver —</option>
+                          {drivers.map(d => <option key={d.id} value={d.id}>{d.payroll_name}</option>)}
+                        </select>
+                        <button style={s.btn} onClick={() => assignLead(5, half)}>Assign</button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
 

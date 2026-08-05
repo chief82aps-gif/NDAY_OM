@@ -616,6 +616,7 @@ def remove_team_member(
 class AssignWaveLeadRequest(BaseModel):
     wave_number: int
     roster_id: int
+    half: Optional[str] = None   # "front" | "back" -- required for Wave 5, added 2026-08-05
     assigned_by: Optional[str] = None
 
 
@@ -625,28 +626,42 @@ def assign_wave_lead(
     db: Session = Depends(get_db),
     caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager", "owner")),
 ):
-    """Wave 5 (the 4x4 truck) only — its two independent leads. Waves 1-4
-    no longer have a per-wave standing lead (removed 2026-07-29, never a
-    real feature); use POST /wave-lead/senior/assign for the Senior Wave
-    Lead instead."""
+    """Wave 5 (the 4x4 truck) only — its two independent leads, one per
+    half (Front Half / Back Half), same shape as the Senior Wave Lead --
+    added 2026-08-05 per explicit request ("wave lead 5 needs both FH and
+    BH"); previously just two unlabeled leads with no half distinction.
+    Waves 1-4 no longer have a per-wave standing lead (removed
+    2026-07-29, never a real feature); use POST /wave-lead/senior/assign
+    for the Senior Wave Lead instead."""
     if payload.wave_number != WAVE_5:
         raise HTTPException(
             400,
             "Standing per-wave leads only apply to Wave 5 (the 4x4 truck). "
             "Waves 1-4 use the Senior Wave Lead — see POST /wave-lead/senior/assign.",
         )
+    if payload.half not in HALVES:
+        raise HTTPException(400, "half must be 'front' or 'back'")
     entry = db.query(DriverRosterEntry).filter(DriverRosterEntry.id == payload.roster_id).first()
     if not entry:
         raise HTTPException(404, f"Driver {payload.roster_id} not found")
 
-    # Wave 5 allows two concurrent active leads (the two 4x4 truck leads).
+    # One active lead per half, same replace-on-reassign behavior as
+    # assign_senior_wave_lead() -- not an unbounded list anymore.
+    existing = (
+        db.query(WaveLeadRole)
+        .filter(WaveLeadRole.wave_number == WAVE_5, WaveLeadRole.half == payload.half, WaveLeadRole.active == True)  # noqa: E712
+        .all()
+    )
+    for role in existing:
+        role.active = False
+
     role = WaveLeadRole(
-        wave_number=payload.wave_number, roster_id=payload.roster_id, assigned_by=payload.assigned_by,
+        wave_number=payload.wave_number, half=payload.half, roster_id=payload.roster_id, assigned_by=payload.assigned_by,
     )
     db.add(role)
     db.commit()
     db.refresh(role)
-    return {"status": "assigned", "role_id": role.id, "wave_number": payload.wave_number, "roster_id": payload.roster_id}
+    return {"status": "assigned", "role_id": role.id, "wave_number": payload.wave_number, "half": payload.half, "roster_id": payload.roster_id}
 
 
 class AssignSeniorWaveLeadRequest(BaseModel):

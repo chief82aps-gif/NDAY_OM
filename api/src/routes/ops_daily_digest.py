@@ -315,9 +315,10 @@ def manual_check(force: bool = False, db: Session = Depends(get_db)):
 
 
 @router.get("/preview")
-def preview(db: Session = Depends(get_db)):
-    """See today's digest text without sending it."""
-    today = datetime.now(PT).date()
+def preview(for_date: Optional[str] = None, db: Session = Depends(get_db)):
+    """See a given date's digest text without sending it. Defaults to
+    today; pass for_date=YYYY-MM-DD to preview a past day's data."""
+    today = date.fromisoformat(for_date) if for_date else datetime.now(PT).date()
     return {"date": today.isoformat(), "text": build_digest_text(db, today)}
 
 

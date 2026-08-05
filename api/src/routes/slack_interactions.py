@@ -731,6 +731,31 @@ async def slack_events(request: Request, background_tasks: BackgroundTasks):
         if is_dm_reply:
             background_tasks.add_task(_relay_driver_dm_reply, event["user"], event["text"].strip())
 
+        # Home tab open -- added 2026-08-05. slack_home.py registers its
+        # OWN "/events" handler for this (same intent, same Request URL
+        # path "/slack/events"), but FastAPI only ever dispatches a path
+        # to the FIRST router it was registered under in main.py
+        # (slack_interactions.router, included before slack_home.router)
+        # -- so slack_home.py's app_home_opened handler has been silently
+        # unreachable dead code the whole time, for both the old app and
+        # Blake. Discovered when a freshly-installed app's Home tab
+        # stayed on Slack's generic placeholder for anyone not covered by
+        # the separate driver-roster "republish all homes" batch job.
+        # Calling slack_home.py's publish function directly here instead
+        # of duplicating its view-building logic.
+        if event.get("type") == "app_home_opened" and event.get("tab") == "home":
+            from api.src.database import SessionLocal
+            from api.src.routes.slack_home import _publish_home
+
+            def _publish_home_task(slack_user_id: str) -> None:
+                db = SessionLocal()
+                try:
+                    _publish_home(slack_user_id, db)
+                finally:
+                    db.close()
+
+            background_tasks.add_task(_publish_home_task, event.get("user", ""))
+
     # Slack requires a 200 response within 3 seconds
     return {"ok": True}
 

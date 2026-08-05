@@ -531,7 +531,7 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
         try:
             from api.src.orchestrator import orchestrator
             from api.src.database import Cortex, ensure_cortex_driver_name_column
-            from api.src.routes.uploads import _infer_file_date
+            from api.src.routes.daily_notify import _infer_file_date
             orchestrator.ingest_cortex(tmp_path)
             ensure_cortex_driver_name_column()
             upload_date = _infer_file_date(job.file_name) or datetime.utcnow().date()
@@ -575,7 +575,7 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
         try:
             from api.src.orchestrator import orchestrator
             from api.src.database import DOP
-            from api.src.routes.uploads import _infer_file_date
+            from api.src.routes.daily_notify import _infer_file_date
             orchestrator.ingest_dop(tmp_path)
             upload_date = _infer_file_date(job.file_name) or datetime.utcnow().date()
             # Append-only — see matching comment in the Cortex branch above.

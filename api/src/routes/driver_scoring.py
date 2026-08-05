@@ -245,6 +245,49 @@ def tier_for(score: Optional[float]) -> str:
     return "does_not_meet"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# New-driver tenure phase -- added 2026-08-05, per explicit direction:
+# "he is nursery... first route is the ORE, first four solo routes are
+# NL1, second set of four is NL2, final set of four is NL3, next
+# milestone is tenured at 30 routes... hit heavy on the uplifting
+# comments in the NL and non-tenured phase." Distinct from
+# ROUTE_ELIGIBILITY_THRESHOLD above (a trailing-6-week count for ranking
+# eligibility) -- this is about LIFETIME route count and where a driver
+# sits in their onboarding arc, used to soften/boost tone in driver-
+# facing messages (driver_progress_dm.py, coaching_notifications.py),
+# not for any scoring/eligibility gate.
+# ─────────────────────────────────────────────────────────────────────────────
+
+TENURE_PHASE_TENURED_AT_ROUTES = 30
+
+
+def get_tenure_phase(lifetime_routes: Optional[int]) -> Optional[str]:
+    """None if lifetime_routes itself is unknown (never appeared in a
+    Tenured Workforce report yet -- e.g. brand new, file not run since
+    hire). Otherwise one of: ORE, NL1, NL2, NL3, pre_tenured, tenured."""
+    if lifetime_routes is None:
+        return None
+    if lifetime_routes <= 1:
+        return "ORE"
+    if lifetime_routes <= 5:
+        return "NL1"
+    if lifetime_routes <= 9:
+        return "NL2"
+    if lifetime_routes <= 13:
+        return "NL3"
+    if lifetime_routes < TENURE_PHASE_TENURED_AT_ROUTES:
+        return "pre_tenured"
+    return "tenured"
+
+
+def is_non_tenured_phase(phase: Optional[str]) -> bool:
+    """True for ORE/NL1/NL2/NL3/pre_tenured -- everything before the
+    30-route tenured milestone. False for "tenured". None (unknown
+    lifetime_routes) is treated as False -- absence of data isn't a
+    signal to over-encourage, just an unknown."""
+    return phase is not None and phase != "tenured"
+
+
 def compute_driver_scores(db: Session) -> list[dict]:
     """Overall/Safety/Quality/Attendance percentages + color + eligibility
     for every driver in the most recently ingested quality snapshot."""

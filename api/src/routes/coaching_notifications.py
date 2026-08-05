@@ -294,11 +294,30 @@ def build_driver_stage_message(notification: CoachingNotification, db: Session) 
     behavior_display = notification.behavior.title() if notification.behavior else "a delivery behavior"
     tip_line = f"_{notification.coaching_tip}_\n\n" if notification.coaching_tip else ""
 
+    # Nursery/non-tenured phase gets extra-reassuring framing -- per
+    # explicit direction ("hit heavy on the uplifting comments in the NL
+    # and non-tenured phase"), same tenure lookup driver_progress_dm.py
+    # uses. A coaching tip this early is expected, not a red flag.
+    nursery_line = ""
+    if notification.transporter_id:
+        from api.src.database import get_latest_tenure_record
+        from api.src.routes.driver_scoring import get_tenure_phase, is_non_tenured_phase
+        tenure_rec = get_latest_tenure_record(db, notification.transporter_id)
+        if tenure_rec:
+            phase = get_tenure_phase(tenure_rec.lifetime_routes)
+            if is_non_tenured_phase(phase):
+                nursery_line = (
+                    "\n\nAnd hey — you're still early in your NDAY journey, so getting a coaching tip like this "
+                    "right now is totally normal and expected, not a red flag. This is exactly how everyone learns "
+                    "the ropes. Keep it up!"
+                )
+
     return (
         f":wave: Hey {first} — quick heads up, nothing to stress about.\n\n"
         f"Amazon flagged one of your deliveries this week: *{behavior_display}*.\n\n"
         f"{tip_line}"
-        f"{video_line}\n\n"
+        f"{video_line}"
+        f"{nursery_line}\n\n"
         "Just tap Acknowledge below so we know you saw it — that's all this needs from you."
     )
 

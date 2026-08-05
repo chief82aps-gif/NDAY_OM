@@ -97,6 +97,18 @@ def build_progress_stats(driver_name: str, target_date: date, db: Session) -> Op
         if time_fraction > 0:
             pace_ratio = round((pct / 100) / time_fraction, 2)
 
+    # Tenure phase (ORE/NL1/NL2/NL3/pre_tenured/tenured) -- per explicit
+    # direction to boost encouragement for still-learning drivers. None
+    # if this driver has no transporter_id on file or never appeared in
+    # a Tenured Workforce report yet.
+    tenure_phase = None
+    if assignment.transporter_id:
+        from api.src.database import get_latest_tenure_record
+        from api.src.routes.driver_scoring import get_tenure_phase
+        tenure_rec = get_latest_tenure_record(db, assignment.transporter_id)
+        if tenure_rec:
+            tenure_phase = get_tenure_phase(tenure_rec.lifetime_routes)
+
     return {
         "driver_name": driver_name,
         "date": target_date.isoformat(),
@@ -108,6 +120,7 @@ def build_progress_stats(driver_name: str, target_date: date, db: Session) -> Op
         "planned_duration_minutes": planned_duration,
         "time_remaining_minutes": round(time_remaining_minutes) if time_remaining_minutes is not None else None,
         "pace_ratio": pace_ratio,
+        "tenure_phase": tenure_phase,
         "van_number": assignment.van_number,
         "wave": assignment.wave,
     }
@@ -144,7 +157,13 @@ def _fmt_minutes(m: Optional[int]) -> str:
 
 
 _VERY_FAR_AHEAD_PACE_RATIO = 1.5   # completing ~50%+ faster than the plan implies
+_FAR_BEHIND_PACE_RATIO = 0.9       # more than 10% behind (% complete vs. % of planned time used) -- explicit threshold, "very problematic"
 _SAFETY_QUALITY_NUDGE_THRESHOLD = 90.0   # only nudge if there's real room to improve
+
+_HELP_CHECK_IN_LINES = [
+    "😟 Hey, looks like today's a tough one — you're more than 10% behind where the plan expects. Everything okay out there? Just reply here if you need a hand, or flag your wave lead — no judgment, we just want to help.",
+    "🤝 Noticed you're running well behind pace today. If something's slowing you down (van issue, tough stops, anything), reply right here and we'll get you support — that's what we're for.",
+]
 
 
 def _safety_quality_nudge_line(driver_name: str, db: Session) -> str:
@@ -170,13 +189,32 @@ def _safety_quality_nudge_line(driver_name: str, db: Session) -> str:
     return f"\n\n💡 One thing worth a look: your {topic} score has some room to grow. A great pace paired with strong safety and quality is the real win — don't let the speed come at the cost of either."
 
 
+_NURSERY_ENCOURAGEMENT = {
+    "ORE": "🌱 You're right at the very start of your NDAY journey (Orientation Route) — every stop today is real experience. We're proud of you for jumping in!",
+    "NL1": "🌱 Nursery Level 1 — still early days, and you're doing awesome. Every route from here makes you sharper.",
+    "NL2": "🌿 Nursery Level 2 already — look at that progress! Keep building on what you've learned.",
+    "NL3": "🌳 Nursery Level 3 — you're almost through the nursery phase entirely. So much growth already!",
+    "pre_tenured": "🚀 You're on the home stretch toward Tenured status — keep this momentum going, you're almost there!",
+}
+
+
 def build_progress_message_text(stats: dict, db: Optional[Session] = None) -> str:
     pct = stats["pct_complete"]
     pace = stats.get("pace_ratio")
     very_far_ahead = pace is not None and pace >= _VERY_FAR_AHEAD_PACE_RATIO
+    phase = stats.get("tenure_phase")
+    from api.src.routes.driver_scoring import is_non_tenured_phase
+    is_nursery = is_non_tenured_phase(phase)
 
+    far_behind = pace is not None and pace < _FAR_BEHIND_PACE_RATIO
     if very_far_ahead:
         opener = "🏆 Whoa — you're way ahead of pace today, awesome work!"
+    elif far_behind:
+        # Pace, not raw %-complete, drives the opener here -- a driver
+        # can be at a "decent" completion % and still be genuinely far
+        # behind where the plan expects them, and the tone needs to
+        # match the concern in the check-in line below, not clash with it.
+        opener = random.choice(_OPENERS_EARLY_OR_BEHIND)
     elif pct is not None and pct >= 85:
         opener = random.choice(_OPENERS_STRONG)
     elif pct is not None and pct >= 50:
@@ -185,6 +223,13 @@ def build_progress_message_text(stats: dict, db: Optional[Session] = None) -> st
         opener = random.choice(_OPENERS_EARLY_OR_BEHIND)
 
     lines = [opener, ""]
+
+    # Heavy on the encouragement for still-learning drivers, per explicit
+    # direction ("hit heavy on the uplifting comments in the NL and
+    # non-tenured phase") -- placed right up front, not buried at the end.
+    if is_nursery and phase in _NURSERY_ENCOURAGEMENT:
+        lines.append(_NURSERY_ENCOURAGEMENT[phase])
+        lines.append("")
     if stats["total_packages"] and stats["delivered_so_far"] is not None:
         pct_str = f" ({pct}%)" if pct is not None else ""
         lines.append(f"📦 {stats['delivered_so_far']}/{stats['total_packages']} delivered{pct_str}")
@@ -195,12 +240,19 @@ def build_progress_message_text(stats: dict, db: Optional[Session] = None) -> st
     if trm is not None:
         if trm >= 0:
             lines.append(f"⏱️ About {_fmt_minutes(trm)} left on today's planned route time")
-        else:
+        elif not far_behind:
             lines.append(f"⏱️ You're {_fmt_minutes(-trm)} past our usual estimate — no worries, every route's different!")
 
     nudge = ""
     if very_far_ahead and db is not None:
         nudge = _safety_quality_nudge_line(stats["driver_name"], db)
+
+    if far_behind:
+        # More than 10% behind (pace_ratio < 0.9) -- explicit direction:
+        # "very problematic," should prompt a genuine "do you need help?"
+        # check-in rather than the usual breezy "no worries" framing.
+        lines.append("")
+        lines.append(random.choice(_HELP_CHECK_IN_LINES))
 
     lines.append("")
     lines.append(random.choice(_CLOSERS) + nudge)
@@ -303,7 +355,8 @@ def send_sample_to_mgt(
     pace_label = (
         "very far ahead" if pace is not None and pace >= _VERY_FAR_AHEAD_PACE_RATIO else
         "ahead" if pace is not None and pace >= 1.1 else
-        "behind" if pace is not None and pace < 0.85 else
+        "far behind (needs help check-in)" if pace is not None and pace < _FAR_BEHIND_PACE_RATIO else
+        "behind" if pace is not None and pace < 0.95 else
         "on time" if pace is not None else "unknown pace"
     )
     synthetic_note = " _(synthetic elapsed-time, for demo purposes -- real package/duration/safety/quality data)_" if is_synthetic else ""

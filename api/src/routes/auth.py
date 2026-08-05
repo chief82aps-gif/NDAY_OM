@@ -81,10 +81,11 @@ _RANDOM_SEED_PASSWORD = secrets.token_urlsafe(24)
 _SEED_USERS = {
     "admin":           {"password": os.getenv("ADMIN_PASSWORD", _RANDOM_SEED_PASSWORD), "role": "admin", "name": "Admin"},
     "chief":           {"password": os.getenv("CHIEF_PASSWORD", _RANDOM_SEED_PASSWORD), "role": "admin", "name": "Chief"},
-    "manager_user":    {"password": _RANDOM_SEED_PASSWORD, "role": "manager", "name": "Manager User"},
-    "dispatcher_user": {"password": _RANDOM_SEED_PASSWORD, "role": "dispatcher", "name": "Dispatcher User"},
-    "driver_user":     {"password": _RANDOM_SEED_PASSWORD, "role": "driver", "name": "Driver User"},
-    "test":            {"password": _RANDOM_SEED_PASSWORD, "role": "dispatcher", "name": "Test User"},
+    # manager_user/dispatcher_user/driver_user/test removed 2026-08-05 per
+    # explicit request -- pure placeholder/test accounts, deleting them via
+    # /admin previously didn't stick since this dict re-seeds on every
+    # restart. tam/galo/spencer/jefe deliberately left in place -- flagged
+    # 2026-07-27 as possibly real, actively-used staff logins, not test data.
     "tam":             {"password": _RANDOM_SEED_PASSWORD, "role": "driver", "name": "Tam"},
     "galo":            {"password": _RANDOM_SEED_PASSWORD, "role": "dispatcher", "name": "Galo"},
     "spencer":         {"password": _RANDOM_SEED_PASSWORD, "role": "driver", "name": "Spencer"},

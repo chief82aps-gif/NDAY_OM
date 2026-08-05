@@ -18,7 +18,7 @@ is sourced ONLY from driver EOD-survey self-reports and sends three
 SEPARATE filtered messages (fleet gets van issues only, HR gets injury/
 mgmt-contact only, mgt gets crash/incident/route/equipment only). This
 digest instead reads from the actual systems of record (CrashReport,
-InjuryReport, AttendanceEvent, Vehicle, CortexSnapshot) and sends the
+InjuryReport, AttendanceEvent, Vehicle, PackagesSnapshot) and sends the
 SAME unified report to all three channels -- kept as a separate module
 rather than folded into that one since the data sources, format, and
 timing are all different; both can run without conflicting.
@@ -39,7 +39,7 @@ from sqlalchemy.orm import Session
 
 from api.src.database import (
     get_db, get_reminder_state, set_reminder_state,
-    CrashReport, InjuryReport, AttendanceEvent, Vehicle, CortexSnapshot, EodSurveyResponse,
+    CrashReport, InjuryReport, AttendanceEvent, Vehicle, EodSurveyResponse,
     DailyRouteAssignment, DriverShiftDM,
 )
 from api.src.timezone import PACIFIC as PT
@@ -128,36 +128,6 @@ def _mgmt_contact_lines(db: Session, today: date) -> list[str]:
     return [f"• {r.driver_name} — {r.management_contact_reason or 'see survey'}" for r in rows]
 
 
-def _route_progress(db: Session, today: date) -> Optional[dict]:
-    """Latest-snapshot-per-route totals for today, from CortexSnapshot's
-    intraday progress data -- not daily_quality.py's file, which releases
-    30-48h after delivery and won't have today's figures yet at 10 PM."""
-    latest_subq = (
-        db.query(CortexSnapshot.route_code, func.max(CortexSnapshot.snapshot_at).label("latest_at"))
-        .filter(CortexSnapshot.route_date == today)
-        .group_by(CortexSnapshot.route_code)
-        .subquery()
-    )
-    rows = (
-        db.query(CortexSnapshot)
-        .join(
-            latest_subq,
-            (CortexSnapshot.route_code == latest_subq.c.route_code)
-            & (CortexSnapshot.snapshot_at == latest_subq.c.latest_at),
-        )
-        .filter(CortexSnapshot.route_date == today)
-        .all()
-    )
-    if not rows:
-        return None
-    return {
-        "routes": len(rows),
-        "routes_complete": sum(1 for r in rows if r.pct_complete is not None and r.pct_complete >= 100),
-        "packages_delivered": sum(r.packages_delivered or 0 for r in rows),
-        "packages_remaining": sum(r.packages_remaining or 0 for r in rows),
-    }
-
-
 def _pt_time_str(dt: Optional[datetime]) -> Optional[str]:
     """Every DateTime default in this codebase is naive UTC
     (datetime.utcnow()) -- convert to Pacific for display."""
@@ -169,14 +139,23 @@ def _pt_time_str(dt: Optional[datetime]) -> Optional[str]:
 def _mgt_stats(db: Session, today: date) -> dict:
     """Executive-summary numbers for the MGT section -- added 2026-08-05,
     replacing the earlier per-item raw dump per explicit direction
-    ("I want the executive summary"). Total RTS packages comes from
-    today's Packages export (packages.py) -- not quality_rts.py's file,
-    which reports the PRIOR day and wouldn't have today's number yet at
-    10 PM. Efficiency = total time between "I've Arrived"
-    (DriverShiftDM.arrived_at) and EOD submission, summed across every
-    driver with both, divided by the summed planned route duration for
-    the day -- a rough over/under vs. planned-time ratio, not a
-    per-driver metric."""
+    ("I want the executive summary").
+
+    Total RTS packages comes from today's Packages export (packages.py)
+    -- not quality_rts.py's file, which reports the PRIOR day and
+    wouldn't have today's number yet. Total delivered is DERIVED
+    (2026-08-05, confirmed) as today's total planned packages
+    (DailyRouteAssignment.packages) minus that same RTS count --
+    CortexSnapshot (the original source) turned out to have no real
+    upload path in practice, always empty.
+
+    Efficiency = total time between "I've Arrived" (DriverShiftDM.arrived_at)
+    and EOD submission, summed across every driver with both, divided by
+    the summed planned route duration for ONLY those same matched
+    drivers (not every route today) -- comparing a handful of matched
+    drivers' worked time against the whole day's planned time produced a
+    nonsense ~15% figure the first time this ran; fixed to compare
+    like-for-like."""
     from api.src.database import PackagesSnapshot
 
     latest_pkg_snap = (
@@ -187,10 +166,15 @@ def _mgt_stats(db: Session, today: date) -> dict:
     )
     total_rts_packages = latest_pkg_snap.package_count if latest_pkg_snap else None
 
-    progress = _route_progress(db, today)
-    total_delivered = progress["packages_delivered"] if progress else None
+    assignments = db.query(DailyRouteAssignment).filter(DailyRouteAssignment.assignment_date == today).all()
+    total_planned_packages = sum(a.packages or 0 for a in assignments)
+    total_delivered = (
+        max(0, total_planned_packages - total_rts_packages)
+        if total_rts_packages is not None and total_planned_packages
+        else None
+    )
 
-    route_count = db.query(DailyRouteAssignment).filter(DailyRouteAssignment.assignment_date == today).count()
+    route_count = len(assignments)
     eod_count = db.query(EodSurveyResponse).filter(EodSurveyResponse.survey_date == today).count()
     eod_pct = round(100 * eod_count / route_count, 1) if route_count else None
 
@@ -199,22 +183,25 @@ def _mgt_stats(db: Session, today: date) -> dict:
         r.driver_name: r.submitted_at
         for r in db.query(EodSurveyResponse).filter(EodSurveyResponse.survey_date == today).all()
     }
+    route_duration_by_name = {a.driver_name: a.route_duration for a in assignments if a.route_duration}
+
     total_worked_minutes = 0.0
+    total_planned_minutes_for_matched = 0.0
     matched = 0
     for s in shift_rows:
         eod_time = eod_time_by_name.get(s.driver_name)
-        if eod_time and s.arrived_at:
+        planned_duration = route_duration_by_name.get(s.driver_name)
+        if eod_time and s.arrived_at and planned_duration:
             delta_minutes = (eod_time - s.arrived_at).total_seconds() / 60
             if delta_minutes > 0:
                 total_worked_minutes += delta_minutes
+                total_planned_minutes_for_matched += planned_duration
                 matched += 1
 
-    total_route_minutes = (
-        db.query(func.sum(DailyRouteAssignment.route_duration))
-        .filter(DailyRouteAssignment.assignment_date == today)
-        .scalar() or 0
+    efficiency_pct = (
+        round(100 * total_worked_minutes / total_planned_minutes_for_matched, 1)
+        if total_planned_minutes_for_matched else None
     )
-    efficiency_pct = round(100 * total_worked_minutes / total_route_minutes, 1) if total_route_minutes else None
 
     return {
         "total_rts_packages": total_rts_packages,

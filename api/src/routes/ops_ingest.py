@@ -515,7 +515,19 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
     # ── Packages (non-delivered export, CSV) ─────────────────────────────────
     if t == "packages":
         from api.src.routes.packages import _store_packages
-        return _store_packages(content, job.file_name, job.slack_file_id, db)
+        result = _store_packages(content, job.file_name, job.slack_file_id, db)
+        # Testing-phase driver progress DM -- restricted to a hardcoded
+        # allowlist inside send_progress_dm() itself (Collin LaTour only,
+        # 2026-08-05), so this is safe to fire on every Packages ingest.
+        # Own try/except so a failure here can never affect the Packages
+        # ingest's own success status (same lesson as the Showtime fix above).
+        try:
+            from api.src.routes.driver_progress_dm import send_progress_dm, _TESTING_DRIVER_NAMES
+            for name in _TESTING_DRIVER_NAMES:
+                send_progress_dm(name, db)
+        except Exception as e:
+            logger.warning("Driver progress DM trigger failed: %s", e)
+        return result
 
     # ── Tenured Workforce DAs Report (CSV/Excel) ─────────────────────────────
     if t == "tenured_workforce":
@@ -895,13 +907,27 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
                 except Exception:
                     pass
             if primary_date_obj:
+                # Each call gets its OWN try/except -- previously all three
+                # shared one, so an exception in send_driver_shift_dms (e.g.
+                # a bad wave-lead lookup) silently killed post_mgt_summary
+                # and post_showtime_summary too, with only a single swallowed
+                # logger.warning and no visible alert anywhere. This was the
+                # actual root cause behind Showtime DMs not going out one
+                # night while the ingest job itself still reported
+                # status="ingested" (i.e. looked successful). Fixed 2026-08-05.
+                from api.src.routes.rostering import send_driver_shift_dms, post_mgt_summary, post_showtime_summary
                 try:
-                    from api.src.routes.rostering import send_driver_shift_dms, post_mgt_summary, post_showtime_summary
                     send_driver_shift_dms(primary_date_obj, db)
+                except Exception as e:
+                    logger.warning("send_driver_shift_dms failed for %s: %s", primary_date_obj, e)
+                try:
                     post_mgt_summary(primary_date_obj, db)
+                except Exception as e:
+                    logger.warning("post_mgt_summary failed for %s: %s", primary_date_obj, e)
+                try:
                     post_showtime_summary(primary_date_obj, db)
                 except Exception as e:
-                    logger.warning("Post-schedule DM/summary trigger failed: %s", e)
+                    logger.warning("post_showtime_summary failed for %s: %s", primary_date_obj, e)
 
             return {
                 "status": "ingested",

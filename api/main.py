@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.src.routes import uploads, auth, audit, enhanced_audit, weekly_audit, weekly_audit_upload, rescue
 from api.src.routes import daily_notify, quality, attendance, attendance_reports, ops_ingest, dvic, dsp_scorecard_weekly, eod_survey, route_assignment, slack_interactions, slack_home, manager_accountability
-from api.src.routes import rostering, cortex_tracking, adp, rts, mgt_reminders, document_routing, crash_report, drivers, candidates, safety_events, okami_capacity, driver_scoring, route_bands, driver_lead_schedule, injury_report, sentiment_survey, wave_lead, glitch_reports, daily_quality, nday_points, feature_flags, coaching_notifications, quality_rts, customer_feedback, packages, ops_cadence, ops_daily_digest, suggestions
+from api.src.routes import rostering, cortex_tracking, adp, rts, mgt_reminders, document_routing, crash_report, drivers, candidates, safety_events, okami_capacity, driver_scoring, route_bands, driver_lead_schedule, injury_report, sentiment_survey, wave_lead, glitch_reports, daily_quality, nday_points, feature_flags, coaching_notifications, quality_rts, customer_feedback, packages, ops_cadence, ops_daily_digest, suggestions, driver_progress_dm
 from api.src.routes.daily_notify import check_and_notify, check_ecp_and_prompt
 from api.src.routes.rostering import send_nightly_roster_reminder, send_wave_lead_pre_wave_dm, send_missing_drivers_summary
 from api.src.schedule_config import SCHEDULE_GAP_CHECK_HOUR
@@ -367,6 +367,26 @@ async def _ops_daily_digest_loop():
                 db.close()
         except Exception as exc:
             logger.warning("Ops daily digest loop error: %s", exc)
+        await asyncio.sleep(60)
+
+
+async def _showtime_watchdog_loop():
+    """Every 60 s — delegates to rostering.run_showtime_watchdog(), which
+    no-ops before 6 PM Pacific, then escalates a DM to the owner (hourly,
+    then every 30/15 min as the 10 PM deadline approaches) if tomorrow's
+    Showtime DMs aren't fully sent, retrying the (idempotent) send on every
+    check. Past 10 PM unresolved, ops_cadence.py's All In post is blocked
+    until it's fixed. Added 2026-08-05 after a real incident where Showtime
+    DMs silently failed to send with no visible alert anywhere."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(rostering.run_showtime_watchdog, db)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("Showtime watchdog loop error: %s", exc)
         await asyncio.sleep(60)
 
 
@@ -817,6 +837,7 @@ async def startup():
     asyncio.create_task(_mgt_reminders_loop())
     asyncio.create_task(_ops_cadence_loop())
     asyncio.create_task(_ops_daily_digest_loop())
+    asyncio.create_task(_showtime_watchdog_loop())
     asyncio.create_task(_timecard_report_nudge_loop())
     asyncio.create_task(_daily_fallback_pin_loop())
     asyncio.create_task(_ecp_screenshot_reminder_loop())
@@ -899,6 +920,7 @@ app.include_router(driver_lead_schedule.router)
 app.include_router(wave_lead.router)
 app.include_router(glitch_reports.router)
 app.include_router(suggestions.router)
+app.include_router(driver_progress_dm.router)
 app.include_router(daily_quality.router)
 app.include_router(quality_rts.router)
 app.include_router(customer_feedback.router)

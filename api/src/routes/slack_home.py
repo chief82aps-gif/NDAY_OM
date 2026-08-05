@@ -771,7 +771,7 @@ def _build_combined_home_blocks(slack_user_id: str, db: Session) -> tuple[list, 
 
     if is_dispatch:
         from api.src.routes.slack_dispatch_home import build_dispatch_home_view_blocks
-        blocks += build_dispatch_home_view_blocks(db, dash_user, dash_token)
+        blocks += build_dispatch_home_view_blocks(db, dash_user, dash_token, is_hr=is_hr)
         blocks.append({"type": "divider"})
         info["sections"].append("dispatch_staff")
 

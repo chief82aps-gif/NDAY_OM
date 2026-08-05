@@ -117,8 +117,24 @@ def _ingest_status_block(db: Session) -> dict:
 # Home tab builder
 # ─────────────────────────────────────────────────────────────────────────────
 
-def build_dispatch_home_view_blocks(db: Session, dash_user, dash_token: str) -> list:
-    """Pure builder — no Slack API calls in here, so it's unit-testable."""
+def build_dispatch_home_view_blocks(db: Session, dash_user, dash_token: str, is_hr: bool = False) -> list:
+    """Pure builder — no Slack API calls in here, so it's unit-testable.
+
+    is_hr (added 2026-08-05): the embedded "HR" section below was written
+    2026-07-27 back when dispatch/HR Home tabs were mutually exclusive, so
+    a dispatch+HR person needed these buttons here or lost them entirely.
+    The very next redesign that same day made _build_combined_home_blocks()
+    additive instead -- appending the real, standalone HR dashboard
+    (slack_hr_home.build_hr_home_view_blocks) for anyone who is_hr_staff --
+    but nobody removed the now-redundant copies here, so a dispatch+HR
+    person got the whole HR section rendered TWICE on one Home tab
+    (reported "the hr section is doubled up... invite user doesn't open
+    anything when clicked" -- Slack silently rejects a view containing two
+    blocks with the same action_id, which explained the dead button too).
+    When is_hr is True, the 3 duplicate buttons (EOD Responses, Sentiment
+    Survey, Write-Ups) and the whole Invite-to-Website/Send-Sentiment-Survey
+    block are skipped here, since the standalone HR block covers them.
+    Dispatch-only staff (not in #nday-hr) still see everything, unchanged."""
     now = datetime.now(PACIFIC)
     current_phase = _current_phase_key(now)
 
@@ -279,35 +295,33 @@ def build_dispatch_home_view_blocks(db: Session, dash_user, dash_token: str) -> 
         {"type": "divider"},
 
         # ── HR — grouped together at the bottom, per explicit user request
-        # (2026-07-27). Dispatch staff who are also HR-channel members (e.g.
-        # Jayson) never see the separate HR Home tab, since
-        # slack_home.py's _publish_home() checks is_dispatch_staff first —
-        # these give that same access from the tab they actually see.
-        # "Invite to Website" reuses the exact hr_home_invite_user_button
-        # action_id/handler unchanged; is_hr_staff() is checked independently
-        # inside that handler regardless of which Home tab it's clicked from.
-        {"type": "section", "text": {"type": "mrkdwn", "text": "💁‍♀️ *HR*"}},
+        # (2026-07-27). See the is_hr docstring note above: the 3 buttons
+        # duplicated on the standalone HR Home tab are skipped here when
+        # is_hr is True, to avoid the double-render/duplicate-action_id bug.
+        {"type": "section", "text": {"type": "mrkdwn", "text": "💁‍♀️ *HR*" if not is_hr else "🛠️ *More Tools*"}},
         {
             "type": "actions",
             "elements": [
-                {
-                    "type": "button",
-                    "action_id": "hr_home_open_eod_admin",
-                    "text": {"type": "plain_text", "text": "📋 EOD Responses", "emoji": True},
-                    "url": _slack_login_url("/eod-admin", dash_user, dash_token),
-                },
-                {
-                    "type": "button",
-                    "action_id": "hr_home_open_sentiment_admin",
-                    "text": {"type": "plain_text", "text": "💬 Sentiment Survey", "emoji": True},
-                    "url": _slack_login_url("/sentiment-survey-admin", dash_user, dash_token),
-                },
-                {
-                    "type": "button",
-                    "action_id": "hr_home_open_discipline_tracker",
-                    "text": {"type": "plain_text", "text": "📝 Write-Ups", "emoji": True},
-                    "url": _slack_login_url("/discipline-tracker", dash_user, dash_token),
-                },
+                *([
+                    {
+                        "type": "button",
+                        "action_id": "hr_home_open_eod_admin",
+                        "text": {"type": "plain_text", "text": "📋 EOD Responses", "emoji": True},
+                        "url": _slack_login_url("/eod-admin", dash_user, dash_token),
+                    },
+                    {
+                        "type": "button",
+                        "action_id": "hr_home_open_sentiment_admin",
+                        "text": {"type": "plain_text", "text": "💬 Sentiment Survey", "emoji": True},
+                        "url": _slack_login_url("/sentiment-survey-admin", dash_user, dash_token),
+                    },
+                    {
+                        "type": "button",
+                        "action_id": "hr_home_open_discipline_tracker",
+                        "text": {"type": "plain_text", "text": "📝 Write-Ups", "emoji": True},
+                        "url": _slack_login_url("/discipline-tracker", dash_user, dash_token),
+                    },
+                ] if not is_hr else []),
                 {
                     "type": "button",
                     "action_id": "hr_home_open_mentoring_dashboard",
@@ -357,7 +371,7 @@ def build_dispatch_home_view_blocks(db: Session, dash_user, dash_token: str) -> 
                 },
             ],
         },
-        {
+        *([{
             "type": "actions",
             "elements": [
                 {
@@ -372,7 +386,7 @@ def build_dispatch_home_view_blocks(db: Session, dash_user, dash_token: str) -> 
                     "text": {"type": "plain_text", "text": "🗣️ Send Sentiment Survey", "emoji": True},
                 },
             ],
-        },
+        }] if not is_hr else []),
         {
             "type": "actions",
             "elements": [

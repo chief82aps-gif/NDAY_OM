@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
@@ -167,12 +168,40 @@ def _send_cadence_reminder(missing: list[str], urgent: bool) -> None:
             logger.warning("ops_cadence reminder DM failed (%s): %s", uid, exc)
 
 
+# Short, human variants matching the existing dispatcher convention
+# ("NDAY All in. Have a great night and we will see you tomorrow.") --
+# rewritten 2026-08-05 per explicit direction: the auto-post had been a
+# single, longer, always-identical line ("Packages and Cortex progress
+# both confirmed for the COB round"), not the quick human sign-off this
+# channel is used to. One picked at random each night, occasionally
+# paired with a dad joke.
+_ALL_IN_VARIANTS = [
+    "NDAY All In. Have a great night, see you tomorrow!",
+    "NDAY All In! Everyone's in for the night — see you tomorrow.",
+    "That's a wrap — NDAY All In. Have a good one!",
+    "NDAY All In. Rest up, we'll do it again tomorrow.",
+    "All in for NDAY tonight. Nice work out there — see you tomorrow.",
+]
+
+_DAD_JOKES = [
+    "Why don't scientists trust atoms? Because they make up everything.",
+    "I'd tell you a construction joke, but I'm still working on it.",
+    "Why did the van go to therapy? Too many issues.",
+    "What do you call a driver who never delivers? Late.",
+    "I used to be a baker, but I couldn't make enough dough.",
+    "Why don't eggs tell jokes? They'd crack each other up.",
+]
+
+_DAD_JOKE_CHANCE = 0.25
+
+
 def _post_all_in(today: date) -> None:
     client = _client()
     if not client:
         return
-    date_str = today.strftime("%A, %B ") + str(today.day)
-    text = f"✅ *All In* — {date_str}: Packages and Cortex progress both confirmed for the COB round."
+    text = random.choice(_ALL_IN_VARIANTS)
+    if random.random() < _DAD_JOKE_CHANCE:
+        text += f"\n\n😄 {random.choice(_DAD_JOKES)}"
     for channel in (MGT_CHANNEL, DLV3_INFO_CHANNEL):
         try:
             client.chat_postMessage(channel=channel, text=text)

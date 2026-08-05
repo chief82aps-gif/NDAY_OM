@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends
@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 from api.src.database import (
     get_db, get_reminder_state, set_reminder_state,
     CrashReport, InjuryReport, AttendanceEvent, Vehicle, CortexSnapshot, EodSurveyResponse,
+    DailyRouteAssignment, DriverShiftDM,
 )
 from api.src.timezone import PACIFIC as PT
 
@@ -97,6 +98,34 @@ def _van_issue_lines(db: Session, today: date) -> list[str]:
     ]
 
 
+def _incident_lines(db: Session, today: date) -> list[str]:
+    """EOD-survey self-reported incidents -- added 2026-08-05 per explicit
+    direction that HR's section should cover "callouts, injuries,
+    incidents." Separate from _crash_lines() (the real CrashReport table)
+    -- an "incident" here is whatever a driver flagged in their own EOD
+    survey, which may or may not have become a formal report."""
+    rows = (
+        db.query(EodSurveyResponse)
+        .filter(EodSurveyResponse.survey_date == today, EodSurveyResponse.incident_occurred == True)  # noqa: E712
+        .all()
+    )
+    return [f"• {r.driver_name} — {r.incident_description or 'see survey'}" for r in rows]
+
+
+def _survey_ops_lines(db: Session, today: date) -> list[str]:
+    """Route issues + missing equipment self-reported on today's EOD
+    survey -- added 2026-08-05 per explicit direction ("Ops should get
+    the same key items reported from any surveys")."""
+    rows = db.query(EodSurveyResponse).filter(EodSurveyResponse.survey_date == today).all()
+    lines = []
+    for r in rows:
+        if r.route_issues:
+            lines.append(f"• {r.driver_name} — route issue: {r.route_issue_description or 'see survey'}")
+        if r.all_equipment_present is False:
+            lines.append(f"• {r.driver_name} — missing equipment: {r.missing_equipment or 'see survey'}")
+    return lines
+
+
 def _route_progress(db: Session, today: date) -> Optional[dict]:
     """Latest-snapshot-per-route totals for today, from CortexSnapshot's
     intraday progress data -- not daily_quality.py's file, which releases
@@ -127,21 +156,65 @@ def _route_progress(db: Session, today: date) -> Optional[dict]:
     }
 
 
+def _pt_time_str(dt: Optional[datetime]) -> Optional[str]:
+    """Every DateTime default in this codebase is naive UTC
+    (datetime.utcnow()) -- convert to Pacific for display."""
+    if not dt:
+        return None
+    return dt.replace(tzinfo=timezone.utc).astimezone(PT).strftime("%-I:%M %p")
+
+
+def _arrival_and_eod_lines(db: Session, today: date) -> list[str]:
+    """Alphabetical Arrived / Completed EOD times per driver -- added
+    2026-08-05 per explicit request. Arrived = DriverShiftDM.arrived_at
+    (pre-shift arrival confirmation, not end-of-day); EOD = EodSurveyResponse.submitted_at."""
+    shift_rows = db.query(DriverShiftDM).filter(DriverShiftDM.shift_date == today).all()
+    eod_rows = db.query(EodSurveyResponse).filter(EodSurveyResponse.survey_date == today).all()
+
+    arrived_by_name = {r.driver_name: r.arrived_at for r in shift_rows if r.arrived_at}
+    eod_by_name = {r.driver_name: r.submitted_at for r in eod_rows}
+
+    names = sorted(set(arrived_by_name) | set(eod_by_name))
+    lines = []
+    for name in names:
+        arrived = _pt_time_str(arrived_by_name.get(name))
+        completed = _pt_time_str(eod_by_name.get(name))
+        lines.append(f"• {name} — Arrived: {arrived or '—'}, Completed EOD: {completed or '—'}")
+    return lines
+
+
+def _missing_eod_lines(db: Session, today: date) -> list[str]:
+    """Alphabetical list of drivers scheduled today with no EOD survey
+    submission -- same logic as eod_survey.py's GET /missing, added here
+    2026-08-05 per explicit request."""
+    scheduled = db.query(DailyRouteAssignment).filter(DailyRouteAssignment.assignment_date == today).all()
+    submitted_names = {
+        r.driver_name.lower() for r in db.query(EodSurveyResponse).filter(EodSurveyResponse.survey_date == today).all()
+    }
+    missing = sorted({a.driver_name for a in scheduled if a.driver_name.lower() not in submitted_names})
+    return [f"• {name}" for name in missing]
+
+
 def build_digest_text(db: Session, today: date) -> str:
     date_str = today.strftime("%A, %B ") + str(today.day)
 
-    hr_lines = _injury_lines(db, today) + _callout_lines(db, today) + _crash_lines(db, today)
+    hr_lines = _injury_lines(db, today) + _callout_lines(db, today) + _crash_lines(db, today) + _incident_lines(db, today)
     hr_section = "\n".join(hr_lines) or "_Nothing to report._"
 
     progress = _route_progress(db, today)
+    ops_lines = []
     if progress:
-        ops_section = (
+        ops_lines.append(
             f"• Routes: *{progress['routes_complete']}/{progress['routes']}* complete\n"
             f"• Packages delivered: *{progress['packages_delivered']}*\n"
             f"• Packages remaining: *{progress['packages_remaining']}*"
         )
     else:
-        ops_section = "_No Cortex progress data today._"
+        ops_lines.append("_No Cortex progress data today._")
+    survey_ops_lines = _survey_ops_lines(db, today)
+    if survey_ops_lines:
+        ops_lines.append("\n".join(survey_ops_lines))
+    ops_section = "\n\n".join(ops_lines)
 
     grounded_lines = _grounded_van_lines(db)
     van_issue_lines = _van_issue_lines(db, today)
@@ -149,11 +222,19 @@ def build_digest_text(db: Session, today: date) -> str:
     fleet_section = "\n".join(fleet_lines) or "_No grounded vans or reported van issues._"
     fleet_header = f"*Fleet* ({len(grounded_lines)} grounded, {len(van_issue_lines)} reported issue(s))" if fleet_lines else "*Fleet*"
 
+    arrival_lines = _arrival_and_eod_lines(db, today)
+    arrival_section = "\n".join(arrival_lines) or "_No arrival/EOD data today._"
+
+    missing_lines = _missing_eod_lines(db, today)
+    missing_section = "\n".join(missing_lines) or "_Everyone scheduled today submitted their EOD survey._"
+
     return (
         f"📋 *Daily Ops Digest — {date_str}*\n\n"
         f"*HR* ({len(hr_lines)} item(s))\n{hr_section}\n\n"
         f"*Operational (Packages / Routes)*\n{ops_section}\n\n"
-        f"{fleet_header}\n{fleet_section}"
+        f"{fleet_header}\n{fleet_section}\n\n"
+        f"*Arrival / EOD Times* (A-Z)\n{arrival_section}\n\n"
+        f"*Did Not Complete EOD Survey* (A-Z)\n{missing_section}"
     )
 
 

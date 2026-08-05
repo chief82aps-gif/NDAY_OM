@@ -256,7 +256,10 @@ def send_test(driver_name: str = "Collin Jonathan LaTour", db: Session = Depends
 MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
 
 
-def send_sample_to_mgt(driver_name: str, db: Session, target_date: Optional[date] = None) -> dict:
+def send_sample_to_mgt(
+    driver_name: str, db: Session, target_date: Optional[date] = None,
+    synthetic_elapsed_minutes: Optional[float] = None,
+) -> dict:
     """Posts what a given real driver's progress DM would look like to
     #nday-mgt (labeled with their name/pace), instead of actually DMing
     them -- for reviewing tone/format across different real pace
@@ -264,11 +267,32 @@ def send_sample_to_mgt(driver_name: str, db: Session, target_date: Optional[date
     to anyone directly. NOT gated by _TESTING_DRIVER_NAMES -- this never
     reaches the driver's own DM, so the testing-allowlist restriction
     (which exists specifically to limit who gets directly messaged)
-    doesn't apply here."""
+    doesn't apply here.
+
+    synthetic_elapsed_minutes (added 2026-08-05): most drivers have no
+    real DriverShiftDM.arrived_at recorded (a known, separate capture
+    gap), so pace_ratio is usually None for real data. Rather than
+    writing a fake arrived_at into the real DriverShiftDM row -- leaving
+    fabricated data sitting in production -- this overrides the elapsed-
+    time figure in-memory only, for this one sample message. Real
+    package counts, planned duration, and safety/quality scores are
+    still 100% real; only the clock is synthetic, and it's labeled as
+    such in the header."""
     target_date = target_date or datetime.now(PT).date()
     stats = build_progress_stats(driver_name, target_date, db)
     if not stats:
         return {"status": "no_assignment", "driver_name": driver_name, "date": target_date.isoformat()}
+
+    is_synthetic = synthetic_elapsed_minutes is not None and stats.get("elapsed_minutes") is None
+    if is_synthetic:
+        stats["elapsed_minutes"] = round(synthetic_elapsed_minutes)
+        planned = stats.get("planned_duration_minutes")
+        if planned:
+            stats["time_remaining_minutes"] = round(planned - synthetic_elapsed_minutes)
+            if stats.get("pct_complete") is not None and synthetic_elapsed_minutes > 0:
+                time_fraction = synthetic_elapsed_minutes / planned
+                if time_fraction > 0:
+                    stats["pace_ratio"] = round((stats["pct_complete"] / 100) / time_fraction, 2)
 
     client = _client()
     if not client:
@@ -282,7 +306,8 @@ def send_sample_to_mgt(driver_name: str, db: Session, target_date: Optional[date
         "behind" if pace is not None and pace < 0.85 else
         "on time" if pace is not None else "unknown pace"
     )
-    header = f"*Sample progress DM* — {driver_name} ({pace_label}, pace ratio {pace if pace is not None else 'n/a'})\n\n"
+    synthetic_note = " _(synthetic elapsed-time, for demo purposes -- real package/duration/safety/quality data)_" if is_synthetic else ""
+    header = f"*Sample progress DM* — {driver_name} ({pace_label}, pace ratio {pace if pace is not None else 'n/a'}){synthetic_note}\n\n"
     try:
         client.chat_postMessage(channel=MGT_CHANNEL, text=header + text)
     except Exception as exc:
@@ -293,5 +318,5 @@ def send_sample_to_mgt(driver_name: str, db: Session, target_date: Optional[date
 
 
 @router.post("/send-sample-to-mgt")
-def send_sample_to_mgt_endpoint(driver_name: str, db: Session = Depends(get_db)):
-    return send_sample_to_mgt(driver_name, db)
+def send_sample_to_mgt_endpoint(driver_name: str, synthetic_elapsed_minutes: Optional[float] = None, db: Session = Depends(get_db)):
+    return send_sample_to_mgt(driver_name, db, synthetic_elapsed_minutes=synthetic_elapsed_minutes)

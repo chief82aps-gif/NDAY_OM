@@ -16,11 +16,16 @@ session (ops_daily_digest.py) that CortexSnapshot has no real ingest path
 in practice and stays empty; Cortex the historical route table is planned/
 assignment data, not a live delivered/remaining signal.
 
-TESTING PHASE: hard-restricted to _TESTING_DRIVER_NAMES (Collin LaTour
-only) per explicit instruction ("I would like to use Collin Latour as the
-only recipient for the first several rounds of testing"). This allowlist
-gates every send path (manual trigger AND the automatic per-ingest hook in
-ops_ingest.py) -- do not widen it without asking first.
+LIVE FOR EVERYONE as of 2026-08-05 ("let's go ahead and turn on the full
+feature") -- was testing-phase-only (Collin LaTour) before that. Sent on
+a fixed 3x/day schedule (3 PM / 5 PM / 6 PM Pacific -- see
+run_scheduled_progress_dms()) rather than reactively on every Packages
+ingest, so the time-of-day tone escalation below means something
+consistent. Expect driver pushback in #nday-team-room about a new
+automated DM showing up -- team_room_monitor.py's "progress_dm_feedback"
+category logs that critique without auto-replying or spamming a review
+card, per explicit direction: "we will not act on those, but we will
+catalog them... give them two to three days."
 """
 from __future__ import annotations
 
@@ -40,12 +45,6 @@ from api.src.timezone import PACIFIC as PT
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/driver-progress", tags=["driver-progress"])
 
-# Both name forms needed: "Collin Jonathan LaTour" is the ADP roster
-# payroll_name (used for Slack ID resolution), "Collin LaTour" is the
-# shorter form DOP/Route Sheet ingest stores on DailyRouteAssignment
-# (used for the actual package/duration stats lookup) -- same person,
-# two different upstream sources' naming conventions.
-_TESTING_DRIVER_NAMES = {"Collin Jonathan LaTour", "Collin LaTour"}
 
 
 def _client():
@@ -165,12 +164,48 @@ def _fmt_minutes(m: Optional[int]) -> str:
 
 _VERY_FAR_AHEAD_PACE_RATIO = 1.5   # completing ~50%+ faster than the plan implies
 _FAR_BEHIND_PACE_RATIO = 0.9       # more than 10% behind (% complete vs. % of planned time used) -- explicit threshold, "very problematic"
+_BEHIND_PACE_RATIO = 1.0           # behind at all -- the escalating 3pm/5pm/6pm tone below applies to anyone under this, not just the >10% "far behind" case
 _SAFETY_QUALITY_NUDGE_THRESHOLD = 90.0   # only nudge if there's real room to improve
 
 _HELP_CHECK_IN_LINES = [
     "😟 Hey, looks like today's a tough one — you're more than 10% behind where the plan expects. Everything okay out there? Just reply here if you need a hand, or flag your wave lead — no judgment, we just want to help.",
     "🤝 Noticed you're running well behind pace today. If something's slowing you down (van issue, tough stops, anything), reply right here and we'll get you support — that's what we're for.",
 ]
+
+# Escalating tone for a behind-pace driver across the 3 fixed daily send
+# times -- explicit direction 2026-08-05: "cheerleading to concerned mom."
+# Only used when a time_slot is passed in (the scheduled 3x/day sender);
+# ad-hoc calls (preview/send-test/mgt-sample, no slot given) keep the
+# original generic _HELP_CHECK_IN_LINES/opener behavior below, unchanged,
+# so existing testing tools don't shift underneath anyone.
+_BEHIND_TONE_BY_SLOT = {
+    "3pm": {
+        "opener": [
+            "🎉 Hey! Quick check-in — you've got this, let's go!! 💪",
+            "📣 Rah rah — you can do it! Keep pushing, we're cheering you on!",
+        ],
+        "message": None,   # pure cheerleading at 3pm, no explicit "you're behind" callout
+    },
+    "5pm": {
+        "opener": [
+            "😊 Hey, checking in again — we're running a little behind where we want to be today.",
+            "🙂 Quick update — pace has slipped a bit behind plan.",
+        ],
+        "message": (
+            "Still plenty of time to find our groove and get back on track — no stress, just want to make sure "
+            "we're pushing toward it together. Let us know if anything's slowing you down."
+        ),
+    },
+    "6pm": {
+        "opener": [
+            "😟 Hey — checking in for the third time today.",
+        ],
+        "message": (
+            "Looks like today may end up needing some help. We'd really like to know — what can we do differently "
+            "to help you avoid this going forward? Reply here anytime, no judgment at all, we just want to support you."
+        ),
+    },
+}
 
 
 def _safety_quality_nudge_line(driver_name: str, db: Session) -> str:
@@ -205,7 +240,7 @@ _NURSERY_ENCOURAGEMENT = {
 }
 
 
-def build_progress_message_text(stats: dict, db: Optional[Session] = None) -> str:
+def build_progress_message_text(stats: dict, db: Optional[Session] = None, time_slot: Optional[str] = None) -> str:
     pct = stats["pct_complete"]
     pace = stats.get("pace_ratio")
     very_far_ahead = pace is not None and pace >= _VERY_FAR_AHEAD_PACE_RATIO
@@ -214,13 +249,18 @@ def build_progress_message_text(stats: dict, db: Optional[Session] = None) -> st
     is_nursery = is_non_tenured_phase(phase)
 
     far_behind = pace is not None and pace < _FAR_BEHIND_PACE_RATIO
+    behind = pace is not None and pace < _BEHIND_PACE_RATIO
+    slot_tone = _BEHIND_TONE_BY_SLOT.get(time_slot) if (time_slot and behind) else None
+
     if very_far_ahead:
         opener = "🏆 Whoa — you're way ahead of pace today, awesome work!"
+    elif slot_tone:
+        # Scheduled 3x/day sender, driver behind pace -- cheerleading
+        # (3pm) escalating to concerned-mom (6pm), per explicit direction.
+        opener = random.choice(slot_tone["opener"])
     elif far_behind:
-        # Pace, not raw %-complete, drives the opener here -- a driver
-        # can be at a "decent" completion % and still be genuinely far
-        # behind where the plan expects them, and the tone needs to
-        # match the concern in the check-in line below, not clash with it.
+        # Ad-hoc call (preview/send-test/mgt-sample), no time_slot given --
+        # original generic behind-pace framing, unchanged.
         opener = random.choice(_OPENERS_EARLY_OR_BEHIND)
     elif pct is not None and pct >= 85:
         opener = random.choice(_OPENERS_STRONG)
@@ -247,17 +287,21 @@ def build_progress_message_text(stats: dict, db: Optional[Session] = None) -> st
     if trm is not None:
         if trm >= 0:
             lines.append(f"⏱️ About {_fmt_minutes(trm)} left on today's planned route time")
-        elif not far_behind:
+        elif not (far_behind or slot_tone):
             lines.append(f"⏱️ You're {_fmt_minutes(-trm)} past our usual estimate — no worries, every route's different!")
 
     nudge = ""
     if very_far_ahead and db is not None:
         nudge = _safety_quality_nudge_line(stats["driver_name"], db)
 
-    if far_behind:
-        # More than 10% behind (pace_ratio < 0.9) -- explicit direction:
-        # "very problematic," should prompt a genuine "do you need help?"
-        # check-in rather than the usual breezy "no worries" framing.
+    if slot_tone and slot_tone["message"]:
+        lines.append("")
+        lines.append(slot_tone["message"])
+    elif far_behind and not slot_tone:
+        # More than 10% behind (pace_ratio < 0.9), ad-hoc call -- explicit
+        # direction: "very problematic," should prompt a genuine "do you
+        # need help?" check-in rather than the usual breezy "no worries"
+        # framing.
         lines.append("")
         lines.append(random.choice(_HELP_CHECK_IN_LINES))
 
@@ -266,10 +310,7 @@ def build_progress_message_text(stats: dict, db: Optional[Session] = None) -> st
     return "\n".join(lines)
 
 
-def send_progress_dm(driver_name: str, db: Session, target_date: Optional[date] = None) -> dict:
-    if driver_name not in _TESTING_DRIVER_NAMES:
-        return {"status": "not_in_testing_allowlist", "driver_name": driver_name}
-
+def send_progress_dm(driver_name: str, db: Session, target_date: Optional[date] = None, time_slot: Optional[str] = None) -> dict:
     target_date = target_date or datetime.now(PT).date()
     stats = build_progress_stats(driver_name, target_date, db)
     if not stats:
@@ -285,7 +326,7 @@ def send_progress_dm(driver_name: str, db: Session, target_date: Optional[date] 
     if not client:
         return {"status": "no_slack_token"}
 
-    text = build_progress_message_text(stats, db)
+    text = build_progress_message_text(stats, db, time_slot=time_slot)
     try:
         client.chat_postMessage(channel=slack_id, text=text)
     except Exception as exc:
@@ -296,20 +337,76 @@ def send_progress_dm(driver_name: str, db: Session, target_date: Optional[date] 
 
 
 @router.get("/preview")
-def preview_progress(driver_name: str = "Collin Jonathan LaTour", target_date: Optional[str] = None, db: Session = Depends(get_db)):
-    """See the message text without sending it."""
+def preview_progress(driver_name: str = "Collin Jonathan LaTour", target_date: Optional[str] = None, time_slot: Optional[str] = None, db: Session = Depends(get_db)):
+    """See the message text without sending it. Pass time_slot=3pm|5pm|6pm
+    to preview the escalating behind-pace tone for that slot."""
     d = date.fromisoformat(target_date) if target_date else datetime.now(PT).date()
     stats = build_progress_stats(driver_name, d, db)
     if not stats:
         return {"status": "no_assignment", "driver_name": driver_name, "date": d.isoformat()}
-    return {"stats": stats, "text": build_progress_message_text(stats, db)}
+    return {"stats": stats, "text": build_progress_message_text(stats, db, time_slot=time_slot)}
 
 
 @router.post("/send-test")
-def send_test(driver_name: str = "Collin Jonathan LaTour", db: Session = Depends(get_db)):
-    """Manual on-demand trigger for testing rounds. Restricted to
-    _TESTING_DRIVER_NAMES regardless of what's passed here."""
-    return send_progress_dm(driver_name, db)
+def send_test(driver_name: str = "Collin Jonathan LaTour", time_slot: Optional[str] = None, db: Session = Depends(get_db)):
+    """Manual on-demand trigger for testing — no longer allowlist-gated,
+    the feature is live for everyone."""
+    return send_progress_dm(driver_name, db, time_slot=time_slot)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Scheduled 3x/day sender -- added 2026-08-05, replacing the old reactive
+# "fire on every Packages ingest" trigger. Fixed Pacific times so the
+# escalating behind-pace tone (cheerleading -> concerned-mom) means
+# something consistent across the day. Gated by DRIVER_PROGRESS_DM_ACTIVE.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PROGRESS_DM_SLOTS = [("3pm", 15), ("5pm", 17), ("6pm", 18)]   # (slot label, Pacific hour, :00)
+_PROGRESS_DM_STATE_PREFIX = "progress_dm_sent_"
+
+
+def run_scheduled_progress_dms(db: Session, force_slot: Optional[str] = None) -> dict:
+    """Checked every 60s from main.py's background loop. Fires each of
+    the 3 daily slots exactly once, at/after its start hour, for every
+    driver with today's route assignment."""
+    from api.src.feature_flags import get_flag
+    if not get_flag("DRIVER_PROGRESS_DM_ACTIVE"):
+        return {"status": "inactive", "note": "Set DRIVER_PROGRESS_DM_ACTIVE=true on Render to enable"}
+
+    now = datetime.now(PT)
+    today = now.date()
+
+    due_slot = force_slot
+    if not due_slot:
+        for slot, hour in _PROGRESS_DM_SLOTS:
+            if now.hour >= hour:
+                due_slot = slot   # last slot whose hour has passed -- iterating in order keeps the LATEST due slot
+    if not due_slot:
+        return {"status": "before_first_slot"}
+
+    state_key = f"{_PROGRESS_DM_STATE_PREFIX}{today.isoformat()}_{due_slot}"
+    from api.src.database import get_reminder_state, set_reminder_state
+    if not force_slot and get_reminder_state(db, state_key).get("sent_at"):
+        return {"status": "already_sent", "slot": due_slot, "date": today.isoformat()}
+
+    driver_names = {a.driver_name for a in db.query(DailyRouteAssignment).filter(DailyRouteAssignment.assignment_date == today).all()}
+    sent, skipped = 0, 0
+    for name in driver_names:
+        result = send_progress_dm(name, db, target_date=today, time_slot=due_slot)
+        if result.get("status") == "sent":
+            sent += 1
+        else:
+            skipped += 1
+
+    set_reminder_state(db, state_key, {"sent_at": datetime.utcnow().isoformat(), "sent": sent, "skipped": skipped})
+    return {"status": "sent", "slot": due_slot, "sent": sent, "skipped": skipped, "total_drivers": len(driver_names)}
+
+
+@router.post("/send-scheduled-now")
+def trigger_scheduled_progress_dms(slot: str, db: Session = Depends(get_db)):
+    """Manual trigger for testing — forces one slot's send right now,
+    bypassing the hour check and the already-sent guard for today."""
+    return run_scheduled_progress_dms(db, force_slot=slot)
 
 
 MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
@@ -317,7 +414,7 @@ MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
 
 def send_sample_to_mgt(
     driver_name: str, db: Session, target_date: Optional[date] = None,
-    synthetic_elapsed_minutes: Optional[float] = None,
+    synthetic_elapsed_minutes: Optional[float] = None, time_slot: Optional[str] = None,
 ) -> dict:
     """Posts what a given real driver's progress DM would look like to
     #nday-mgt (labeled with their name/pace), instead of actually DMing
@@ -357,7 +454,7 @@ def send_sample_to_mgt(
     if not client:
         return {"status": "no_slack_token"}
 
-    text = build_progress_message_text(stats, db)
+    text = build_progress_message_text(stats, db, time_slot=time_slot)
     pace = stats.get("pace_ratio")
     pace_label = (
         "very far ahead" if pace is not None and pace >= _VERY_FAR_AHEAD_PACE_RATIO else
@@ -367,7 +464,8 @@ def send_sample_to_mgt(
         "on time" if pace is not None else "unknown pace"
     )
     synthetic_note = " _(synthetic elapsed-time, for demo purposes -- real package/duration/safety/quality data)_" if is_synthetic else ""
-    header = f"*Sample progress DM* — {driver_name} ({pace_label}, pace ratio {pace if pace is not None else 'n/a'}){synthetic_note}\n\n"
+    slot_note = f" — *{time_slot} tone*" if time_slot else ""
+    header = f"*Sample progress DM* — {driver_name} ({pace_label}, pace ratio {pace if pace is not None else 'n/a'}){synthetic_note}{slot_note}\n\n"
     try:
         client.chat_postMessage(channel=MGT_CHANNEL, text=header + text)
     except Exception as exc:
@@ -378,5 +476,5 @@ def send_sample_to_mgt(
 
 
 @router.post("/send-sample-to-mgt")
-def send_sample_to_mgt_endpoint(driver_name: str, synthetic_elapsed_minutes: Optional[float] = None, db: Session = Depends(get_db)):
-    return send_sample_to_mgt(driver_name, db, synthetic_elapsed_minutes=synthetic_elapsed_minutes)
+def send_sample_to_mgt_endpoint(driver_name: str, synthetic_elapsed_minutes: Optional[float] = None, time_slot: Optional[str] = None, db: Session = Depends(get_db)):
+    return send_sample_to_mgt(driver_name, db, synthetic_elapsed_minutes=synthetic_elapsed_minutes, time_slot=time_slot)

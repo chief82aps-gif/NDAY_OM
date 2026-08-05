@@ -46,7 +46,16 @@ _CATEGORY_LABELS = {
     "incident": "⚠️ Incident Mention",
     "dog_bite": "🐕 Dog Bite",
     "customer_complaint": "😠 Customer Complaint",
+    "progress_dm_feedback": "💬 Progress DM Feedback",
 }
+
+# Categories that are pure logging -- no reply drafted, no #nday-mgt
+# review card posted. Added 2026-08-05 for progress_dm_feedback: driver
+# critique of the new automatic progress-check-in DMs should be
+# cataloged, not responded to or reviewed one-by-one -- explicit
+# direction: "we will not act on those, but we will catalog them...
+# give them two to three days... I'll make the decisions."
+_LOG_ONLY_CATEGORIES = {"progress_dm_feedback"}
 
 
 def _client():
@@ -74,6 +83,9 @@ Decide if it reports one of these categories worth flagging to management:
 - incident: a safety incident, near-miss, property damage, or unsafe situation (NOT a crash -- that has its own report)
 - dog_bite: a dog bite or aggressive-dog encounter
 - customer_complaint: a customer was rude, threatening, or caused a problem
+- progress_dm_feedback: driver is complaining about, praising, questioning, or otherwise reacting to the new \
+automatic "progress check-in" DMs they've started receiving during their shift (e.g. "why is the app texting \
+me", "this is annoying", "stop messaging me", "I actually like this", "who keeps texting me updates")
 
 If the message doesn't clearly fit one of these, respond with category "none" and everything else null.
 
@@ -81,15 +93,16 @@ If it fits "equipment_issue", also try to extract:
 - any van/unit number mentioned in the message itself (digits only, e.g. "2107", "34")
 - what specific equipment is being described (e.g. "charger", "phone mount", "dolly")
 
-For any flagged category, draft ONE short, warm, non-corporate reply Blake (a real dispatcher persona) could \
-send back in the channel. For equipment_issue, ask a clarifying question -- if a van number was given, \
-reference it back to them (e.g. "Hey Rogers, I see you're asking about van 2107 -- are you needing the \
-charger cable itself, or the mount?"). If no van number was mentioned, ask for it. For injury/incident/\
-dog_bite/customer_complaint, be warm and steer them toward filing the formal report so they're taken care \
-of properly -- never diagnose, never promise an outcome.
+For any flagged category EXCEPT progress_dm_feedback, draft ONE short, warm, non-corporate reply Blake (a real \
+dispatcher persona) could send back in the channel. For equipment_issue, ask a clarifying question -- if a van \
+number was given, reference it back to them (e.g. "Hey Rogers, I see you're asking about van 2107 -- are you \
+needing the charger cable itself, or the mount?"). If no van number was mentioned, ask for it. For injury/\
+incident/dog_bite/customer_complaint, be warm and steer them toward filing the formal report so they're taken \
+care of properly -- never diagnose, never promise an outcome. For progress_dm_feedback, draft_reply MUST be \
+null -- this category is logged for later human review only, never auto-replied to.
 
 Respond with ONLY JSON (no markdown fences, no commentary):
-{"category": "equipment_issue|injury|incident|dog_bite|customer_complaint|none", "van_number": "<string or null>", "equipment": "<string or null>", "draft_reply": "<string or null -- null only if category is none>"}"""
+{"category": "equipment_issue|injury|incident|dog_bite|customer_complaint|progress_dm_feedback|none", "van_number": "<string or null>", "equipment": "<string or null>", "draft_reply": "<string or null -- null for progress_dm_feedback and none>"}"""
 
 
 def classify_team_room_message(text: str, reporter_display_name: str) -> Optional[dict]:
@@ -235,18 +248,23 @@ def handle_team_room_message(event: dict, db: Session) -> Optional[dict]:
         prior_driver_name=prior_driver_name,
         prior_driver_draft_text=prior_draft,
     )
+    if flag.category in _LOG_ONLY_CATEGORIES:
+        # No draft reply, no #nday-mgt review card -- catalog only. See
+        # module note: "we will not act on those... catalog them."
+        flag.reply_status = "logged"
     db.add(flag)
     db.commit()
     db.refresh(flag)
 
-    client = _client()
-    if client:
-        try:
-            resp = client.chat_postMessage(channel=MGT_CHANNEL, blocks=_review_card_blocks(flag), text=f"Team room flag: {flag.category}")
-            flag.review_message_ts = resp.get("ts")
-            db.commit()
-        except Exception as exc:
-            logger.warning("Team room review-card post failed: %s", exc)
+    if flag.category not in _LOG_ONLY_CATEGORIES:
+        client = _client()
+        if client:
+            try:
+                resp = client.chat_postMessage(channel=MGT_CHANNEL, blocks=_review_card_blocks(flag), text=f"Team room flag: {flag.category}")
+                flag.review_message_ts = resp.get("ts")
+                db.commit()
+            except Exception as exc:
+                logger.warning("Team room review-card post failed: %s", exc)
 
     return {"status": "flagged", "flag_id": flag.id, "category": flag.category}
 
@@ -323,3 +341,18 @@ def chat_flagged_hr_lines(db: Session, target_date: date) -> list[str]:
 def list_pending(db: Session = Depends(get_db)):
     rows = db.query(TeamRoomFlag).filter(TeamRoomFlag.reply_status == "pending").order_by(TeamRoomFlag.detected_at.desc()).all()
     return {"flags": [{"id": r.id, "category": r.category, "reporter_name": r.reporter_name, "raw_text": r.raw_text, "draft_reply_text": r.draft_reply_text} for r in rows]}
+
+
+@router.get("/progress-dm-feedback")
+def list_progress_dm_feedback(db: Session = Depends(get_db)):
+    """The catalog of driver critique/reaction to the new progress-DM
+    feature, for manual review after the "two to three days of
+    complaining" window -- never auto-replied to, never posted as a
+    review card, per explicit direction."""
+    rows = (
+        db.query(TeamRoomFlag)
+        .filter(TeamRoomFlag.category == "progress_dm_feedback")
+        .order_by(TeamRoomFlag.detected_at.desc())
+        .all()
+    )
+    return {"count": len(rows), "feedback": [{"id": r.id, "detected_at": r.detected_at.isoformat() if r.detected_at else None, "reporter_name": r.reporter_name, "raw_text": r.raw_text} for r in rows]}

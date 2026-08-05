@@ -468,6 +468,25 @@ async def _twf_recalibration_reminder_loop():
         await asyncio.sleep(60)
 
 
+async def _driver_progress_dm_loop():
+    """Every 60 s — delegates to driver_progress_dm.run_scheduled_progress_dms(),
+    which fires each of the 3 fixed daily slots (3/5/6 PM Pacific) exactly
+    once, for every driver with today's route assignment. Gated by
+    DRIVER_PROGRESS_DM_ACTIVE (default false)."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(driver_progress_dm.run_scheduled_progress_dms, db)
+            except Exception as exc:
+                logger.warning("Driver progress DM loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("Driver progress DM loop outer error: %s", exc)
+        await asyncio.sleep(60)
+
+
 async def _okami_finalize_reminder_loop():
     """Every 60 s — delegates to okami_capacity.run_okami_finalize_reminder(),
     which nags #nday-mgt every 5 min from 3:30 PM until Okami is finalized
@@ -863,6 +882,7 @@ async def startup():
     asyncio.create_task(_daily_fallback_pin_loop())
     asyncio.create_task(_ecp_screenshot_reminder_loop())
     asyncio.create_task(_twf_recalibration_reminder_loop())
+    asyncio.create_task(_driver_progress_dm_loop())
     asyncio.create_task(_okami_finalize_reminder_loop())
     asyncio.create_task(_associate_data_reminder_loop())
     asyncio.create_task(_dm_response_summary_loop())

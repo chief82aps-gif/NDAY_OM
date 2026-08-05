@@ -516,17 +516,11 @@ def _dispatch(job: OpsIngestJob, content: bytes, db: Session) -> dict:
     if t == "packages":
         from api.src.routes.packages import _store_packages
         result = _store_packages(content, job.file_name, job.slack_file_id, db)
-        # Testing-phase driver progress DM -- restricted to a hardcoded
-        # allowlist inside send_progress_dm() itself (Collin LaTour only,
-        # 2026-08-05), so this is safe to fire on every Packages ingest.
-        # Own try/except so a failure here can never affect the Packages
-        # ingest's own success status (same lesson as the Showtime fix above).
-        try:
-            from api.src.routes.driver_progress_dm import send_progress_dm, _TESTING_DRIVER_NAMES
-            for name in _TESTING_DRIVER_NAMES:
-                send_progress_dm(name, db)
-        except Exception as e:
-            logger.warning("Driver progress DM trigger failed: %s", e)
+        # Driver progress DMs moved to a fixed 3x/day schedule (3/5/6 PM
+        # Pacific -- driver_progress_dm.run_scheduled_progress_dms(), its
+        # own background loop in main.py) as of 2026-08-05, replacing this
+        # reactive per-ingest trigger -- the escalating behind-pace tone
+        # across the day only means something on a fixed schedule.
         try:
             from api.src.routes.packages import send_offender_alert_to_mgt
             send_offender_alert_to_mgt(db)

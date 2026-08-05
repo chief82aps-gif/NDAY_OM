@@ -156,6 +156,11 @@ FLAG_REGISTRY: dict[str, dict] = {
         "description": "Quarterly nudge to re-download and re-ingest a fresh Tenured Workforce file, catching drivers who worked elsewhere or were rehired that our own route-count tracker wouldn't otherwise know about.",
         "category": "Reminders",
     },
+    "DRIVER_PROGRESS_DM_ACTIVE": {
+        "label": "Driver Progress DM",
+        "description": "Sends every driver an upbeat mid-day progress check-in 3x/day (3/5/6 PM Pacific), with escalating tone for anyone behind pace.",
+        "category": "Driver Communication",
+    },
     "COACHING_NOTIFICATIONS_ACTIVE": {
         "label": "Coaching Notifications",
         "description": "Scans for Amazon's weekly Coaching Notifications digest (forwarded into Slack) and runs the driver-ack -> ops_manager -> HR approval chain.",

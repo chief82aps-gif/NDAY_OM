@@ -91,17 +91,30 @@ def _van_issue_lines(db: Session, today: date) -> list[str]:
     2026-08-05. This was the actual gap behind "the daily summary showed
     no van issues" even though several EOD submissions had flagged one:
     this digest's Fleet section only ever queried grounded vans (Fleet
-    ingest data), never EodSurveyResponse.van_issues at all."""
+    ingest data), never EodSurveyResponse.van_issues at all.
+
+    van_number is pre-populated onto the survey row from that day's
+    DailyRouteAssignment at creation time, but falls through null when
+    the assignment wasn't recorded yet (or changed after) -- fall back
+    to a direct DailyRouteAssignment lookup by driver name so the van
+    name is never dropped from the memo, per explicit request "add van
+    names to the fleet memos"."""
     rows = (
         db.query(EodSurveyResponse)
         .filter(EodSurveyResponse.survey_date == today, EodSurveyResponse.van_issues == True)  # noqa: E712
         .all()
     )
-    return [
-        f"• *{r.driver_name}*" + (f" (Van {r.van_number})" if r.van_number else "")
-        + f": {r.van_issue_description or 'see survey'}"
-        for r in rows
-    ]
+    van_by_driver = {
+        a.driver_name: a.van_number
+        for a in db.query(DailyRouteAssignment).filter(DailyRouteAssignment.assignment_date == today).all()
+        if a.van_number
+    }
+    lines = []
+    for r in rows:
+        van_number = r.van_number or van_by_driver.get(r.driver_name)
+        van_tag = f" (Van {van_number})" if van_number else " (van unknown)"
+        lines.append(f"• *{r.driver_name}*{van_tag}: {r.van_issue_description or 'see survey'}")
+    return lines
 
 
 def _incident_lines(db: Session, today: date) -> list[str]:

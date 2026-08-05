@@ -56,32 +56,49 @@ def _store_tenured_workforce(content: bytes, filename: str, slack_file_id: Optio
         tmp.write(content)
         tmp_path = tmp.name
 
-    try:
+    required = {"Trabsporter ID", "Year", "Week"}
+    df = None
+    # header=0 works for a plain CSV export. A real .xlsx export (confirmed
+    # 2026-08-05) instead carries a title row ("Tenured Workforce DAs
+    # Report") PLUS a blank row before the real header row (row index 2),
+    # which header=0 would read as column names -- try a small range
+    # before concluding it's the wrong tab.
+    for header_row in (0, 1, 2, 3):
         try:
-            df = read_tabular_file(tmp_path, header=0)
+            candidate = read_tabular_file(tmp_path, header=header_row)
         except Exception as exc:
-            return {"status": "error", "message": f"Could not parse file: {exc}"}
+            if df is None:
+                last_exc = exc
+            continue
+        candidate.columns = [str(c).strip() for c in candidate.columns]
+        if required.issubset(set(candidate.columns)):
+            df = candidate
+            break
+        if df is None:
+            df = candidate  # keep the last attempt around for the error message below
 
-        df.columns = [str(c).strip() for c in df.columns]
+    if df is None:
+        return {"status": "error", "message": f"Could not parse file: {last_exc}"}
 
-        required = {"Trabsporter ID", "Year", "Week"}
-        missing = required - set(df.columns)
-        if missing:
-            # By far the most common cause (confirmed 2026-07-18): Amazon's
-            # TWF Dashboard portal has two tabs -- "Tenured Workforce
-            # Calculation Report" and "Tenured Workforce DAs Report" -- and
-            # exporting from the wrong one silently produces a differently-
-            # shaped file. Name the likely fix, don't just report columns.
-            return {
-                "status": "error",
-                "message": (
-                    f"Missing expected columns {sorted(missing)} — this looks like the wrong "
-                    "export from Amazon's TWF Dashboard. The portal has two tabs: "
-                    "'Tenured Workforce Calculation Report' and 'Tenured Workforce DAs Report'. "
-                    "Make sure the 'Tenured Workforce DAs Report' tab is selected (bold/highlighted) "
-                    "before using Export to CSV, then re-upload."
-                ),
-            }
+    missing = required - set(df.columns)
+    if missing:
+        # By far the most common remaining cause (confirmed 2026-07-18):
+        # Amazon's TWF Dashboard portal has two tabs -- "Tenured Workforce
+        # Calculation Report" and "Tenured Workforce DAs Report" -- and
+        # exporting from the wrong one silently produces a differently-
+        # shaped file. Name the likely fix, don't just report columns.
+        return {
+            "status": "error",
+            "message": (
+                f"Missing expected columns {sorted(missing)} — this looks like the wrong "
+                "export from Amazon's TWF Dashboard. The portal has two tabs: "
+                "'Tenured Workforce Calculation Report' and 'Tenured Workforce DAs Report'. "
+                "Make sure the 'Tenured Workforce DAs Report' tab is selected (bold/highlighted) "
+                "before using Export to CSV, then re-upload."
+            ),
+        }
+
+    try:
 
         existing_keys = {
             (r.transporter_id, r.year, r.week)

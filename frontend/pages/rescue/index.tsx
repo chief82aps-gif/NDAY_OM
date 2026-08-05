@@ -43,7 +43,7 @@ export default function RescueDashboard() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<'Open' | 'Closed' | ''>('Open');
 
-  const isDispatch = user?.role === 'dispatcher' || user?.role === 'admin' || user?.role === 'manager';
+  const isDispatch = user?.role === 'dispatcher' || user?.role === 'admin' || user?.role === 'manager' || user?.role === 'super_user';
 
   const fetchEvents = useCallback(async () => {
     setLoading(true);

@@ -14,6 +14,7 @@ from typing import List, Set
 class Role(str, Enum):
     """Hierarchical user roles"""
     ADMIN = "admin"              # Full system access, code editing
+    SUPER_USER = "super_user"    # Full system access EXCEPT code editing -- added 2026-08-05
     MANAGER = "manager"          # Financial data access, reporting, no code editing
     DISPATCHER = "dispatcher"    # Route/assignment management, no financial access
     DRIVER = "driver"            # Driver portal only, assignment viewing
@@ -121,6 +122,27 @@ ROLE_PERMISSIONS: dict[Role, Set[Permission]] = {
         Permission.VIEW_REPORTS,
         Permission.VIEW_FINANCIAL,
         Permission.VIEW_ASSIGNMENTS,
+    },
+
+    Role.SUPER_USER: {
+        # Same permission set as ADMIN -- every app function -- minus
+        # nothing, since none of these permissions gate code editing (that
+        # only ever happens outside the app, in this dev session). See
+        # require_any_role()/require_admin_or_manager() in authorization.py
+        # for the parallel bypass on the endpoint-gating side.
+        Permission.MANAGE_USERS,
+        Permission.MANAGE_SYSTEM,
+        Permission.VIEW_FINANCIAL,
+        Permission.VIEW_VARIABLE_INVOICES,
+        Permission.VIEW_WEEKLY_INCENTIVES,
+        Permission.VIEW_FLEET_INVOICES,
+        Permission.VIEW_DSP_SCORECARD,
+        Permission.VIEW_POD_REPORTS,
+        Permission.VIEW_REPORTS,
+        Permission.VIEW_WST_DATA,
+        Permission.MANAGE_ASSIGNMENTS,
+        Permission.VIEW_ASSIGNMENTS,
+        Permission.VIEW_SCHEDULE,
     },
 }
 

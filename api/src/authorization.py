@@ -171,8 +171,12 @@ def require_admin_or_manager(role: str = Depends(get_current_user_role)) -> str:
 def require_any_role(*roles: str) -> Callable:
     """Dependency factory for the write-up sign-off dashboard — e.g.
     Depends(require_any_role("ops_manager", "hr")). Admin always passes
-    as an override, matching require_admin_or_manager's pattern."""
-    allowed = set(roles) | {Role.ADMIN.value}
+    as an override, matching require_admin_or_manager's pattern.
+    super_user (added 2026-08-05) passes every check the same way --
+    "authorized for all functions except creating or editing code" --
+    so every existing and future require_any_role(...) call site
+    automatically honors it with no per-file changes needed."""
+    allowed = set(roles) | {Role.ADMIN.value, Role.SUPER_USER.value}
 
     def _dependency(role: str = Depends(get_current_user_role)) -> str:
         if role not in allowed:

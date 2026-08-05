@@ -54,7 +54,7 @@ def _slack_login_url(redirect_path: str, dash_user, dash_token: str) -> str:
     return f"{FRONTEND_URL}{redirect_path}?{params}"
 
 HR_INVITE_CALLBACK_ID = "hr_home_invite_user_submit"
-HR_INVITE_ROLE_OPTIONS = ["admin", "manager", "dispatcher", "driver"]
+HR_INVITE_ROLE_OPTIONS = ["admin", "super_user", "manager", "dispatcher", "driver"]
 
 SEND_SENTIMENT_SURVEY_CALLBACK_ID = "hr_home_send_sentiment_survey_submit"
 

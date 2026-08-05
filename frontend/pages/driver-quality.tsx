@@ -329,7 +329,7 @@ function TrainingVideoManager({ api }: { api: string }) {
 
 export default function DriverQualityPage() {
   const { user } = useAuth();
-  const canManageVideos = user?.role === 'owner' || user?.role === 'hr';
+  const canManageVideos = user?.role === 'owner' || user?.role === 'hr' || user?.role === 'super_user';
   const [showVideoManager, setShowVideoManager] = useState(false);
   const [data, setData] = useState<ScoresResponse | null>(null);
   const [ledger, setLedger] = useState<Record<string, number>>({});

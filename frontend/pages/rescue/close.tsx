@@ -56,7 +56,7 @@ export default function CloseRescue() {
   const [reinstateReason, setReinstateReason] = useState('');
   const [reinstateError, setReinstateError] = useState('');
 
-  const isAdmin = user?.role === 'admin' || user?.role === 'manager';
+  const isAdmin = user?.role === 'admin' || user?.role === 'manager' || user?.role === 'super_user';
 
   useEffect(() => {
     if (!eventId) return;

@@ -306,7 +306,7 @@ export default function Upload() {
 
   useEffect(() => {
     const loadInvoiceOptions = async () => {
-      if (!(userRole === 'admin' || userRole === 'manager')) {
+      if (!(userRole === 'admin' || userRole === 'manager' || userRole === 'super_user')) {
         return;
       }
 
@@ -934,7 +934,7 @@ export default function Upload() {
               <h3 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
                 <span className="text-2xl">💰</span> Financial Data
               </h3>
-              {(userRole === 'admin' || userRole === 'manager') ? (
+              {(userRole === 'admin' || userRole === 'manager' || userRole === 'super_user') ? (
                 <div className="space-y-6">
                   <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200">
                     <h4 className="text-lg font-bold text-ndl-blue mb-4">WST vs Cortex/DOP Daily Comparison</h4>

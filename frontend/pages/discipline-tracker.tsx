@@ -122,7 +122,7 @@ export default function DisciplineTrackerPage() {
     if (!SIGNABLE_SOURCES.has(item.source)) return false;
     if (!item.needs_sign_role) return false;
     if (!user?.role) return false;
-    return user.role === 'admin' || user.role === item.needs_sign_role;
+    return user.role === 'admin' || user.role === 'super_user' || user.role === item.needs_sign_role;
   }
 
   function unsignableReason(item: TrackerItem): string | null {

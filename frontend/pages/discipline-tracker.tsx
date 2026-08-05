@@ -3,7 +3,7 @@ import ProtectedRoute from '../components/ProtectedRoute';
 import { useAuth } from '../contexts/AuthContext';
 
 interface TrackerItem {
-  source: 'manager_accountability' | 'dvic' | 'dvic_violation' | 'attendance' | 'injury' | 'crash' | 'safety_violation';
+  source: 'manager_accountability' | 'dvic' | 'dvic_violation' | 'attendance' | 'injury' | 'crash' | 'safety_violation' | 'coaching_notification';
   id: number;
   shift_date: string | null;
   driver_name: string | null;
@@ -104,10 +104,32 @@ export default function DisciplineTrackerPage() {
       ? items.filter(i => i.source === 'dvic' || i.source === 'dvic_violation')
       : items.filter(i => i.source === filter);
 
+  // The only sources submitSign() actually has a handler for. Crash,
+  // safety_violation, and coaching_notification all get a real (truthy)
+  // needs_sign_role from the backend whenever a stage is pending, so the
+  // old `!item.needs_sign_role` check alone let their Sign button render
+  // as enabled even though clicking it always hit submitSign()'s no-op
+  // "else" branch -- reported as "write-ups aren't clearing when she
+  // signs them," because HR's crash sign clicks were silently doing
+  // nothing. Crash is genuinely signed via its own Slack approval chain
+  // (crash_report.py); safety_violation and coaching_notification have
+  // no sign/approve endpoint anywhere yet -- fixed 2026-08-05 by being
+  // honest about which of the three this is, instead of showing a button
+  // that looks the same as a working one.
+  const SIGNABLE_SOURCES = new Set(['attendance', 'injury', 'dvic', 'dvic_violation']);
+
   function canSign(item: TrackerItem): boolean {
-    if (!item.needs_sign_role) return false;   // crash rows: read-only here
+    if (!SIGNABLE_SOURCES.has(item.source)) return false;
+    if (!item.needs_sign_role) return false;
     if (!user?.role) return false;
     return user.role === 'admin' || user.role === item.needs_sign_role;
+  }
+
+  function unsignableReason(item: TrackerItem): string | null {
+    if (item.source === 'crash') return 'Signed via Slack approval chain';
+    if (item.source === 'safety_violation') return 'No sign-off flow built yet';
+    if (item.source === 'coaching_notification') return 'No sign-off flow built yet';
+    return null;
   }
 
   function keyFor(item: TrackerItem) {
@@ -278,7 +300,9 @@ export default function DisciplineTrackerPage() {
                         </td>
                         <td style={{ padding: '12px 16px', color: '#94a3b8' }}>{fmt(item.shift_date)}</td>
                         <td style={{ padding: '12px 16px' }}>
-                          {!item.needs_sign_role ? (
+                          {!SIGNABLE_SOURCES.has(item.source) ? (
+                            <span style={{ fontSize: 12, color: '#475569' }}>{unsignableReason(item) ?? 'Via Slack'}</span>
+                          ) : !item.needs_sign_role ? (
                             <span style={{ fontSize: 12, color: '#475569' }}>Via Slack</span>
                           ) : signingKey === key ? (
                             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>

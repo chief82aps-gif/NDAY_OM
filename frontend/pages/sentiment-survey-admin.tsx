@@ -56,6 +56,37 @@ interface AdminReport {
   responses: SentimentResponse[];
 }
 
+interface HelpCandidate {
+  response_id: number;
+  driver_name: string;
+  has_slack_link: boolean;
+  survey_date: string;
+  issue_summary: string;
+  draft_message: string;
+}
+
+interface LowRatingDriver {
+  roster_id: number;
+  driver_name: string;
+  slack_member_id: string | null;
+  has_slack_link: boolean;
+  reasons: string[];
+}
+
+interface WaveLeadEntry {
+  driver_name: string;
+  slack_member_id: string | null;
+  role: string;
+}
+
+interface TestingChannelPreview {
+  channel_name: string;
+  low_rating_drivers: LowRatingDriver[];
+  mgt_member_count: number;
+  wave_leads: WaveLeadEntry[];
+  total_invite_count: number;
+}
+
 function fmtDateTime(t: string | null) {
   if (!t) return '—';
   try {
@@ -79,6 +110,19 @@ export default function SentimentSurveyAdminPage() {
   const [composerReason, setComposerReason] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
+
+  const [candidates, setCandidates] = useState<HelpCandidate[] | null>(null);
+  const [loadingCandidates, setLoadingCandidates] = useState(false);
+  const [candidatesError, setCandidatesError] = useState('');
+  const [drafts, setDrafts] = useState<Record<number, string>>({});
+  const [sendingCandidate, setSendingCandidate] = useState<number | null>(null);
+  const [sentCandidates, setSentCandidates] = useState<Set<number>>(new Set());
+
+  const [channelPreview, setChannelPreview] = useState<TestingChannelPreview | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [previewError, setPreviewError] = useState('');
+  const [creatingChannel, setCreatingChannel] = useState(false);
+  const [channelCreated, setChannelCreated] = useState<{ channel_name: string; invited: number } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -150,6 +194,89 @@ export default function SentimentSurveyAdminPage() {
     }
   };
 
+  const findCandidates = async () => {
+    setLoadingCandidates(true);
+    setCandidatesError('');
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+      const res = await fetch(`${api}/sentiment-survey/help-candidates?days=30`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.status === 403) { setCandidatesError('Restricted to owner/HR roles.'); return; }
+      if (!res.ok) { setCandidatesError('Failed to search for candidates.'); return; }
+      const data: { candidates: HelpCandidate[] } = await res.json();
+      setCandidates(data.candidates);
+      const seeded: Record<number, string> = {};
+      for (const c of data.candidates) seeded[c.response_id] = c.draft_message;
+      setDrafts(seeded);
+    } catch {
+      setCandidatesError('Network error.');
+    } finally {
+      setLoadingCandidates(false);
+    }
+  };
+
+  const sendCandidateAsk = async (responseId: number) => {
+    const text = (drafts[responseId] || '').trim();
+    if (!text) return;
+    setSendingCandidate(responseId);
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+      const res = await fetch(`${api}/sentiment-survey/respond/${responseId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ mode: 'free_text', reason: text }),
+      });
+      if (res.ok) {
+        setSentCandidates(prev => new Set(prev).add(responseId));
+      }
+    } finally {
+      setSendingCandidate(null);
+    }
+  };
+
+  const loadChannelPreview = async () => {
+    setLoadingPreview(true);
+    setPreviewError('');
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+      const res = await fetch(`${api}/sentiment-survey/testing-channel-preview`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.status === 403) { setPreviewError('Restricted to owner/HR roles.'); return; }
+      if (!res.ok) { setPreviewError('Failed to load preview.'); return; }
+      setChannelPreview(await res.json());
+    } catch {
+      setPreviewError('Network error.');
+    } finally {
+      setLoadingPreview(false);
+    }
+  };
+
+  const createChannel = async () => {
+    setCreatingChannel(true);
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+      const res = await fetch(`${api}/sentiment-survey/testing-channel-create`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setChannelCreated({ channel_name: data.channel_name, invited: data.invited });
+      } else {
+        setPreviewError('Failed to create channel.');
+      }
+    } catch {
+      setPreviewError('Network error.');
+    } finally {
+      setCreatingChannel(false);
+    }
+  };
+
   return (
     <ProtectedRoute>
       <div style={{ minHeight: '100vh', background: '#0f172a', color: '#e2e8f0', fontFamily: 'system-ui, sans-serif', padding: '32px 24px' }}>
@@ -160,6 +287,132 @@ export default function SentimentSurveyAdminPage() {
               Restricted to owner/HR. Driver identity is revealed here only — nowhere else in the app shows it.
               Monthly, not daily — it takes drivers several days to answer, so a single day is usually near-empty.
             </p>
+          </div>
+
+          <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 10, padding: 16, marginBottom: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+              <div>
+                <p style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>🙋 Candidates to Ask</p>
+                <p style={{ margin: '4px 0 0', fontSize: 12, color: '#94a3b8', maxWidth: 480 }}>
+                  Claude reads unresponded responses from the last 30 days and drafts a message asking the
+                  driver — never assuming — if they'd like to help fix something specific they raised. Review
+                  and edit before sending; nothing goes out until you hit Send.
+                </p>
+              </div>
+              <button
+                onClick={findCandidates}
+                disabled={loadingCandidates}
+                style={{ background: '#2563eb', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', flexShrink: 0 }}
+              >
+                {loadingCandidates ? 'Searching…' : 'Find Candidates'}
+              </button>
+            </div>
+
+            {candidatesError && <p style={{ color: '#f87171', fontSize: 13, marginTop: 10 }}>{candidatesError}</p>}
+
+            {candidates && candidates.length === 0 && !candidatesError && (
+              <p style={{ color: '#64748b', fontSize: 13, marginTop: 12 }}>No strong candidates found in the last 30 days.</p>
+            )}
+
+            {candidates && candidates.length > 0 && (
+              <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {candidates.map(c => (
+                  <div key={c.response_id} style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8, padding: 14 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700 }}>{c.driver_name}</span>
+                      <span style={{ fontSize: 11, color: '#64748b' }}>{c.survey_date}</span>
+                    </div>
+                    <p style={{ fontSize: 12.5, color: '#94a3b8', margin: '0 0 8px', fontStyle: 'italic' }}>{c.issue_summary}</p>
+                    <textarea
+                      value={drafts[c.response_id] ?? ''}
+                      onChange={e => setDrafts(d => ({ ...d, [c.response_id]: e.target.value }))}
+                      rows={3}
+                      style={{ width: '100%', background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155', borderRadius: 6, padding: 10, fontSize: 13, resize: 'vertical' }}
+                    />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+                      {!c.has_slack_link && <span style={{ fontSize: 11, color: '#f87171' }}>Driver is not Slack-linked — can't send.</span>}
+                      <span style={{ flex: 1 }} />
+                      {sentCandidates.has(c.response_id) ? (
+                        <span style={{ fontSize: 12.5, color: '#4ade80', fontWeight: 600 }}>✓ Sent as Blake</span>
+                      ) : (
+                        <button
+                          onClick={() => sendCandidateAsk(c.response_id)}
+                          disabled={sendingCandidate === c.response_id || !c.has_slack_link}
+                          style={{ background: '#2563eb', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', opacity: !c.has_slack_link ? 0.5 : 1 }}
+                        >
+                          {sendingCandidate === c.response_id ? 'Sending…' : 'Send as Blake'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 10, padding: 16, marginBottom: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+              <div>
+                <p style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>🧪 #nday-rts-testing Channel</p>
+                <p style={{ margin: '4px 0 0', fontSize: 12, color: '#94a3b8', maxWidth: 480 }}>
+                  Invites drivers who rated "clear expectations" or "feel valued" low, plus everyone in
+                  #nday-mgt and current wave leads. Preview the exact list before anything is created.
+                </p>
+              </div>
+              <button
+                onClick={loadChannelPreview}
+                disabled={loadingPreview}
+                style={{ background: '#2563eb', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', flexShrink: 0 }}
+              >
+                {loadingPreview ? 'Loading…' : 'Preview Invite List'}
+              </button>
+            </div>
+
+            {previewError && <p style={{ color: '#f87171', fontSize: 13, marginTop: 10 }}>{previewError}</p>}
+
+            {channelCreated && (
+              <div style={{ marginTop: 12, background: '#052e1c', border: '1px solid #14532d', borderRadius: 8, padding: 12, fontSize: 13, color: '#4ade80' }}>
+                ✓ #{channelCreated.channel_name} created, {channelCreated.invited} member(s) invited.
+              </div>
+            )}
+
+            {channelPreview && !channelCreated && (
+              <div style={{ marginTop: 14 }}>
+                <p style={{ fontSize: 12.5, color: '#94a3b8', marginBottom: 10 }}>
+                  <b style={{ color: '#e2e8f0' }}>{channelPreview.total_invite_count}</b> total invites to #{channelPreview.channel_name}
+                  {' — '}{channelPreview.low_rating_drivers.length} flagged driver(s), {channelPreview.mgt_member_count} #nday-mgt member(s), {channelPreview.wave_leads.length} wave lead(s).
+                </p>
+
+                {channelPreview.low_rating_drivers.length > 0 && (
+                  <div style={{ marginBottom: 12 }}>
+                    <p style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: '#64748b', margin: '0 0 6px' }}>Flagged Drivers</p>
+                    {channelPreview.low_rating_drivers.map(d => (
+                      <div key={d.roster_id} style={{ fontSize: 13, padding: '4px 0', display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                        <span>{d.driver_name} <span style={{ color: '#64748b', fontSize: 11.5 }}>({d.reasons.join(', ')})</span></span>
+                        {!d.has_slack_link && <span style={{ color: '#f87171', fontSize: 11 }}>not Slack-linked</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {channelPreview.wave_leads.length > 0 && (
+                  <div style={{ marginBottom: 12 }}>
+                    <p style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: '#64748b', margin: '0 0 6px' }}>Wave Leads</p>
+                    {channelPreview.wave_leads.map((w, i) => (
+                      <div key={i} style={{ fontSize: 13, padding: '4px 0' }}>{w.driver_name} <span style={{ color: '#64748b', fontSize: 11.5 }}>({w.role})</span></div>
+                    ))}
+                  </div>
+                )}
+
+                <button
+                  onClick={createChannel}
+                  disabled={creatingChannel || channelPreview.total_invite_count === 0}
+                  style={{ background: '#16a34a', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 18px', fontSize: 13, fontWeight: 600, cursor: 'pointer', marginTop: 6 }}
+                >
+                  {creatingChannel ? 'Creating…' : `Create Channel & Invite ${channelPreview.total_invite_count}`}
+                </button>
+              </div>
+            )}
           </div>
 
           <div style={{ marginBottom: 20 }}>

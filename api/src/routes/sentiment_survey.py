@@ -658,6 +658,348 @@ def respond_as_blake(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Help candidates — added 2026-08-05 per explicit request ("find the
+# candidate drivers that would like to help fix some of the issues they
+# are identifying... can Blake ask them?"). Deliberately two steps, same
+# human-supervised shape as "Respond as Blake" above: this only reads
+# responses and drafts a suggested ask -- nothing is sent to a driver
+# until a human reviews the draft and sends it via the existing
+# POST /respond/{response_id} (mode="free_text"). AI never volunteers a
+# driver to anyone; it only helps HR find who might want to be asked, and
+# drafts the actual asking -- the driver still has to say yes.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_HELP_CANDIDATE_SYSTEM_PROMPT = """You are helping HR at a small delivery company find drivers worth asking
+a specific question: "would you like to help us fix this?"
+
+You'll get a numbered list of sentiment-survey responses (id + any suggestions, van/equipment issues,
+treatment concerns, or low-rating notes they wrote). For EACH response, decide:
+
+- Is there a specific, concrete, fixable issue here -- not a vague complaint, not just venting, not
+  something outside the company's control -- that this driver seems genuinely invested in?
+- If yes, draft a short message ASKING (never assuming) if they'd like to help work on it. Voice: direct,
+  warm, no corporate language, in the style of a real person named Blake. Reference their specific issue in
+  a sentence, then ask plainly whether they'd want to help. Never claim this is AI-generated. Never guarantee
+  a fix will happen -- just ask if they want to be involved in figuring one out.
+
+Respond with ONLY a JSON array (no markdown fences, no commentary), one object per response that qualifies
+(skip ones that don't): [{"id": <int>, "issue_summary": "<one sentence, for the HR reviewer only, never
+sent to the driver>", "draft_message": "<the actual message to send the driver>"}]
+
+If nothing qualifies, respond with exactly: []"""
+
+
+def find_help_candidates(db: Session, days: int = 30) -> list[dict]:
+    """AI-assisted first pass at drivers worth ASKING if they'd like to
+    help fix an issue they raised. Identity is resolved here (already
+    owner/hr-gated below, same as admin_report) but nothing is sent --
+    see module note above."""
+    client = _anthropic_client()
+    if not client:
+        return []
+
+    since = date.today() - timedelta(days=days)
+    rows = (
+        db.query(SentimentSurveyResponse)
+        .filter(
+            SentimentSurveyResponse.survey_date >= since,
+            SentimentSurveyResponse.responded_at.is_(None),
+            SentimentSurveyResponse.roster_id.isnot(None),
+        )
+        .all()
+    )
+    actionable = [
+        r for r in rows
+        if r.suggestions or r.van_equipment_issues or r.treatment_concerns
+        or any(getattr(r, f"note_{q['key']}") for q in SENTIMENT_QUESTIONS)
+    ]
+    if not actionable:
+        return []
+
+    lines = []
+    for r in actionable:
+        lines.append(f"Response id={r.id}:")
+        if r.suggestions:
+            lines.append(f"  Suggestion: {r.suggestions}")
+        if r.van_equipment_issues:
+            lines.append(f"  Van/equipment issue: {r.van_equipment_issues}")
+        if r.treatment_concerns:
+            lines.append(f"  Treatment concern: {r.treatment_concerns}")
+        for q in SENTIMENT_QUESTIONS:
+            note = getattr(r, f"note_{q['key']}")
+            if note:
+                lines.append(f"  [{q['text']}]: {note}")
+    raw_text = "\n".join(lines)
+
+    import json
+    try:
+        response = client.messages.create(
+            model="claude-opus-4-8",
+            max_tokens=4096,
+            system=_HELP_CANDIDATE_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": raw_text}],
+        )
+        text = next((b.text for b in response.content if b.type == "text"), "[]").strip()
+        if text.startswith("```"):
+            text = text.strip("`")
+            if text.startswith("json"):
+                text = text[4:]
+        parsed = json.loads(text)
+    except Exception as exc:
+        logger.warning("Sentiment survey help-candidate analysis failed: %s", exc)
+        return []
+
+    by_id = {r.id: r for r in actionable}
+    roster_ids = {r.roster_id for r in actionable}
+    roster_map = {
+        e.id: e for e in db.query(DriverRosterEntry).filter(DriverRosterEntry.id.in_(roster_ids)).all()
+    }
+
+    candidates = []
+    for item in parsed:
+        row = by_id.get(item.get("id"))
+        if not row:
+            continue
+        entry = roster_map.get(row.roster_id)
+        candidates.append({
+            "response_id": row.id,
+            "driver_name": entry.payroll_name if entry else "Unknown",
+            "has_slack_link": bool(entry and entry.slack_member_id),
+            "survey_date": row.survey_date.isoformat(),
+            "issue_summary": item.get("issue_summary"),
+            "draft_message": item.get("draft_message"),
+        })
+    return candidates
+
+
+@router.get("/help-candidates")
+def get_help_candidates(
+    days: int = 30,
+    db: Session = Depends(get_db),
+    caller_role: str = Depends(require_any_role("owner", "hr")),
+):
+    """Owner/HR only. Nothing is sent by calling this -- it only surfaces
+    candidates + a draft ask for a human to review and send via
+    POST /respond/{response_id} (mode="free_text")."""
+    return {"candidates": find_help_candidates(db, days=days)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Testing-channel builder — added 2026-08-05 per explicit request: pull
+# together drivers who rated "clear expectations" or "feel valued" low
+# (all-time -- this survey only started 2026-07-26, so there's no long
+# history to window), plus every #nday-mgt member and current wave leads,
+# into one dedicated Slack channel for the RTS/feature testing rollout.
+# Preview-then-create, same human-in-the-loop shape as the rest of this
+# module -- the actual invite list is shown before anyone is added.
+# ─────────────────────────────────────────────────────────────────────────────
+
+TESTING_CHANNEL_NAME = "nday-rts-testing"
+# Published artifact walkthrough for the RTS feature -- private until
+# shared from its own page's share menu (Claude Artifacts default to
+# private); the link only works for recipients once that's done.
+RTS_HOWTO_URL = "https://claude.ai/code/artifact/fa4dd2cd-56be-46ac-bb2f-e7b20124de8c"
+
+
+def _low_rating_drivers(db: Session) -> list[dict]:
+    """One entry per driver who rated clear_expectations or feel_valued
+    <= LOW_RATING_NOTE_THRESHOLD in any response, most recent qualifying
+    response per driver."""
+    rows = (
+        db.query(SentimentSurveyResponse)
+        .filter(
+            SentimentSurveyResponse.roster_id.isnot(None),
+            (
+                (SentimentSurveyResponse.rating_clear_expectations <= LOW_RATING_NOTE_THRESHOLD)
+                | (SentimentSurveyResponse.rating_feel_valued <= LOW_RATING_NOTE_THRESHOLD)
+            ),
+        )
+        .order_by(SentimentSurveyResponse.submitted_at.desc())
+        .all()
+    )
+    by_roster: dict[int, SentimentSurveyResponse] = {}
+    for r in rows:
+        by_roster.setdefault(r.roster_id, r)   # first hit wins = most recent, given the ordering above
+
+    if not by_roster:
+        return []
+    entries = {
+        e.id: e for e in db.query(DriverRosterEntry).filter(DriverRosterEntry.id.in_(list(by_roster.keys()))).all()
+    }
+
+    results = []
+    for rid, r in by_roster.items():
+        entry = entries.get(rid)
+        if not entry:
+            continue
+        reasons = []
+        if r.rating_clear_expectations is not None and r.rating_clear_expectations <= LOW_RATING_NOTE_THRESHOLD:
+            reasons.append("low clear-expectations rating")
+        if r.rating_feel_valued is not None and r.rating_feel_valued <= LOW_RATING_NOTE_THRESHOLD:
+            reasons.append("low feel-valued rating")
+        results.append({
+            "roster_id": rid,
+            "driver_name": entry.payroll_name,
+            "slack_member_id": entry.slack_member_id,
+            "has_slack_link": bool(entry.slack_member_id),
+            "reasons": reasons,
+        })
+    results.sort(key=lambda d: d["driver_name"])
+    return results
+
+
+def _testing_channel_invite_preview(db: Session) -> dict:
+    """Read-only -- computes exactly who would be invited, without
+    creating anything or inviting anyone."""
+    drivers = _low_rating_drivers(db)
+
+    mgt_ids: list[str] = []
+    token = os.getenv("SLACK_BOT_TOKEN")
+    if token:
+        from slack_sdk import WebClient
+        client = WebClient(token=token)
+        try:
+            bot_id = client.auth_test().get("user_id")
+        except Exception:
+            bot_id = None
+        try:
+            resp = client.conversations_members(channel=os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3"))
+            mgt_ids = [m for m in resp.get("members", []) if m != bot_id]
+        except Exception as exc:
+            logger.warning("Testing-channel preview: #nday-mgt member lookup failed: %s", exc)
+
+    from api.src.routes.wave_lead import get_senior_wave_lead, get_active_wave_leads, WAVE_5, HALVES
+    wave_leads = []
+    for half in HALVES:
+        entry = get_senior_wave_lead(half, db)
+        if entry:
+            wave_leads.append({
+                "driver_name": entry.payroll_name,
+                "slack_member_id": entry.slack_member_id,
+                "role": f"Senior Wave Lead ({half})",
+            })
+    for entry in get_active_wave_leads(WAVE_5, db):
+        wave_leads.append({"driver_name": entry.payroll_name, "slack_member_id": entry.slack_member_id, "role": "Wave 5 Lead"})
+
+    invite_ids = {d["slack_member_id"] for d in drivers if d["has_slack_link"]}
+    invite_ids |= set(mgt_ids)
+    invite_ids |= {w["slack_member_id"] for w in wave_leads if w["slack_member_id"]}
+
+    return {
+        "channel_name": TESTING_CHANNEL_NAME,
+        "low_rating_drivers": drivers,
+        "mgt_member_count": len(mgt_ids),
+        "wave_leads": wave_leads,
+        "total_invite_count": len(invite_ids),
+    }
+
+
+@router.get("/testing-channel-preview")
+def testing_channel_preview(
+    db: Session = Depends(get_db),
+    caller_role: str = Depends(require_any_role("owner", "hr")),
+):
+    """Owner/HR only. Read-only -- shows exactly who would be invited to
+    the #nday-rts-testing channel before anything is created."""
+    return _testing_channel_invite_preview(db)
+
+
+@router.post("/testing-channel-create")
+def testing_channel_create(
+    db: Session = Depends(get_db),
+    caller_role: str = Depends(require_any_role("owner", "hr")),
+):
+    """Owner/HR only. Creates (or reuses, if it already exists) #nday-rts-testing
+    and invites every driver flagged by _low_rating_drivers(), every
+    #nday-mgt member, and current wave leads -- the exact same set
+    testing_channel_preview() shows."""
+    token = os.getenv("SLACK_BOT_TOKEN")
+    if not token:
+        raise HTTPException(status_code=503, detail="SLACK_BOT_TOKEN is not configured")
+    from slack_sdk import WebClient
+    client = WebClient(token=token)
+
+    preview = _testing_channel_invite_preview(db)
+
+    try:
+        resp = client.conversations_create(name=TESTING_CHANNEL_NAME, is_private=False)
+        channel_id = resp["channel"]["id"]
+    except Exception as exc:
+        if "name_taken" in str(exc):
+            channel_id = None
+            cursor = None
+            while True:
+                listing = client.conversations_list(types="public_channel", limit=200, cursor=cursor)
+                channel_id = next((c["id"] for c in listing["channels"] if c["name"] == TESTING_CHANNEL_NAME), None)
+                if channel_id:
+                    break
+                cursor = listing.get("response_metadata", {}).get("next_cursor") or None
+                if not cursor:
+                    break
+            if not channel_id:
+                raise HTTPException(status_code=502, detail=f"Channel exists but could not be found: {exc}")
+        else:
+            raise HTTPException(status_code=502, detail=f"Channel creation failed: {exc}")
+
+    invite_ids: set[str] = set()
+    for d in preview["low_rating_drivers"]:
+        if d["has_slack_link"]:
+            invite_ids.add(d["slack_member_id"])
+    for w in preview["wave_leads"]:
+        if w["slack_member_id"]:
+            invite_ids.add(w["slack_member_id"])
+
+    mgt_ids: list[str] = []
+    try:
+        bot_id = client.auth_test().get("user_id")
+    except Exception:
+        bot_id = None
+    try:
+        mresp = client.conversations_members(channel=os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3"))
+        mgt_ids = [m for m in mresp.get("members", []) if m != bot_id]
+    except Exception as exc:
+        logger.warning("Testing-channel create: #nday-mgt member lookup failed: %s", exc)
+    invite_ids |= set(mgt_ids)
+
+    invited = 0
+    invite_errors: list[str] = []
+    for uid in invite_ids:
+        try:
+            client.conversations_invite(channel=channel_id, users=uid)
+            invited += 1
+        except Exception as exc:
+            if "already_in_channel" not in str(exc):
+                invite_errors.append(f"{uid}: {exc}")
+
+    try:
+        client.chat_postMessage(
+            channel=channel_id,
+            text=(
+                "👋 *Welcome to the team testing round.*\n\n"
+                "We're rolling out some new dispatch/driver tools — starting with the RTS (Return to Station) "
+                "debrief — and we want *your* eyes on it before it goes wide. You're in this channel because "
+                "your input matters and we think you're exactly the kind of person who can help make this "
+                "actually good, not just functional.\n\n"
+                "Straight talk: it's not going to be perfect. That's *why* we need you — to poke at it, "
+                "break it, tell us what's confusing or annoying before it's everyone's problem. No feedback is "
+                "too small.\n\n"
+                f"📖 How-to guide: {RTS_HOWTO_URL}\n"
+                "👉 Try it, then just say what you found in here."
+            ),
+        )
+    except Exception as exc:
+        logger.warning("Testing-channel create: welcome message failed: %s", exc)
+
+    return {
+        "status": "created",
+        "channel_name": TESTING_CHANNEL_NAME,
+        "channel_id": channel_id,
+        "invited": invited,
+        "invite_errors": invite_errors,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Daily AI analysis + report — gated, never includes driver names.
 # ─────────────────────────────────────────────────────────────────────────────
 

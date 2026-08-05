@@ -121,6 +121,11 @@ _REMINDERS = {
         "label": "Quality RTS (daily CSV)",
         "window": (12, 0, 14, 0),
         "page": "/ops-ingest",
+        "hint": (
+            "Find it at logistics.amazon.com -> Performance -> *Return To Station Dashboard*. "
+            "Set the view to *Day* and pick yesterday's date, then use the download icon "
+            "(top right, above the driver table) to export the CSV."
+        ),
     },
     "customer_feedback": {
         "detected_type": "customer_feedback",

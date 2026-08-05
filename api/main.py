@@ -563,8 +563,9 @@ async def _callout_queue_loop():
                 if sent:
                     logger.info("Tight-roster reminders sent: %d", sent)
 
-                # Recurring callout summary, 9:30 AM - 12:30 PM, every 15 min
-                # (same cadence as this loop already runs on) -- gated by
+                # Recurring callout summary -- event-driven (posts when a new
+                # callout lands, checked every tick of this loop) plus one
+                # definitive final post at noon. Gated by
                 # CALLOUT_SUMMARY_ACTIVE, default false.
                 from api.src.routes.attendance import send_recurring_callout_summary
                 await asyncio.to_thread(send_recurring_callout_summary, db)

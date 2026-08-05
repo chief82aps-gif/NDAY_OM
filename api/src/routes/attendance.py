@@ -1756,41 +1756,42 @@ def send_morning_callout_digest(shift_date: date, db: Session) -> int:
         return 0
 
 
-# ── Recurring callout summary (9:30 AM - 12:30 PM, every 15 min) ──────────────
+# ── Recurring callout summary (event-driven + noon final) ────────────────────
 # Added 2026-07-30 per explicit HR request: "the callouts are not flagging
 # the nday-mgt and nday-hr rooms... we need a summary of callouts that
-# happen" sent repeatedly through the morning so it can't be missed and
-# actually reaches HR too, not just dispatch. Separate from (additive to)
-# send_morning_callout_digest() above, which is a one-time 8:30 AM
-# per-callout digest to #nday-mgt only -- this is an always-current
-# rolling summary of the whole day so far, reposted every 15 minutes.
+# happen." Originally reposted the same summary every 15 minutes from
+# 9:30 AM-12:30 PM regardless of whether anything changed -- redesigned
+# 2026-08-05 per explicit direction ("we just need these as they come in
+# ... then a final summary at 1200") after that produced identical
+# back-to-back posts (10:49, 11:17, 11:32, 11:47, 12:03 all showing the
+# same 2 callouts). Now: a fresh post only when a NEW callout has landed
+# since the last one, plus exactly one definitive final post at noon --
+# after that, nothing further posts for the day. Separate from (additive
+# to) send_morning_callout_digest() above, which is a one-time 8:30 AM
+# per-callout digest to #nday-mgt only.
 
-_CALLOUT_SUMMARY_WINDOW_START = (9, 30)    # 9:30 AM Pacific
-_CALLOUT_SUMMARY_WINDOW_END = (12, 30)     # 12:30 PM Pacific -- "roughly when everybody is on the road"
-_CALLOUT_SUMMARY_INTERVAL_MINUTES = 15
+_CALLOUT_SUMMARY_NOON_HOUR = 12   # 12:00 PM Pacific -- the one definitive final post
 _CALLOUT_SUMMARY_KEY_PREFIX = "callout_recurring_summary_"
 
 
 def send_recurring_callout_summary(db: Session, force: bool = False) -> dict:
-    """Repeating summary of today's callouts, posted to BOTH #nday-mgt and
-    #nday-hr. force=True bypasses the time window and the 15-minute
-    throttle for manual testing/recovery."""
+    """Posts a fresh callout summary to BOTH #nday-mgt and #nday-hr each
+    time a new callout has landed since the last post, plus one
+    definitive final summary at noon (after which nothing more posts for
+    the day). force=True bypasses the noon-already-sent gate for manual
+    testing/recovery."""
     if not get_flag("CALLOUT_SUMMARY_ACTIVE"):
         return {"status": "inactive", "note": "Set CALLOUT_SUMMARY_ACTIVE=true on Render to enable"}
 
     now = datetime.now(PACIFIC)
     today = now.date()
-    window_start = now.replace(hour=_CALLOUT_SUMMARY_WINDOW_START[0], minute=_CALLOUT_SUMMARY_WINDOW_START[1], second=0, microsecond=0)
-    window_end = now.replace(hour=_CALLOUT_SUMMARY_WINDOW_END[0], minute=_CALLOUT_SUMMARY_WINDOW_END[1], second=0, microsecond=0)
-
-    if not force and not (window_start <= now <= window_end):
-        return {"status": "outside_window", "date": today.isoformat()}
-
     state_key = f"{_CALLOUT_SUMMARY_KEY_PREFIX}{today.isoformat()}"
     state = get_reminder_state(db, state_key)
-    last_sent_at = datetime.fromisoformat(state["last_sent_at"]) if state.get("last_sent_at") else None
-    if not force and last_sent_at and (now - last_sent_at).total_seconds() < _CALLOUT_SUMMARY_INTERVAL_MINUTES * 60:
-        return {"status": "throttled", "date": today.isoformat()}
+    last_seen_count = state.get("last_seen_count", 0)
+    noon_sent = bool(state.get("noon_sent", False))
+
+    if not force and noon_sent:
+        return {"status": "already_finalized", "date": today.isoformat()}
 
     events = (
         db.query(AttendanceEvent)
@@ -1798,8 +1799,18 @@ def send_recurring_callout_summary(db: Session, force: bool = False) -> dict:
         .order_by(AttendanceEvent.call_time)
         .all()
     )
+
+    is_final = force or now.hour >= _CALLOUT_SUMMARY_NOON_HOUR
+    has_new_event = len(events) > last_seen_count
+    if not is_final and not has_new_event:
+        return {"status": "no_change", "date": today.isoformat()}
+
     if not events:
-        set_reminder_state(db, state_key, {"last_sent_at": now.isoformat()})
+        # Deliberately does NOT set noon_sent here, even past noon --
+        # there's nothing to finalize with zero callouts, and a driver
+        # calling out later that afternoon should still get flagged
+        # immediately rather than being silently suppressed because the
+        # day was marked "finalized" while empty.
         return {"status": "no_callouts", "date": today.isoformat()}
 
     lines = []
@@ -1809,8 +1820,9 @@ def send_recurring_callout_summary(db: Session, force: bool = False) -> dict:
         lines.append(f"• *{e.driver_name}* — {reason}{flag}")
 
     unauthorized_count = sum(1 for e in events if e.reason_valid is False)
+    label = "Final Callout Summary" if is_final else "Callout Summary"
     text = (
-        f"📋 *Callout Summary — {now.strftime('%A, %B %-d')}* (as of {now.strftime('%-I:%M %p')} PT)\n"
+        f"📋 *{label} — {now.strftime('%A, %B %-d')}* (as of {now.strftime('%-I:%M %p')} PT)\n"
         f"{len(events)} callout(s) today"
         + (f", {unauthorized_count} unauthorized" if unauthorized_count else "")
         + "\n\n" + "\n".join(lines)
@@ -1830,8 +1842,8 @@ def send_recurring_callout_summary(db: Session, force: bool = False) -> dict:
         except Exception as exc:
             logger.warning("Recurring callout summary post failed for %s: %s", cid, exc)
 
-    set_reminder_state(db, state_key, {"last_sent_at": now.isoformat()})
-    return {"status": "sent", "date": today.isoformat(), "callouts": len(events), "channels_sent": sent}
+    set_reminder_state(db, state_key, {"last_seen_count": len(events), "noon_sent": is_final, "last_sent_at": now.isoformat()})
+    return {"status": "sent", "date": today.isoformat(), "callouts": len(events), "channels_sent": sent, "final": is_final}
 
 
 @router.post("/callout/trigger-summary")

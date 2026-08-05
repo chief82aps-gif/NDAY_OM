@@ -151,6 +151,11 @@ FLAG_REGISTRY: dict[str, dict] = {
         "description": "Once Amazon's ECP message lands, asks #nday-mgt for the Scheduling-page screenshot.",
         "category": "Reminders",
     },
+    "TWF_RECALIBRATION_REMINDER_ACTIVE": {
+        "label": "TWF Recalibration Reminder",
+        "description": "Quarterly nudge to re-download and re-ingest a fresh Tenured Workforce file, catching drivers who worked elsewhere or were rehired that our own route-count tracker wouldn't otherwise know about.",
+        "category": "Reminders",
+    },
     "COACHING_NOTIFICATIONS_ACTIVE": {
         "label": "Coaching Notifications",
         "description": "Scans for Amazon's weekly Coaching Notifications digest (forwarded into Slack) and runs the driver-ack -> ops_manager -> HR approval chain.",

@@ -490,6 +490,73 @@ def trigger_ecp_screenshot_reminder(force: bool = True, db: Session = Depends(ge
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# TWF Recalibration reminder — added 2026-08-05. Distinct from reminder #7
+# above (the routine weekly Friday "did this week's TWF file land" nudge):
+# this is a much lower-frequency (quarterly) safety net specifically
+# framed around WHY a fresh ingest matters -- driver_scoring.py's
+# get_estimated_lifetime_routes() baseline-plus-our-own-count tracker has
+# no way to know about routes a driver ran elsewhere in Amazon's network,
+# or before a rehire -- only a real re-ingest of Amazon's own file can
+# correct that drift. Explicit user framing (2026-08-05): "catch any
+# drivers that may have worked elsewhere or were rehired and the new
+# counting system wouldn't know about their previous routes." A backstop
+# in case the weekly nudge gets missed for a while, not a replacement.
+# ─────────────────────────────────────────────────────────────────────────────
+
+TWF_RECALIBRATION_INTERVAL_DAYS = 90
+_TWF_RECALIBRATION_KEY = "twf_recalibration_reminder"
+
+
+def run_twf_recalibration_reminder(db: Session, force: bool = False) -> dict:
+    """Checked daily from main.py's background loop. Fires roughly every
+    90 days -- a nudge, not an auto-ingest, since Amazon's portal can't be
+    scraped/automated (see CLAUDE.md's portal-automation constraint)."""
+    if not get_flag("TWF_RECALIBRATION_REMINDER_ACTIVE"):
+        return {"status": "inactive", "note": "Set TWF_RECALIBRATION_REMINDER_ACTIVE=true on Render to enable"}
+
+    state = get_reminder_state(db, _TWF_RECALIBRATION_KEY)
+    last_sent = state.get("sent_at")
+    if not force and last_sent:
+        days_since = (datetime.utcnow() - datetime.fromisoformat(last_sent)).days
+        if days_since < TWF_RECALIBRATION_INTERVAL_DAYS:
+            return {"status": "not_due", "days_since_last": days_since}
+
+    client = _client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    try:
+        client.chat_postMessage(
+            channel=MGT_CHANNEL,
+            text=(
+                ":recycle: *Quarterly Tenured Workforce Recalibration*\n\n"
+                "Time for a fresh Tenured Workforce DAs Report re-ingest. Our own route-count "
+                "tracker only counts routes *we've* assigned since the last file — it has no way "
+                "to know if a driver worked elsewhere in Amazon's network, or was rehired with "
+                "prior route history. A real re-ingest of Amazon's own file corrects that drift.\n\n"
+                "1. logistics.amazon.com → Performance → Interactive Report → Supplementary "
+                "Reports → TWF Dashboard\n"
+                "2. Select the *Tenured Workforce DAs Report* tab (not Calculation Report)\n"
+                "3. Export, then upload via POST /tenured-workforce/ingest-upload\n\n"
+                "_This is separate from the weekly Friday reminder — this one's a quarterly "
+                "backstop in case a week (or several) got missed._"
+            ),
+        )
+    except Exception as exc:
+        logger.warning("TWF recalibration reminder post failed: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+    set_reminder_state(db, _TWF_RECALIBRATION_KEY, {"sent_at": datetime.utcnow().isoformat()})
+    return {"status": "sent"}
+
+
+@router.post("/twf-recalibration/trigger")
+def trigger_twf_recalibration_reminder(force: bool = True, db: Session = Depends(get_db)):
+    """Manual trigger for testing/recovery — same function the daily loop calls."""
+    return run_twf_recalibration_reminder(db, force=force)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Daily fallback PIN — added 2026-08-01. A driver's personal callout/EOD PIN
 # (DriverRosterEntry.ssn_last4) is the only way in today, and dispatchers have
 # no way to get someone back in when it's forgotten short of an admin PIN

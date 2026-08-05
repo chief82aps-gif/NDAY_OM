@@ -448,6 +448,26 @@ async def _ecp_screenshot_reminder_loop():
         await asyncio.sleep(60)
 
 
+async def _twf_recalibration_reminder_loop():
+    """Every 60 s — delegates to mgt_reminders.run_twf_recalibration_reminder(),
+    which internally gates on a ~90-day interval (checked frequently,
+    fires rarely). Distinct from the existing weekly Friday TWF reminder --
+    this is a quarterly recalibration safety net. Gated by
+    TWF_RECALIBRATION_REMINDER_ACTIVE (default false)."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(mgt_reminders.run_twf_recalibration_reminder, db)
+            except Exception as exc:
+                logger.warning("TWF recalibration reminder loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("TWF recalibration reminder loop outer error: %s", exc)
+        await asyncio.sleep(60)
+
+
 async def _okami_finalize_reminder_loop():
     """Every 60 s — delegates to okami_capacity.run_okami_finalize_reminder(),
     which nags #nday-mgt every 5 min from 3:30 PM until Okami is finalized
@@ -842,6 +862,7 @@ async def startup():
     asyncio.create_task(_timecard_report_nudge_loop())
     asyncio.create_task(_daily_fallback_pin_loop())
     asyncio.create_task(_ecp_screenshot_reminder_loop())
+    asyncio.create_task(_twf_recalibration_reminder_loop())
     asyncio.create_task(_okami_finalize_reminder_loop())
     asyncio.create_task(_associate_data_reminder_loop())
     asyncio.create_task(_dm_response_summary_loop())

@@ -207,3 +207,32 @@ def preview(db: Session = Depends(get_db)):
     """See today's digest text without sending it."""
     today = datetime.now(PT).date()
     return {"date": today.isoformat(), "text": build_digest_text(db, today)}
+
+
+@router.post("/resend-fleet")
+def resend_fleet(db: Session = Depends(get_db)):
+    """One-off catch-up send -- added 2026-08-05 after discovering
+    #nday-fleet was private and the bot had never been invited, so every
+    van-issue alert had been failing silently. Posts just today's Fleet
+    section (grounded vans + reported van issues) to #nday-fleet, without
+    touching the full digest's own once-daily state (run_daily_ops_digest
+    still fires normally tonight/tomorrow)."""
+    client = _client()
+    if not client:
+        return {"status": "no_slack_token"}
+    today = datetime.now(PT).date()
+    grounded_lines = _grounded_van_lines(db)
+    van_issue_lines = _van_issue_lines(db, today)
+    fleet_lines = grounded_lines + van_issue_lines
+    if not fleet_lines:
+        return {"status": "nothing_to_send", "date": today.isoformat()}
+    date_str = today.strftime("%A, %B ") + str(today.day)
+    text = (
+        f"📋 *Fleet Update — {date_str}* ({len(grounded_lines)} grounded, {len(van_issue_lines)} reported issue(s))\n\n"
+        + "\n".join(fleet_lines)
+    )
+    try:
+        client.chat_postMessage(channel=FLEET_CHANNEL, text=text)
+    except Exception as exc:
+        return {"status": "error", "detail": str(exc)}
+    return {"status": "sent", "date": today.isoformat(), "grounded": len(grounded_lines), "van_issues": len(van_issue_lines)}

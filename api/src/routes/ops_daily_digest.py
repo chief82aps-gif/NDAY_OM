@@ -2,8 +2,15 @@
 Daily Ops Digest — added 2026-08-04, per explicit request for a single
 end-of-day rollup of "every event required to act on": crashes,
 injuries, callouts, packages delivered/route progress, vans grounded.
-Formatted by type (HR / Operational / Fleet) as ONE report, sent
-identically to #nday-mgt, #nday-fleet, and #nday-hr at 10:00 PM Pacific.
+Formatted as an executive summary (HR / Operational / Fleet) as ONE
+report, sent identically to #nday-mgt, #nday-fleet, and #nday-hr.
+
+Timing redesigned 2026-08-05 (was: fixed 10:00 PM Pacific) -- now fires
+once the same day's final Cortex data (delivered + RTS) has posted,
+reusing ops_cadence.py's "both uploads landed since last wave" signal
+(the same one that gates the All In post), since the summary's own
+numbers (total delivered, total RTS packages) aren't meaningful before
+that data exists.
 
 Distinct from eod_survey.py's existing send_daily_eod_category_digests()
 (gated off by EOD_CATEGORY_DIGEST_ACTIVE, fires ~22:15 PT): that digest
@@ -44,7 +51,6 @@ MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")     # #nday-mgt
 FLEET_CHANNEL = os.getenv("SLACK_FLEET_CHANNEL", "C0BJ8J5LGAU")  # #nday-fleet
 HR_CHANNEL = os.getenv("SLACK_HR_CHANNEL", "C0BLRE793L0")        # #nday-hr
 
-DIGEST_HOUR = 22   # 10:00 PM Pacific
 _STATE_KEY = "ops_daily_digest"
 
 
@@ -112,18 +118,14 @@ def _incident_lines(db: Session, today: date) -> list[str]:
     return [f"• {r.driver_name} — {r.incident_description or 'see survey'}" for r in rows]
 
 
-def _survey_ops_lines(db: Session, today: date) -> list[str]:
-    """Route issues + missing equipment self-reported on today's EOD
-    survey -- added 2026-08-05 per explicit direction ("Ops should get
-    the same key items reported from any surveys")."""
-    rows = db.query(EodSurveyResponse).filter(EodSurveyResponse.survey_date == today).all()
-    lines = []
-    for r in rows:
-        if r.route_issues:
-            lines.append(f"• {r.driver_name} — route issue: {r.route_issue_description or 'see survey'}")
-        if r.all_equipment_present is False:
-            lines.append(f"• {r.driver_name} — missing equipment: {r.missing_equipment or 'see survey'}")
-    return lines
+def _mgmt_contact_lines(db: Session, today: date) -> list[str]:
+    """EOD-survey requests to speak with HR/management -- added 2026-08-05."""
+    rows = (
+        db.query(EodSurveyResponse)
+        .filter(EodSurveyResponse.survey_date == today, EodSurveyResponse.needs_management_contact == True)  # noqa: E712
+        .all()
+    )
+    return [f"• {r.driver_name} — {r.management_contact_reason or 'see survey'}" for r in rows]
 
 
 def _route_progress(db: Session, today: date) -> Optional[dict]:
@@ -164,77 +166,104 @@ def _pt_time_str(dt: Optional[datetime]) -> Optional[str]:
     return dt.replace(tzinfo=timezone.utc).astimezone(PT).strftime("%-I:%M %p")
 
 
-def _arrival_and_eod_lines(db: Session, today: date) -> list[str]:
-    """Alphabetical Arrived / Completed EOD times per driver -- added
-    2026-08-05 per explicit request. Arrived = DriverShiftDM.arrived_at
-    (pre-shift arrival confirmation, not end-of-day); EOD = EodSurveyResponse.submitted_at."""
-    shift_rows = db.query(DriverShiftDM).filter(DriverShiftDM.shift_date == today).all()
-    eod_rows = db.query(EodSurveyResponse).filter(EodSurveyResponse.survey_date == today).all()
+def _mgt_stats(db: Session, today: date) -> dict:
+    """Executive-summary numbers for the MGT section -- added 2026-08-05,
+    replacing the earlier per-item raw dump per explicit direction
+    ("I want the executive summary"). Total RTS packages comes from
+    today's Packages export (packages.py) -- not quality_rts.py's file,
+    which reports the PRIOR day and wouldn't have today's number yet at
+    10 PM. Efficiency = total time between "I've Arrived"
+    (DriverShiftDM.arrived_at) and EOD submission, summed across every
+    driver with both, divided by the summed planned route duration for
+    the day -- a rough over/under vs. planned-time ratio, not a
+    per-driver metric."""
+    from api.src.database import PackagesSnapshot
 
-    arrived_by_name = {r.driver_name: r.arrived_at for r in shift_rows if r.arrived_at}
-    eod_by_name = {r.driver_name: r.submitted_at for r in eod_rows}
+    latest_pkg_snap = (
+        db.query(PackagesSnapshot)
+        .filter(PackagesSnapshot.report_date == today)
+        .order_by(PackagesSnapshot.imported_at.desc())
+        .first()
+    )
+    total_rts_packages = latest_pkg_snap.package_count if latest_pkg_snap else None
 
-    names = sorted(set(arrived_by_name) | set(eod_by_name))
-    lines = []
-    for name in names:
-        arrived = _pt_time_str(arrived_by_name.get(name))
-        completed = _pt_time_str(eod_by_name.get(name))
-        lines.append(f"• {name} — Arrived: {arrived or '—'}, Completed EOD: {completed or '—'}")
-    return lines
+    progress = _route_progress(db, today)
+    total_delivered = progress["packages_delivered"] if progress else None
 
+    route_count = db.query(DailyRouteAssignment).filter(DailyRouteAssignment.assignment_date == today).count()
+    eod_count = db.query(EodSurveyResponse).filter(EodSurveyResponse.survey_date == today).count()
+    eod_pct = round(100 * eod_count / route_count, 1) if route_count else None
 
-def _missing_eod_lines(db: Session, today: date) -> list[str]:
-    """Alphabetical list of drivers scheduled today with no EOD survey
-    submission -- same logic as eod_survey.py's GET /missing, added here
-    2026-08-05 per explicit request."""
-    scheduled = db.query(DailyRouteAssignment).filter(DailyRouteAssignment.assignment_date == today).all()
-    submitted_names = {
-        r.driver_name.lower() for r in db.query(EodSurveyResponse).filter(EodSurveyResponse.survey_date == today).all()
+    shift_rows = db.query(DriverShiftDM).filter(DriverShiftDM.shift_date == today, DriverShiftDM.arrived_at.isnot(None)).all()
+    eod_time_by_name = {
+        r.driver_name: r.submitted_at
+        for r in db.query(EodSurveyResponse).filter(EodSurveyResponse.survey_date == today).all()
     }
-    missing = sorted({a.driver_name for a in scheduled if a.driver_name.lower() not in submitted_names})
-    return [f"• {name}" for name in missing]
+    total_worked_minutes = 0.0
+    matched = 0
+    for s in shift_rows:
+        eod_time = eod_time_by_name.get(s.driver_name)
+        if eod_time and s.arrived_at:
+            delta_minutes = (eod_time - s.arrived_at).total_seconds() / 60
+            if delta_minutes > 0:
+                total_worked_minutes += delta_minutes
+                matched += 1
+
+    total_route_minutes = (
+        db.query(func.sum(DailyRouteAssignment.route_duration))
+        .filter(DailyRouteAssignment.assignment_date == today)
+        .scalar() or 0
+    )
+    efficiency_pct = round(100 * total_worked_minutes / total_route_minutes, 1) if total_route_minutes else None
+
+    return {
+        "total_rts_packages": total_rts_packages,
+        "total_delivered": total_delivered,
+        "route_count": route_count,
+        "eod_count": eod_count,
+        "eod_pct": eod_pct,
+        "efficiency_pct": efficiency_pct,
+        "matched_shift_count": matched,
+    }
 
 
 def build_digest_text(db: Session, today: date) -> str:
+    """Executive-summary format -- redesigned 2026-08-05 per explicit
+    direction, replacing the earlier raw per-item/per-driver dump. HR
+    still lists actual occurrences (incidents/callouts/injuries/mgmt
+    requests); MGT is aggregate stats only; Fleet stays van issues."""
     date_str = today.strftime("%A, %B ") + str(today.day)
 
-    hr_lines = _injury_lines(db, today) + _callout_lines(db, today) + _crash_lines(db, today) + _incident_lines(db, today)
+    hr_lines = (
+        _incident_lines(db, today)
+        + _callout_lines(db, today)
+        + _injury_lines(db, today)
+        + _mgmt_contact_lines(db, today)
+        + _crash_lines(db, today)   # not in the explicit list but a real write-up needing HR eyes -- flagged, remove if not wanted
+    )
     hr_section = "\n".join(hr_lines) or "_Nothing to report._"
 
-    progress = _route_progress(db, today)
-    ops_lines = []
-    if progress:
-        ops_lines.append(
-            f"• Routes: *{progress['routes_complete']}/{progress['routes']}* complete\n"
-            f"• Packages delivered: *{progress['packages_delivered']}*\n"
-            f"• Packages remaining: *{progress['packages_remaining']}*"
-        )
-    else:
-        ops_lines.append("_No Cortex progress data today._")
-    survey_ops_lines = _survey_ops_lines(db, today)
-    if survey_ops_lines:
-        ops_lines.append("\n".join(survey_ops_lines))
-    ops_section = "\n\n".join(ops_lines)
+    stats = _mgt_stats(db, today)
+    mgt_section = (
+        f"• Total RTS packages: *{stats['total_rts_packages'] if stats['total_rts_packages'] is not None else '—'}*\n"
+        f"• Total delivered packages: *{stats['total_delivered'] if stats['total_delivered'] is not None else '—'}*\n"
+        f"• EOD complete vs. routes: *{stats['eod_count']}/{stats['route_count']}*"
+        + (f" ({stats['eod_pct']}%)" if stats['eod_pct'] is not None else "") + "\n"
+        f"• Arrived-to-EOD time vs. planned route time: "
+        + (f"*{stats['efficiency_pct']}%*" if stats['efficiency_pct'] is not None else "_no matched arrival/EOD pairs yet_")
+        + (f" (from {stats['matched_shift_count']} driver(s))" if stats['matched_shift_count'] else "")
+    )
 
     grounded_lines = _grounded_van_lines(db)
     van_issue_lines = _van_issue_lines(db, today)
     fleet_lines = grounded_lines + van_issue_lines
-    fleet_section = "\n".join(fleet_lines) or "_No grounded vans or reported van issues._"
-    fleet_header = f"*Fleet* ({len(grounded_lines)} grounded, {len(van_issue_lines)} reported issue(s))" if fleet_lines else "*Fleet*"
-
-    arrival_lines = _arrival_and_eod_lines(db, today)
-    arrival_section = "\n".join(arrival_lines) or "_No arrival/EOD data today._"
-
-    missing_lines = _missing_eod_lines(db, today)
-    missing_section = "\n".join(missing_lines) or "_Everyone scheduled today submitted their EOD survey._"
+    fleet_section = "\n".join(fleet_lines) or "_No van issues reported._"
 
     return (
         f"📋 *Daily Ops Digest — {date_str}*\n\n"
         f"*HR* ({len(hr_lines)} item(s))\n{hr_section}\n\n"
-        f"*Operational (Packages / Routes)*\n{ops_section}\n\n"
-        f"{fleet_header}\n{fleet_section}\n\n"
-        f"*Arrival / EOD Times* (A-Z)\n{arrival_section}\n\n"
-        f"*Did Not Complete EOD Survey* (A-Z)\n{missing_section}"
+        f"*Operational*\n{mgt_section}\n\n"
+        f"*Fleet*\n{fleet_section}"
     )
 
 
@@ -261,7 +290,16 @@ def _send_digest(db: Session, today: date) -> None:
 
 def run_daily_ops_digest(db: Session, force: bool = False) -> dict:
     """Called every 60s from main.py's background loop. Fires once daily
-    at/after 10:00 PM Pacific, dedup'd per day via ReminderThrottleState."""
+    once the same day's final Cortex data (delivered + RTS) has posted --
+    reuses ops_cadence.py's "both Packages+Cortex uploaded since last
+    wave launched" signal, the same one that gates the All In post --
+    rather than a fixed clock time, since the executive summary's own
+    numbers aren't meaningful before that data exists. Dedup'd per day
+    via ReminderThrottleState."""
+    from api.src.routes.ops_cadence import (
+        _last_wave_launch_dt, _to_naive_utc, _packages_uploaded_since, _cortex_uploaded_since,
+    )
+
     now = datetime.now(PT)
     today = now.date()
 
@@ -269,8 +307,14 @@ def run_daily_ops_digest(db: Session, force: bool = False) -> dict:
         state = get_reminder_state(db, _STATE_KEY)
         if state.get("last_sent_date") == today.isoformat():
             return {"status": "already_sent", "date": today.isoformat()}
-        if now.hour < DIGEST_HOUR:
-            return {"status": "outside_window"}
+
+        last_wave_dt = _last_wave_launch_dt(db, today)
+        if not last_wave_dt or now < last_wave_dt:
+            return {"status": "no_wave_data_yet", "date": today.isoformat()}
+
+        since_utc = _to_naive_utc(last_wave_dt)
+        if not (_packages_uploaded_since(db, since_utc) and _cortex_uploaded_since(db, since_utc, today)):
+            return {"status": "waiting_for_final_data", "date": today.isoformat()}
 
     _send_digest(db, today)
     set_reminder_state(db, _STATE_KEY, {"last_sent_date": today.isoformat()})

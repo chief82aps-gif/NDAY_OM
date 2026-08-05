@@ -208,7 +208,11 @@ def ingest_email(request: IngestEmailRequest, db: Session = Depends(get_db)):
     exact same _store_coaching_notifications() the Slack-scan path uses,
     so case_number dedup (Amazon re-sending the same event more than
     once) is identical either way -- no separate storage logic to keep
-    in sync."""
+    in sync. Respects the same COACHING_NOTIFICATIONS_ACTIVE flag as the
+    Slack-scan path -- the flag conceptually gates the whole feature,
+    not just one ingest route in."""
+    if not get_flag("COACHING_NOTIFICATIONS_ACTIVE"):
+        return {"status": "inactive", "note": "Set COACHING_NOTIFICATIONS_ACTIVE=true (or flip it on /feature-flags) to enable"}
     return _store_coaching_notifications(request.html_content, request.source_email_id, db)
 
 

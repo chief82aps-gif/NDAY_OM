@@ -216,6 +216,23 @@ def ingest_email(request: IngestEmailRequest, db: Session = Depends(get_db)):
     return _store_coaching_notifications(request.html_content, request.source_email_id, db)
 
 
+@router.get("/preview-test")
+def preview_test(
+    driver_name: str = "Collin Jonathan LaTour",
+    behavior: str = "Delivered To Incorrect Address",
+    db: Session = Depends(get_db),
+):
+    """See the exact mentoring DM text without sending anything or
+    writing to the database -- for reviewing tone/format before using
+    /send-test to actually deliver it."""
+    roster = resolve_roster_entry(driver_name, db)
+    if not roster:
+        raise HTTPException(status_code=404, detail=f"No roster entry found for '{driver_name}'")
+
+    notification = CoachingNotification(da_name=roster.payroll_name, behavior=behavior, coaching_tip="This is a test send -- verifying the mentoring DM format and tone.")
+    return {"driver_name": roster.payroll_name, "text": build_driver_stage_message(notification, db)}
+
+
 @router.post("/send-test")
 def send_test(
     driver_name: str = "Collin Jonathan LaTour",
@@ -257,18 +274,10 @@ def send_test(
     return {"status": "sent", "driver_name": roster.payroll_name, "notification_id": notification.id, "case_number": case_number}
 
 
-def _notify_driver_stage(notification: CoachingNotification, roster: DriverRosterEntry, db: Session) -> None:
-    """Stage 1 — low-key, positive DM to the specific driver. Deliberately
-    NOT framed as a write-up on its face; the acknowledgment is what
-    quietly starts the real approval chain behind it."""
-    approval = db.query(CoachingNotificationApproval).filter(
-        CoachingNotificationApproval.notification_id == notification.id,
-        CoachingNotificationApproval.stage_order == 1,
-    ).first()
-    client = _client()
-    if not approval or not client:
-        return
-
+def build_driver_stage_message(notification: CoachingNotification, db: Session) -> str:
+    """Pure text builder, no Slack calls/DB writes -- shared by the real
+    send path and the /preview-test endpoint so what you preview is
+    guaranteed identical to what actually sends."""
     first = (notification.da_name or "Driver").split()[0]
     video_topic = _BEHAVIOR_TO_VIDEO.get((notification.behavior or "").strip().lower())
     video_line = ""
@@ -285,13 +294,28 @@ def _notify_driver_stage(notification: CoachingNotification, roster: DriverRoste
     behavior_display = notification.behavior.title() if notification.behavior else "a delivery behavior"
     tip_line = f"_{notification.coaching_tip}_\n\n" if notification.coaching_tip else ""
 
-    text = (
+    return (
         f":wave: Hey {first} — quick heads up, nothing to stress about.\n\n"
         f"Amazon flagged one of your deliveries this week: *{behavior_display}*.\n\n"
         f"{tip_line}"
         f"{video_line}\n\n"
         "Just tap Acknowledge below so we know you saw it — that's all this needs from you."
     )
+
+
+def _notify_driver_stage(notification: CoachingNotification, roster: DriverRosterEntry, db: Session) -> None:
+    """Stage 1 — low-key, positive DM to the specific driver. Deliberately
+    NOT framed as a write-up on its face; the acknowledgment is what
+    quietly starts the real approval chain behind it."""
+    approval = db.query(CoachingNotificationApproval).filter(
+        CoachingNotificationApproval.notification_id == notification.id,
+        CoachingNotificationApproval.stage_order == 1,
+    ).first()
+    client = _client()
+    if not approval or not client:
+        return
+
+    text = build_driver_stage_message(notification, db)
     blocks = [
         {"type": "section", "text": {"type": "mrkdwn", "text": text}},
         {

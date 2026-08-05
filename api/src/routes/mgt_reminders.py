@@ -14,7 +14,7 @@ the channel itself, never sent to drivers):
   7. Tenured Workforce DAs Report — Fridays only, window 5:00 PM-11:59 PM PT ("by COB"), every 10 min until posted (#nday-operations-management) — includes where to find/export it in Amazon's portal
   8. Quality Overview (daily CSV) — window 3:30-9:00 PM PT, every 10 min until posted (#nday-operations-management) — added 2026-08-04, ingest already existed (api/src/ingest/daily_quality.py) but nothing prompted anyone to actually post it daily
   9. Safety Dashboard / Netradyne Events (daily CSV) — window 3:30-9:00 PM PT, every 10 min until posted (#nday-operations-management) — added 2026-08-04, same story (api/src/ingest/safety_events.py)
-  10. Quality RTS (daily CSV) — window 3:30-9:00 PM PT, every 10 min until posted (#nday-operations-management) — added 2026-08-04, flagged urgent: most scorecard-impacting RTS lacked a reason code (defaults to a defect)
+  10. Quality RTS (daily CSV) — window 12:00-2:00 PM PT (report lands the day after, not same-day), every 10 min until posted (#nday-operations-management) — added 2026-08-04, flagged urgent: most scorecard-impacting RTS lacked a reason code (defaults to a defect)
   11. DSP Customer Delivery Feedback - negative (daily CSV) — window 3:30-9:00 PM PT, every 10 min until posted (#nday-operations-management) — added 2026-08-04
 
 Windows are all against our own server clock in Pacific local time (never
@@ -111,10 +111,15 @@ _REMINDERS = {
     # particular flagged as urgent: most scorecard-impacting RTS on a real
     # day had no reason code selected (defaults to a DC DPMO defect), a
     # driver-coaching signal that goes stale without a daily upload.
+    # Window corrected 2026-08-05 (explicit direction) -- unlike
+    # daily_quality/safety_events, this report doesn't land same-day; the
+    # prior day's file isn't available until sometime the NEXT day, so
+    # the afternoon window kept firing before the file could possibly
+    # exist. Now checked midday instead.
     "quality_rts": {
         "detected_type": "quality_rts",
         "label": "Quality RTS (daily CSV)",
-        "window": (15, 30, 21, 0),
+        "window": (12, 0, 14, 0),
         "page": "/ops-ingest",
     },
     "customer_feedback": {

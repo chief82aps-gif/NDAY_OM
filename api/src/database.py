@@ -3673,6 +3673,24 @@ def ensure_sentiment_survey_response_columns():
             pass  # Column already exists
 
 
+def ensure_coaching_notification_status_column():
+    """Add status to coaching_notifications -- added 2026-08-05, a field
+    Amazon's real "Consolidated Coaching Notification" email format
+    introduced (e.g. "COACHING TIP" / "RCTD") that the original
+    2026-08-01 table didn't have. create_all() only creates missing
+    TABLES, never adds columns to one that already exists in production,
+    which is exactly what caused a real 500 on /coaching-notifications/
+    ingest-email the first time it ran against production."""
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE coaching_notifications ADD COLUMN status VARCHAR(30)"))
+            else:
+                conn.execute(text("ALTER TABLE coaching_notifications ADD COLUMN IF NOT EXISTS status VARCHAR(30)"))
+    except Exception:
+        pass  # Column already exists
+
+
 def ensure_attendance_reason_valid_column():
     """Add reason_valid to attendance_events -- added 2026-07-30 for
     tightened callout reason enforcement. Defaults True so existing rows

@@ -1626,6 +1626,32 @@ def join_cortex_channel():
         raise HTTPException(status_code=400, detail=error)
 
 
+@router.get("/daily-notify/slack-app-info")
+def slack_app_info():
+    """Read-only diagnostic -- added 2026-08-05 to help locate the Slack
+    app's developer-console listing (api.slack.com/apps) when it isn't
+    showing up under the logged-in browser account. Reports the exact
+    workspace (team) this bot token is installed in and the bot's own
+    identity, so whoever's hunting for the app can confirm they're at
+    least looking at the right workspace."""
+    bot_token = os.getenv("SLACK_BOT_TOKEN")
+    if not bot_token:
+        raise HTTPException(status_code=400, detail="SLACK_BOT_TOKEN not set.")
+    try:
+        from slack_sdk import WebClient
+        info = WebClient(token=bot_token).auth_test()
+        return {
+            "team": info.get("team"),
+            "team_id": info.get("team_id"),
+            "url": info.get("url"),
+            "bot_user_id": info.get("user_id"),
+            "bot_name": info.get("user"),
+            "app_id": info.get("bot_id"),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
 @router.post("/daily-notify/join-channel-by-id")
 def join_channel_by_id(channel_id: str):
     """Generic version of join_channel()/join_cortex_channel() above --

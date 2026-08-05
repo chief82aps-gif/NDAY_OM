@@ -1626,6 +1626,30 @@ def join_cortex_channel():
         raise HTTPException(status_code=400, detail=error)
 
 
+@router.post("/daily-notify/post-announcement")
+def post_announcement(channel_id: str, text: str):
+    """One-off announcement helper -- added 2026-08-05 for the Blake
+    rollout (e.g. introducing the new bot identity to #nday-team-room).
+    Joins the channel first (harmless no-op if already a member, and
+    only works for PUBLIC channels via channels:join -- private channels
+    still need /daily-notify/join-channel-by-id with a user token)."""
+    token = os.getenv("SLACK_BOT_TOKEN")
+    if not token:
+        raise HTTPException(status_code=400, detail="SLACK_BOT_TOKEN not set.")
+    from slack_sdk import WebClient
+    client = WebClient(token=token)
+    try:
+        client.conversations_join(channel=channel_id)
+    except Exception as exc:
+        if "already_in_channel" not in str(exc) and "method_not_supported_for_channel_type" not in str(exc):
+            logger.info("post_announcement: join skipped/failed for %s: %s", channel_id, exc)
+    try:
+        client.chat_postMessage(channel=channel_id, text=text)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {"status": "sent", "channel_id": channel_id}
+
+
 @router.get("/daily-notify/slack-app-info")
 def slack_app_info():
     """Read-only diagnostic -- added 2026-08-05 to help locate the Slack

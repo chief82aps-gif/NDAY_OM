@@ -633,6 +633,14 @@ def build_home_view_blocks(driver: Optional[DriverRosterEntry], db: Session) -> 
         fields = _metric_bar_fields(match)
         if fields:
             blocks.append({"type": "section", "fields": fields})
+
+        # Drill-down: what's actually driving this standing -- reuses the
+        # same positively-framed block already sent in the morning DM
+        # (rostering.py's _coaching_highlights_block()), now also visible
+        # any time the driver opens their own Home tab, not just at
+        # rostering time. Added 2026-08-04.
+        from api.src.routes.rostering import _coaching_highlights_block
+        blocks.extend(_coaching_highlights_block(driver.payroll_name, db))
     else:
         blocks.append({
             "type": "section",

@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import ProtectedRoute from '../components/ProtectedRoute';
+import { useAuth } from '../contexts/AuthContext';
 
 interface DriverScore {
   driver_name: string;
@@ -27,6 +28,24 @@ interface LedgerSummaryRow {
   driver: string;
   banked_amount: number;
   banked_packages: number;
+}
+
+interface MetricHighlight {
+  label: string;
+  score: number;
+  video_url?: string | null;
+}
+
+interface DriverBreakdown {
+  strengths: MetricHighlight[];
+  focus_areas: MetricHighlight[];
+}
+
+interface TrainingVideoEntry {
+  metric_label: string;
+  video_url: string | null;
+  updated_by: string | null;
+  updated_at: string | null;
 }
 
 function resolveApi(): string {
@@ -119,14 +138,28 @@ function weakestCategory(d: DriverScore): string | null {
 const th: React.CSSProperties = { padding: '6px 12px', textAlign: 'center', color: '#94a3b8', fontWeight: 600, fontSize: 11 };
 const td: React.CSSProperties = { padding: '8px 12px', verticalAlign: 'middle' };
 
-function DriverRow({ d, rank, banked }: { d: DriverScore; rank: number; banked: number | null }) {
+function DriverRow({ d, rank, banked, api }: { d: DriverScore; rank: number; banked: number | null; api: string }) {
   const [open, setOpen] = useState(false);
+  const [breakdown, setBreakdown] = useState<DriverBreakdown | null>(null);
+  const [breakdownLoading, setBreakdownLoading] = useState(false);
   const rowBg = rank % 2 === 1 ? '#161b22' : '#0d1117';
   const focus = weakestCategory(d);
 
+  const handleToggle = () => {
+    setOpen(o => !o);
+    if (!breakdown && !breakdownLoading) {
+      setBreakdownLoading(true);
+      fetch(`${api}/driver-scoring/breakdown/${encodeURIComponent(d.driver_name)}`)
+        .then(r => r.json())
+        .then(b => setBreakdown({ strengths: b.strengths ?? [], focus_areas: b.focus_areas ?? [] }))
+        .catch(() => setBreakdown({ strengths: [], focus_areas: [] }))
+        .finally(() => setBreakdownLoading(false));
+    }
+  };
+
   return (
     <>
-      <tr style={{ background: rowBg, cursor: 'pointer' }} onClick={() => setOpen(o => !o)}>
+      <tr style={{ background: rowBg, cursor: 'pointer' }} onClick={handleToggle}>
         <td style={td}>{RANK_MEDAL[rank] ? `${RANK_MEDAL[rank]} ${rank}` : rank}</td>
         <td style={td}>
           {d.driver_name}
@@ -189,6 +222,36 @@ function DriverRow({ d, rank, banked }: { d: DriverScore; rank: number; banked: 
                 )}
               </tbody>
             </table>
+
+            {breakdownLoading && <p style={{ color: '#64748b', fontSize: 12, marginTop: 12 }}>Loading exact metrics…</p>}
+
+            {breakdown && (breakdown.focus_areas.length > 0 || breakdown.strengths.length > 0) && (
+              <div style={{ marginTop: 14, display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                {breakdown.focus_areas.length > 0 && (
+                  <div>
+                    <p style={{ color: '#f59e0b', fontSize: 12, fontWeight: 700, margin: '0 0 6px' }}>🎯 Exact issue(s) driving the score</p>
+                    {breakdown.focus_areas.map(f => (
+                      <div key={f.label} style={{ fontSize: 12, color: '#e2e8f0', marginBottom: 4 }}>
+                        <span>{f.label} — {f.score.toFixed(1)}</span>
+                        {f.video_url && (
+                          <a href={f.video_url} target="_blank" rel="noreferrer" style={{ marginLeft: 8, color: '#60a5fa' }}>
+                            📺 Training video
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {breakdown.strengths.length > 0 && (
+                  <div>
+                    <p style={{ color: '#22c55e', fontSize: 12, fontWeight: 700, margin: '0 0 6px' }}>🌟 Doing great on</p>
+                    {breakdown.strengths.map(s => (
+                      <div key={s.label} style={{ fontSize: 12, color: '#94a3b8', marginBottom: 4 }}>{s.label} — {s.score.toFixed(1)}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </td>
         </tr>
       )}
@@ -198,7 +261,76 @@ function DriverRow({ d, rank, banked }: { d: DriverScore; rank: number; banked: 
 
 type SortKey = 'overall' | 'lifetime_routes';
 
+function TrainingVideoManager({ api }: { api: string }) {
+  const [videos, setVideos] = useState<TrainingVideoEntry[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    fetch(`${api}/driver-scoring/training-videos`)
+      .then(r => r.json())
+      .then(d => {
+        setVideos(d.videos ?? []);
+        const seeded: Record<string, string> = {};
+        for (const v of d.videos ?? []) seeded[v.metric_label] = v.video_url ?? '';
+        setDrafts(seeded);
+      })
+      .catch(() => {});
+  }, [api]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function save(metric_label: string) {
+    setSaving(metric_label);
+    try {
+      const url = (drafts[metric_label] || '').trim();
+      if (!url) {
+        await fetch(`${api}/driver-scoring/training-videos/${encodeURIComponent(metric_label)}`, { method: 'DELETE' });
+      } else {
+        await fetch(`${api}/driver-scoring/training-videos`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ metric_label, video_url: url }),
+        });
+      }
+      load();
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  return (
+    <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 10, padding: 16, marginBottom: 20 }}>
+      <p style={{ fontSize: 13, fontWeight: 700, margin: '0 0 10px' }}>📺 Training Video Library</p>
+      <p style={{ fontSize: 11, color: '#94a3b8', margin: '0 0 12px' }}>
+        One video per metric — auto-attaches whenever that metric shows up as a driver's focus area.
+      </p>
+      {videos.map(v => (
+        <div key={v.metric_label} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
+          <span style={{ fontSize: 12, color: '#e2e8f0', width: 240, flexShrink: 0 }}>{v.metric_label}</span>
+          <input
+            value={drafts[v.metric_label] ?? ''}
+            onChange={e => setDrafts(d => ({ ...d, [v.metric_label]: e.target.value }))}
+            placeholder="https://..."
+            style={{ flex: 1, background: '#0d1117', color: '#e2e8f0', border: '1px solid #334155', borderRadius: 6, padding: '4px 10px', fontSize: 12 }}
+          />
+          <button
+            onClick={() => save(v.metric_label)}
+            disabled={saving === v.metric_label}
+            style={{ background: '#2563eb', color: '#fff', border: 'none', borderRadius: 6, padding: '4px 12px', fontSize: 12, cursor: 'pointer' }}
+          >
+            {saving === v.metric_label ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function DriverQualityPage() {
+  const { user } = useAuth();
+  const canManageVideos = user?.role === 'owner' || user?.role === 'hr';
+  const [showVideoManager, setShowVideoManager] = useState(false);
   const [data, setData] = useState<ScoresResponse | null>(null);
   const [ledger, setLedger] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
@@ -272,7 +404,17 @@ export default function DriverQualityPage() {
           <p style={{ color: '#94a3b8', marginTop: 4, fontSize: 13 }}>
             Every driver ranked by their personal performance score (Safety 40% · Quality 40% · Reliability 20%). Tap a row for the full breakdown.
           </p>
+          {canManageVideos && (
+            <button
+              onClick={() => setShowVideoManager(v => !v)}
+              style={{ marginTop: 8, background: 'transparent', color: '#60a5fa', border: '1px solid #334155', borderRadius: 6, padding: '4px 12px', fontSize: 12, cursor: 'pointer' }}
+            >
+              {showVideoManager ? 'Hide' : 'Manage'} Training Videos
+            </button>
+          )}
         </div>
+
+        {canManageVideos && showVideoManager && <TrainingVideoManager api={resolveApi()} />}
 
         {/* Controls */}
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
@@ -357,7 +499,7 @@ export default function DriverQualityPage() {
               </thead>
               <tbody>
                 {sorted.map((d, i) => (
-                  <DriverRow key={d.transporter_id || d.driver_name} d={d} rank={i + 1} banked={ledger[d.driver_name] ?? null} />
+                  <DriverRow key={d.transporter_id || d.driver_name} d={d} rank={i + 1} banked={ledger[d.driver_name] ?? null} api={api} />
                 ))}
               </tbody>
             </table>

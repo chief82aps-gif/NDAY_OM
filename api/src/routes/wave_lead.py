@@ -576,7 +576,7 @@ class AssignTeamMemberRequest(BaseModel):
 def assign_team_member(
     payload: AssignTeamMemberRequest,
     db: Session = Depends(get_db),
-    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager")),
+    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager", "owner")),
 ):
     team = db.query(WaveTeam).filter(WaveTeam.id == payload.team_id).first()
     if not team:
@@ -603,7 +603,7 @@ def assign_team_member(
 def remove_team_member(
     roster_id: int,
     db: Session = Depends(get_db),
-    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager")),
+    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager", "owner")),
 ):
     membership = db.query(WaveTeamMembership).filter(WaveTeamMembership.roster_id == roster_id).first()
     if not membership:
@@ -623,7 +623,7 @@ class AssignWaveLeadRequest(BaseModel):
 def assign_wave_lead(
     payload: AssignWaveLeadRequest,
     db: Session = Depends(get_db),
-    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager")),
+    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager", "owner")),
 ):
     """Wave 5 (the 4x4 truck) only — its two independent leads. Waves 1-4
     no longer have a per-wave standing lead (removed 2026-07-29, never a
@@ -659,7 +659,7 @@ class AssignSeniorWaveLeadRequest(BaseModel):
 def assign_senior_wave_lead(
     payload: AssignSeniorWaveLeadRequest,
     db: Session = Depends(get_db),
-    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager")),
+    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager", "owner")),
 ):
     """Senior Wave Lead — one per half, roving across ALL of waves 1-4
     (Spencer=front, Gallo=back). Replaces the removed per-wave 'Standing
@@ -691,7 +691,7 @@ def assign_senior_wave_lead(
 def deactivate_wave_lead(
     role_id: int,
     db: Session = Depends(get_db),
-    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager")),
+    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager", "owner")),
 ):
     role = db.query(WaveLeadRole).filter(WaveLeadRole.id == role_id).first()
     if not role:
@@ -922,7 +922,7 @@ def send_discrepancy_summary(roster_date: date, db: Session) -> dict:
 def trigger_generate_suggestion(
     roster_date: date,
     db: Session = Depends(get_db),
-    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager")),
+    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager", "owner")),
 ):
     return generate_wave_roster_suggestion(roster_date, db)
 
@@ -958,7 +958,7 @@ def get_suggestion(roster_date: date, db: Session = Depends(get_db)):
 def trigger_check_discrepancies(
     roster_date: date,
     db: Session = Depends(get_db),
-    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager")),
+    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager", "owner")),
 ):
     result = check_roster_discrepancies(roster_date, db)
     send_result = send_discrepancy_summary(roster_date, db)
@@ -993,7 +993,7 @@ def resolve_discrepancy(
     discrepancy_id: int,
     resolved_by: str,
     db: Session = Depends(get_db),
-    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager")),
+    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager", "owner")),
 ):
     row = db.query(WaveRosterDiscrepancy).filter(WaveRosterDiscrepancy.id == discrepancy_id).first()
     if not row:
@@ -1150,7 +1150,7 @@ def sync_wave_channels(db: Session) -> dict:
 @router.post("/sync-channels")
 def trigger_sync_wave_channels(
     db: Session = Depends(get_db),
-    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager")),
+    caller_role: str = Depends(require_any_role("dispatcher", "ops_manager", "manager", "owner")),
 ):
     """Manual trigger for testing/recovery — same function the daily loop calls."""
     return sync_wave_channels(db)

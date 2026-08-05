@@ -1991,12 +1991,18 @@ def _resolve_wave_lead_for_driver(a: DailyRouteAssignment, shift_date: date, db:
 
 
 def _coaching_highlights_block(driver_name: str, db: Session) -> list:
-    """Small Block Kit section for the morning DM: 1-2 metrics the driver
-    is excelling at, alongside 1-2 to focus on -- added 2026-07-31 per
-    explicit request. Framing must stay positive throughout (per the
-    established "coaching DMs must never read negative" rule) -- focus
-    areas are "room to grow," never "weakness"/failure language. Returns
-    [] if there's no quality data for this driver yet (nothing to show)."""
+    """Small Block Kit section for the morning DM (and reused for the
+    driver's own Home tab drill-down, slack_home.py): 1-2 metrics the
+    driver is excelling at, alongside 1-2 to focus on -- added
+    2026-07-31 per explicit request. Framing must stay positive
+    throughout (per the established "coaching DMs must never read
+    negative" rule) -- focus areas are "room to grow," never "weakness"/
+    failure language. Returns [] if there's no quality data for this
+    driver yet (nothing to show).
+
+    2026-08-04: each focus area gets a training video link, if the
+    metric has one configured (driver_scoring.py's TrainingVideoLink
+    library) -- still framed as a helpful resource, not a punishment."""
     from api.src.routes.driver_scoring import get_driver_metric_highlights
 
     highlights = get_driver_metric_highlights(driver_name, db)
@@ -2012,6 +2018,9 @@ def _coaching_highlights_block(driver_name: str, db: Session) -> list:
     if focus_areas:
         labels = ", ".join(f["label"] for f in focus_areas)
         lines.append(f"🎯 *Room to grow:* {labels}")
+        video_links = [f"<{f['video_url']}|{f['label']}>" for f in focus_areas if f.get("video_url")]
+        if video_links:
+            lines.append(f"📺 *Helpful videos:* {', '.join(video_links)}")
 
     return [{
         "type": "section",

@@ -4036,6 +4036,23 @@ class PackagesRecord(Base):
     last_scan_at = Column(DateTime)
 
 
+class TrainingVideoLink(Base):
+    """Admin-maintained library mapping a coaching metric label (see
+    quality.py's _METRIC_LABELS) to a training video URL -- added
+    2026-08-04. One video per metric type, not per-driver -- whenever
+    that metric shows up as a driver's focus area
+    (driver_scoring.py's get_driver_metric_highlights()), the same video
+    auto-attaches on the Mentoring Dashboard drill-down and the driver's
+    own Home tab coaching block."""
+    __tablename__ = "training_video_links"
+
+    id = Column(Integer, primary_key=True)
+    metric_label = Column(String(100), unique=True, nullable=False, index=True)
+    video_url = Column(String(500), nullable=False)
+    updated_by = Column(String(150))
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class NdayPointsLedger(Base):
     """Persistent per-driver "NDAY Points" reward balance -- added
     2026-07-31. Deliberately named apart from attendance.py's own

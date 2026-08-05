@@ -97,15 +97,20 @@ from sqlalchemy.orm import Session
 
 from api.src.timezone import PACIFIC
 
+from fastapi import HTTPException
+from pydantic import BaseModel
+
 from api.src.database import (
     get_db,
     QualityMetricDriver,
     QualityMetricSnapshot,
     DriverRosterEntry,
+    TrainingVideoLink,
     get_trailing_route_count,
     get_latest_tenure_record,
 )
 from api.src.driver_identity import resolve_roster_id
+from api.src.authorization import require_any_role
 
 router = APIRouter(prefix="/driver-scoring", tags=["driver-scoring"])
 
@@ -377,8 +382,16 @@ def get_driver_metric_highlights(driver_name: str, db: Session, top_n: int = 2) 
     if n == 0:
         return {"strengths": [], "focus_areas": []}
 
+    # Training video library lookup -- added 2026-08-04, one video per
+    # metric label (not per-driver), attached only to focus areas since
+    # strengths don't need remediation.
+    video_map = {v.metric_label: v.video_url for v in db.query(TrainingVideoLink).all()}
+
     strengths = [{"label": label, "score": round(score, 1)} for label, score in scored[:n]]
-    focus_areas = [{"label": label, "score": round(score, 1)} for label, score in reversed(scored[-n:])]
+    focus_areas = [
+        {"label": label, "score": round(score, 1), "video_url": video_map.get(label)}
+        for label, score in reversed(scored[-n:])
+    ]
     return {"strengths": strengths, "focus_areas": focus_areas}
 
 
@@ -387,3 +400,83 @@ def get_driver_scores(db: Session = Depends(get_db)):
     """Overall/Safety/Quality/Attendance scores for every driver in the
     latest quality snapshot, with color coding and bonus eligibility."""
     return {"drivers": compute_driver_scores(db)}
+
+
+@router.get("/breakdown/{driver_name}")
+def get_driver_breakdown(driver_name: str, db: Session = Depends(get_db)):
+    """Drill-down for one driver -- added 2026-08-04 for the Mentoring
+    Dashboard and the driver's own Home tab: overall/safety/quality/
+    attendance scores plus the exact sub-metrics driving them
+    (get_driver_metric_highlights()'s strengths/focus_areas, each focus
+    area carrying a training video link if the library has one)."""
+    scores = compute_driver_scores(db)
+    match = next((s for s in scores if s["driver_name"].lower() == driver_name.lower()), None)
+    if not match:
+        raise HTTPException(status_code=404, detail=f"No quality data found for {driver_name}")
+    highlights = get_driver_metric_highlights(driver_name, db)
+    return {**match, **highlights}
+
+
+@router.get("/training-videos")
+def list_training_videos(db: Session = Depends(get_db)):
+    """Every metric label with a configured training video, plus every
+    label that doesn't have one yet (so the admin UI can show gaps)."""
+    from api.src.routes.quality import _METRIC_LABELS
+
+    existing = {v.metric_label: v for v in db.query(TrainingVideoLink).all()}
+    return {
+        "videos": [
+            {
+                "metric_label": label,
+                "video_url": existing[label].video_url if label in existing else None,
+                "updated_by": existing[label].updated_by if label in existing else None,
+                "updated_at": existing[label].updated_at.isoformat() if label in existing and existing[label].updated_at else None,
+            }
+            for label in _METRIC_LABELS.values()
+        ]
+    }
+
+
+class TrainingVideoUpsert(BaseModel):
+    metric_label: str
+    video_url: str
+    updated_by: Optional[str] = None
+
+
+@router.put("/training-videos")
+def upsert_training_video(
+    payload: TrainingVideoUpsert,
+    db: Session = Depends(get_db),
+    caller_role: str = Depends(require_any_role("owner", "hr")),
+):
+    from api.src.routes.quality import _METRIC_LABELS
+
+    if payload.metric_label not in _METRIC_LABELS.values():
+        raise HTTPException(status_code=400, detail=f"Unrecognized metric label: {payload.metric_label}")
+
+    row = db.query(TrainingVideoLink).filter(TrainingVideoLink.metric_label == payload.metric_label).first()
+    if row:
+        row.video_url = payload.video_url
+        row.updated_by = payload.updated_by or caller_role
+    else:
+        db.add(TrainingVideoLink(
+            metric_label=payload.metric_label,
+            video_url=payload.video_url,
+            updated_by=payload.updated_by or caller_role,
+        ))
+    db.commit()
+    return {"status": "saved", "metric_label": payload.metric_label}
+
+
+@router.delete("/training-videos/{metric_label}")
+def delete_training_video(
+    metric_label: str,
+    db: Session = Depends(get_db),
+    caller_role: str = Depends(require_any_role("owner", "hr")),
+):
+    row = db.query(TrainingVideoLink).filter(TrainingVideoLink.metric_label == metric_label).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="No video configured for this metric")
+    db.delete(row)
+    db.commit()
+    return {"status": "deleted", "metric_label": metric_label}

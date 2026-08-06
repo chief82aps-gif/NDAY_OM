@@ -475,11 +475,28 @@ def _parse_schedule_header_date(header_value: str, year_hint: int) -> Optional[d
 
 
 def _resolve_selected_schedule_date(assigned_dates: List[str], timestamp_date: Optional[date]) -> Tuple[str, Optional[date]]:
-    """Pick the date label from file headers that best matches the schedule timestamp date."""
+    """Pick the date label from file headers this schedule is establishing.
+
+    timestamp_date is when the file itself was generated (A2's own
+    timestamp) -- this file is always uploaded the evening before, to
+    set up the NEXT day's shift (see DriverScheduleSummary.date's own
+    docstring: "the date being scheduled for (next day)"). Matching
+    headers against timestamp_date directly picks the upload day's own
+    (already-elapsed-or-in-progress) column instead -- confirmed against
+    real ingests going back at least a week, every one resolved to the
+    same calendar date as its own upload, not the day after. That silent
+    "effectively always today" quirk was even called out in the commit
+    that added by_calendar_date (50f415d, 2026-07-15) as a known
+    limitation worked around for wave/show-time annotation, but never
+    fixed for which date this function hands back as primary -- found
+    2026-08-05 after it caused the nightly driver-schedule re-ingest to
+    keep re-triggering shift DMs/summaries for the wrong (already
+    underway) day instead of tomorrow's real one."""
     if not assigned_dates:
         return "", timestamp_date
 
-    year_hint = timestamp_date.year if timestamp_date else date.today().year
+    target_date = timestamp_date + timedelta(days=1) if timestamp_date else None
+    year_hint = target_date.year if target_date else date.today().year
     parsed_headers: List[Tuple[str, date]] = []
 
     for label in assigned_dates:
@@ -487,17 +504,17 @@ def _resolve_selected_schedule_date(assigned_dates: List[str], timestamp_date: O
         if parsed_date:
             parsed_headers.append((label, parsed_date))
 
-    if parsed_headers and timestamp_date:
+    if parsed_headers and target_date:
         for label, parsed_date in parsed_headers:
-            if parsed_date == timestamp_date:
+            if parsed_date == target_date:
                 return label, parsed_date
 
         # If no exact match exists, use the nearest header date to avoid defaulting to stale columns.
-        return min(parsed_headers, key=lambda item: abs((item[1] - timestamp_date).days))
+        return min(parsed_headers, key=lambda item: abs((item[1] - target_date).days))
 
     if parsed_headers:
         # Prefer the most recent parsed date when timestamp parsing is unavailable.
         return max(parsed_headers, key=lambda item: item[1])
 
     # Final fallback: use right-most header value instead of first column.
-    return assigned_dates[-1], timestamp_date
+    return assigned_dates[-1], target_date

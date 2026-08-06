@@ -46,6 +46,11 @@ FLAG_REGISTRY: dict[str, dict] = {
         "description": "Rostering-related team room posts.",
         "category": "Driver Communication",
     },
+    "ARRIVAL_NUDGE_ACTIVE": {
+        "label": "Arrival Re-Nudge",
+        "description": "Re-nudges a driver who hasn't tapped 'I've Arrived' (20 min, then 60 min past showtime), escalating to #nday-mgt at 150 min if still unconfirmed.",
+        "category": "Driver Communication",
+    },
     "LEAD_ROUTING_ACTIVE": {
         "label": "Talk to My Lead Routing",
         "description": "Replaces the generic Zello text in driver DMs with a live 'Talk to My Lead' button.",

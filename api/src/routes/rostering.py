@@ -2091,6 +2091,131 @@ def mark_driver_arrived(shift_date_str: str, driver_name: str, slack_user_id: st
     return True
 
 
+# ─── Arrival re-nudge — added 2026-08-06, previously zero re-nudge if a ─────
+# driver never tapped "I've Arrived." Escalating, per-driver (each driver
+# has their own showtime, unlike the Showtime DM's single evening-wide
+# check) -- nudge once at +20 min past showtime, again at +60 min, then
+# alert #nday-mgt at +150 min if still unconfirmed. Gated by
+# ARRIVAL_NUDGE_ACTIVE (default false).
+
+_ARRIVAL_NUDGE_1_MINUTES = 20
+_ARRIVAL_NUDGE_2_MINUTES = 60
+_ARRIVAL_ESCALATE_MINUTES = 150
+
+_ARRIVAL_NUDGE_1_TEXT = "👋 Quick check — don't forget to tap *I Have Arrived* once you're at the station!"
+_ARRIVAL_NUDGE_2_TEXT = (
+    "⏰ Still haven't heard from you — please tap *I Have Arrived* below as soon as you get this, "
+    "or reply here if something's going on."
+)
+
+
+def _showtime_dt_for_today(showtime_str: Optional[str], today: date) -> Optional[datetime]:
+    """Combine today's date with a 'showtime' string (e.g. '9:55 AM') into
+    a real, Pacific-aware datetime for elapsed-time comparisons."""
+    if not showtime_str:
+        return None
+    parsed = _parse_wave_dt(showtime_str)
+    if not parsed:
+        return None
+    return datetime(today.year, today.month, today.day, parsed.hour, parsed.minute, tzinfo=PACIFIC)
+
+
+def run_arrival_nudges(db: Session, now: Optional[datetime] = None) -> dict:
+    """Every 60s — re-nudges any driver who hasn't confirmed arrival some
+    time after their own showtime has passed, escalating to #nday-mgt if
+    still unconfirmed after both nudges."""
+    if not get_flag("ARRIVAL_NUDGE_ACTIVE"):
+        return {"status": "inactive"}
+
+    now = now or datetime.now(PACIFIC)
+    today = now.date()
+
+    records = (
+        db.query(DriverShiftDM)
+        .filter(
+            DriverShiftDM.shift_date == today,
+            DriverShiftDM.dm_sent_at.isnot(None),
+            DriverShiftDM.arrival_confirmed == False,  # noqa: E712
+        )
+        .all()
+    )
+    if not records:
+        return {"status": "no_pending", "date": today.isoformat()}
+
+    client = _slack_client()
+    nudged_1 = nudged_2 = escalated = 0
+    escalate_lines = []
+
+    for r in records:
+        showtime_dt = _showtime_dt_for_today(r.showtime, today)
+        if not showtime_dt or not r.slack_user_id:
+            continue
+        minutes_late = (now - showtime_dt).total_seconds() / 60
+        if minutes_late < _ARRIVAL_NUDGE_1_MINUTES:
+            continue
+
+        value = json.dumps({"shift_date": today.isoformat(), "driver_name": r.driver_name})
+        arrived_button = {
+            "type": "actions",
+            "elements": [{
+                "type": "button",
+                "text": {"type": "plain_text", "text": "✅  I Have Arrived for My Shift", "emoji": True},
+                "style": "primary",
+                "action_id": "driver_arrived_shift",
+                "value": value,
+            }],
+        }
+
+        # Strictly ordered cascade -- nudge 1 must fire before nudge 2, and
+        # nudge 2 before escalation, even if a slow tick means a driver is
+        # already well past a later threshold by the time this runs. Never
+        # skip a lower, not-yet-sent tier just because a higher one is due.
+        if not r.arrival_nudge_1_sent_at:
+            if client:
+                try:
+                    client.chat_postMessage(
+                        channel=r.slack_user_id, text=_ARRIVAL_NUDGE_1_TEXT,
+                        blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": _ARRIVAL_NUDGE_1_TEXT}}, arrived_button],
+                    )
+                except Exception as exc:
+                    logger.warning("Arrival nudge 1 failed for %s: %s", r.driver_name, exc)
+            r.arrival_nudge_1_sent_at = datetime.utcnow()
+            nudged_1 += 1
+        elif minutes_late >= _ARRIVAL_NUDGE_2_MINUTES and not r.arrival_nudge_2_sent_at:
+            if client:
+                try:
+                    client.chat_postMessage(
+                        channel=r.slack_user_id, text=_ARRIVAL_NUDGE_2_TEXT,
+                        blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": _ARRIVAL_NUDGE_2_TEXT}}, arrived_button],
+                    )
+                except Exception as exc:
+                    logger.warning("Arrival nudge 2 failed for %s: %s", r.driver_name, exc)
+            r.arrival_nudge_2_sent_at = datetime.utcnow()
+            nudged_2 += 1
+        elif minutes_late >= _ARRIVAL_ESCALATE_MINUTES and r.arrival_nudge_2_sent_at and not r.arrival_escalated_at:
+            r.arrival_escalated_at = datetime.utcnow()
+            escalate_lines.append(f"• *{r.driver_name}* — showtime {r.showtime}, still unconfirmed {int(minutes_late)} min later")
+            escalated += 1
+
+    if escalate_lines and client:
+        try:
+            client.chat_postMessage(
+                channel=MGT_CHANNEL,
+                text="🚨 *Unconfirmed arrivals* — no response after two nudges:\n" + "\n".join(escalate_lines),
+            )
+        except Exception as exc:
+            logger.warning("Arrival escalation post failed: %s", exc)
+
+    db.commit()
+    return {"status": "checked", "date": today.isoformat(), "nudged_1": nudged_1, "nudged_2": nudged_2, "escalated": escalated}
+
+
+@router.post("/arrival-nudges/trigger")
+def trigger_arrival_nudges(db: Session = Depends(get_db)):
+    """Manual/forced trigger for testing — still respects ARRIVAL_NUDGE_ACTIVE."""
+    return run_arrival_nudges(db)
+
+
 # ─── Day-of DMs (route + van + staging + packages) ──────────────────────────
 
 def _parse_wave_dt(wave_str: str) -> Optional[datetime]:

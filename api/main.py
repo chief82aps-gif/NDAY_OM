@@ -20,7 +20,7 @@ from api.src.routes import rostering, cortex_tracking, adp, rts, mgt_reminders, 
 from api.src.routes.daily_notify import check_and_notify, check_ecp_and_prompt
 from api.src.routes.rostering import send_nightly_roster_reminder, send_wave_lead_pre_wave_dm, send_missing_drivers_summary
 from api.src.schedule_config import SCHEDULE_GAP_CHECK_HOUR
-from api.src.database import Base, engine, SessionLocal, ensure_dop_driver_name_column, ensure_ssn_last4_column, ensure_callout_signature_column, ensure_assignment_board_columns, _ensure_manager_signature_columns, _ensure_position_id_nullable, ensure_driver_shift_dm_checklist_columns, ensure_route_duration_columns, ensure_dvic_raw_fields_column, ensure_driver_roster_tracking_columns, ensure_daily_route_assignment_unique_index, ensure_okami_capacity_finalize_columns, ensure_crash_report_evidence_columns, ensure_daily_route_assignment_notified_snapshot_column, ensure_user_auth_columns, ensure_route_sheet_load_size_columns, ensure_driver_shift_dm_decline_column, ensure_driver_shift_dm_callout_column, ensure_dvic_manager_signature_columns, ensure_eod_crash_columns, ensure_eod_management_contact_reason_column, ensure_driver_roster_preferred_name_column, ensure_driver_identity_roster_id_columns, ensure_dvic_video_watch_column, ensure_daily_route_assignment_pending_ack_column, ensure_safety_event_review_columns, ensure_dvic_video_started_column, ensure_dvic_escalation_columns, ensure_dvic_violation_instance_columns, ensure_rescue_bonus_ledger_columns, ensure_wave_lead_role_half_column, ensure_sentiment_survey_rating_columns, ensure_sentiment_survey_response_columns, ensure_attendance_reason_valid_column, ensure_coaching_notification_status_column
+from api.src.database import Base, engine, SessionLocal, ensure_dop_driver_name_column, ensure_ssn_last4_column, ensure_callout_signature_column, ensure_assignment_board_columns, _ensure_manager_signature_columns, _ensure_position_id_nullable, ensure_driver_shift_dm_checklist_columns, ensure_route_duration_columns, ensure_dvic_raw_fields_column, ensure_driver_roster_tracking_columns, ensure_daily_route_assignment_unique_index, ensure_okami_capacity_finalize_columns, ensure_crash_report_evidence_columns, ensure_daily_route_assignment_notified_snapshot_column, ensure_user_auth_columns, ensure_route_sheet_load_size_columns, ensure_driver_shift_dm_decline_column, ensure_driver_shift_dm_callout_column, ensure_dvic_manager_signature_columns, ensure_eod_crash_columns, ensure_eod_management_contact_reason_column, ensure_driver_roster_preferred_name_column, ensure_driver_identity_roster_id_columns, ensure_dvic_video_watch_column, ensure_daily_route_assignment_pending_ack_column, ensure_safety_event_review_columns, ensure_dvic_video_started_column, ensure_dvic_escalation_columns, ensure_dvic_violation_instance_columns, ensure_rescue_bonus_ledger_columns, ensure_wave_lead_role_half_column, ensure_sentiment_survey_rating_columns, ensure_sentiment_survey_response_columns, ensure_attendance_reason_valid_column, ensure_coaching_notification_status_column, ensure_driver_shift_dm_arrival_nudge_columns
 from api.src.slack_notification_gate import apply_slack_send_gate
 
 logger = logging.getLogger(__name__)
@@ -410,6 +410,26 @@ async def _showtime_watchdog_loop():
                 db.close()
         except Exception as exc:
             logger.warning("Showtime watchdog loop error: %s", exc)
+        await asyncio.sleep(60)
+
+
+async def _arrival_nudge_loop():
+    """Every 60 s — delegates to rostering.run_arrival_nudges(), which
+    re-nudges any driver who hasn't tapped "I've Arrived" some time
+    after their own showtime, escalating to #nday-mgt if still
+    unconfirmed after two nudges. Gated by ARRIVAL_NUDGE_ACTIVE (default
+    false)."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(rostering.run_arrival_nudges, db)
+            except Exception as exc:
+                logger.warning("Arrival nudge loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("Arrival nudge loop outer error: %s", exc)
         await asyncio.sleep(60)
 
 
@@ -913,6 +933,7 @@ async def startup():
     asyncio.create_task(_wave_leads_standings_loop())
     asyncio.create_task(_wave_channel_sync_loop())
     ensure_driver_shift_dm_checklist_columns()
+    ensure_driver_shift_dm_arrival_nudge_columns()
     asyncio.create_task(_nightly_roster_reminder_loop())
     asyncio.create_task(_grounded_van_watcher_loop())
     asyncio.create_task(_wave_lead_watcher_loop())
@@ -920,6 +941,7 @@ async def startup():
     asyncio.create_task(_ops_cadence_loop())
     asyncio.create_task(_ops_daily_digest_loop())
     asyncio.create_task(_showtime_watchdog_loop())
+    asyncio.create_task(_arrival_nudge_loop())
     asyncio.create_task(_timecard_report_nudge_loop())
     asyncio.create_task(_daily_fallback_pin_loop())
     asyncio.create_task(_ecp_screenshot_reminder_loop())

@@ -3613,6 +3613,26 @@ def ensure_driver_shift_dm_checklist_columns():
             pass  # Column already exists
 
 
+def ensure_driver_shift_dm_arrival_nudge_columns():
+    """Add arrival-nudge escalation columns to driver_shift_dms -- added
+    2026-08-06 for the "I've Arrived" re-nudge (previously zero re-nudge
+    if a driver never tapped the button)."""
+    migrations = [
+        ("driver_shift_dms", "arrival_nudge_1_sent_at", "TIMESTAMP"),
+        ("driver_shift_dms", "arrival_nudge_2_sent_at", "TIMESTAMP"),
+        ("driver_shift_dms", "arrival_escalated_at",    "TIMESTAMP"),
+    ]
+    for table, col, typedef in migrations:
+        try:
+            with engine.begin() as conn:
+                if DATABASE_URL.startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}"))
+                else:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {typedef}"))
+        except Exception:
+            pass  # Column already exists
+
+
 def ensure_crash_report_evidence_columns():
     """Expand crash reports with the full mandatory-evidence set, statement
     sanitization audit trail, and drug-screen tracking — added 2026-07-15.
@@ -3823,6 +3843,9 @@ class DriverShiftDM(Base):
     eod_checklist_at = Column(DateTime)    # when driver tapped 'EOD Complete'
     declined_at = Column(DateTime)         # when driver tapped 'Can't Make It' (Showtime DM)
     callout_tapped_at = Column(DateTime)   # when driver tapped 'Call Out' (Route Assignment DM)
+    arrival_nudge_1_sent_at = Column(DateTime)   # 1st "don't forget to confirm arrival" nudge
+    arrival_nudge_2_sent_at = Column(DateTime)   # 2nd, more direct nudge
+    arrival_escalated_at = Column(DateTime)      # #nday-mgt alert after 2 nudges with still no confirmation
 
     __table_args__ = (
         Index("idx_dsdm_date_driver", "shift_date", "driver_name"),

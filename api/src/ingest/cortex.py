@@ -1,8 +1,21 @@
 """Cortex Excel ingest parser."""
+import re
 import pandas as pd
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
 from api.src.column_mapping import build_column_map, read_tabular_file
+
+# Real route codes are always CX/AX + digits (confirmed against production
+# data). Confirmed live 2026-08-06: without this check, a wrong file type
+# (a DVIC PreTrip export routed here by an unrelated filename-matching bug)
+# fell back to CORTEX_FALLBACK_COLUMNS' blind column-position mapping and
+# produced 22 fabricated "route records" with zero parse errors, silently
+# corrupting that day's assignment data until a downstream DOP/Cortex
+# reconciliation alert happened to flag the mismatch. This is the
+# content-level check that should have rejected the file outright instead
+# of relying solely on filename matching to route it correctly in the
+# first place.
+_ROUTE_CODE_PATTERN = re.compile(r"^(CX|AX)\d+$")
 
 
 CORTEX_COLUMN_ALIASES = {
@@ -86,6 +99,9 @@ def parse_cortex_excel(file_path: str) -> Tuple[List[CortexRoute], List[str]]:
                 route_code = normalize_route_code(route_code_raw)
                 if not route_code:
                     errors.append(f"Row {idx+1}: Route code '{route_code_raw}' is invalid or empty.")
+                    continue
+                if not _ROUTE_CODE_PATTERN.match(route_code):
+                    errors.append(f"Row {idx+1}: Route code '{route_code_raw}' doesn't match the expected CX/AX+digits pattern.")
                     continue
 
                 service_type = normalize_service_type(service_type_raw)

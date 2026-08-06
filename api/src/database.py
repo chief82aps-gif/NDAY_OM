@@ -3268,6 +3268,46 @@ class SentimentSurveyResponse(Base):
     )
 
 
+class OwnerMeeting(Base):
+    """Owner "office hours" meeting for drivers who rated low on the
+    sentiment survey — added 2026-08-05. One active row at a time
+    (draft -> confirmed -> sent -> completed, or cancelled at any point
+    before sent). Candidate drivers are surfaced by owner_meeting.py from
+    SentimentSurveyResponse's own ratings, but which of them actually get
+    invited is a manual owner decision each cycle, not automatic — see
+    owner_meeting.py's module docstring."""
+    __tablename__ = "owner_meetings"
+
+    id = Column(Integer, primary_key=True)
+    status = Column(String(20), default="draft", nullable=False)  # draft, confirmed, cancelled, sent, completed
+    meeting_date = Column(Date, nullable=False)
+    meeting_time = Column(String(30))
+    location = Column(String(300))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    confirmed_at = Column(DateTime, nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+    invited_at = Column(DateTime, nullable=True)
+    invited_roster_ids = Column(JSON, nullable=True)  # list[int] -- the manually downselected invite list
+
+    rsvps = relationship("OwnerMeetingRSVP", back_populates="meeting", cascade="all, delete-orphan")
+
+
+class OwnerMeetingRSVP(Base):
+    __tablename__ = "owner_meeting_rsvps"
+
+    id = Column(Integer, primary_key=True)
+    meeting_id = Column(Integer, ForeignKey("owner_meetings.id", ondelete="CASCADE"), nullable=False)
+    roster_id = Column(Integer, ForeignKey("driver_roster.id"), nullable=False)
+    response = Column(String(10), nullable=False)  # "yes" | "no"
+    responded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    meeting = relationship("OwnerMeeting", back_populates="rsvps")
+
+    __table_args__ = (
+        Index("idx_owner_meeting_rsvp_meeting", "meeting_id"),
+    )
+
+
 class ReminderThrottleState(Base):
     """Persisted throttle/dedup state for periodic Slack reminder loops.
 

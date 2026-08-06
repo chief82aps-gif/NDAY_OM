@@ -156,6 +156,11 @@ FLAG_REGISTRY: dict[str, dict] = {
         "description": "Quarterly nudge to re-download and re-ingest a fresh Tenured Workforce file, catching drivers who worked elsewhere or were rehired that our own route-count tracker wouldn't otherwise know about.",
         "category": "Reminders",
     },
+    "OWNER_MEETING_ACTIVE": {
+        "label": "Owner Meeting Reminder",
+        "description": "Monday/Wednesday night reminder for the owner to confirm the scheduled low-sentiment-rating driver meeting is still on.",
+        "category": "Sentiment Survey",
+    },
     "DRIVER_PROGRESS_DM_ACTIVE": {
         "label": "Driver Progress DM",
         "description": "Sends every driver an upbeat mid-day progress check-in 3x/day (3/5/6 PM Pacific), with escalating tone for anyone behind pace.",

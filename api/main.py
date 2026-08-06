@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.src.routes import uploads, auth, audit, enhanced_audit, weekly_audit, weekly_audit_upload, rescue
 from api.src.routes import daily_notify, quality, attendance, attendance_reports, ops_ingest, dvic, dsp_scorecard_weekly, eod_survey, route_assignment, slack_interactions, slack_home, manager_accountability
-from api.src.routes import rostering, cortex_tracking, adp, rts, mgt_reminders, document_routing, crash_report, drivers, candidates, safety_events, okami_capacity, driver_scoring, route_bands, driver_lead_schedule, injury_report, sentiment_survey, wave_lead, glitch_reports, daily_quality, nday_points, feature_flags, coaching_notifications, quality_rts, customer_feedback, packages, ops_cadence, ops_daily_digest, suggestions, driver_progress_dm, team_room_monitor, tenured_workforce
+from api.src.routes import rostering, cortex_tracking, adp, rts, mgt_reminders, document_routing, crash_report, drivers, candidates, safety_events, okami_capacity, driver_scoring, route_bands, driver_lead_schedule, injury_report, sentiment_survey, wave_lead, glitch_reports, daily_quality, nday_points, feature_flags, coaching_notifications, quality_rts, customer_feedback, packages, ops_cadence, ops_daily_digest, suggestions, driver_progress_dm, team_room_monitor, tenured_workforce, owner_meeting
 from api.src.routes.daily_notify import check_and_notify, check_ecp_and_prompt
 from api.src.routes.rostering import send_nightly_roster_reminder, send_wave_lead_pre_wave_dm, send_missing_drivers_summary
 from api.src.schedule_config import SCHEDULE_GAP_CHECK_HOUR
@@ -468,6 +468,24 @@ async def _twf_recalibration_reminder_loop():
         await asyncio.sleep(60)
 
 
+async def _owner_meeting_reminder_loop():
+    """Every 60 s — delegates to owner_meeting.run_owner_meeting_reminder(),
+    which internally gates on Monday/Wednesday 8 PM Pacific and whether an
+    active meeting exists. Gated by OWNER_MEETING_ACTIVE (default false)."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(owner_meeting.run_owner_meeting_reminder, db)
+            except Exception as exc:
+                logger.warning("Owner meeting reminder loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("Owner meeting reminder loop outer error: %s", exc)
+        await asyncio.sleep(60)
+
+
 async def _driver_progress_dm_loop():
     """Every 60 s — delegates to driver_progress_dm.run_scheduled_progress_dms(),
     which fires each of the 3 fixed daily slots (3/5/6 PM Pacific) exactly
@@ -882,6 +900,7 @@ async def startup():
     asyncio.create_task(_daily_fallback_pin_loop())
     asyncio.create_task(_ecp_screenshot_reminder_loop())
     asyncio.create_task(_twf_recalibration_reminder_loop())
+    asyncio.create_task(_owner_meeting_reminder_loop())
     asyncio.create_task(_driver_progress_dm_loop())
     asyncio.create_task(_okami_finalize_reminder_loop())
     asyncio.create_task(_associate_data_reminder_loop())
@@ -974,6 +993,7 @@ app.include_router(ops_daily_digest.router)
 app.include_router(nday_points.router)
 app.include_router(feature_flags.router)
 app.include_router(coaching_notifications.router)
+app.include_router(owner_meeting.router)
 
 @app.get("/")
 def root():

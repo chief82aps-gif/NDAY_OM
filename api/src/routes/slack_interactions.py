@@ -640,6 +640,18 @@ async def slack_interactions(request: Request, background_tasks: BackgroundTasks
             "team_room_flag_prior_dismiss": _handle_prior_dismiss,
         }[action_id](flag_id, db)
 
+    elif action_id == "owner_meeting_confirm":
+        from api.src.routes.owner_meeting import handle_owner_meeting_confirm
+        handle_owner_meeting_confirm(payload, db)
+
+    elif action_id == "owner_meeting_cancel":
+        from api.src.routes.owner_meeting import handle_owner_meeting_cancel
+        handle_owner_meeting_cancel(payload, db)
+
+    elif action_id in ("owner_meeting_rsvp_yes", "owner_meeting_rsvp_no"):
+        from api.src.routes.owner_meeting import handle_owner_meeting_rsvp
+        handle_owner_meeting_rsvp(payload, db, "yes" if action_id == "owner_meeting_rsvp_yes" else "no")
+
     # Slack requires a 200 response within 3 seconds
     return {"ok": True}
 

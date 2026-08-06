@@ -111,6 +111,11 @@ FLAG_REGISTRY: dict[str, dict] = {
         "description": "Recurring mid-morning callout digest to #nday-mgt and #nday-hr.",
         "category": "Attendance",
     },
+    "EOD_SECOND_REMINDER_ACTIVE": {
+        "label": "EOD Second Reminder",
+        "description": "A real second reminder at 9 PM Pacific for anyone still missing their End of Day Survey after the 7 PM mass-send -- previously there was no follow-up at all.",
+        "category": "EOD Survey",
+    },
     "MISSED_EOD_GATE_ACTIVE": {
         "label": "Missed EOD Gate",
         "description": "Gates outstanding-items follow-up for a missed EOD survey.",

@@ -84,7 +84,10 @@ async def _coaching_notifications_scan_loop():
 async def _eod_survey_loop():
     """Every 60 s — checks whether it's the 1900 Pacific mass-send hour and
     fires the EOD survey to every not-yet-submitted scheduled driver if so
-    (see run_eod_survey_check()'s docstring in eod_survey.py)."""
+    (see run_eod_survey_check()'s docstring in eod_survey.py). Also checks
+    the 2100 Pacific second reminder (run_eod_second_reminder, gated by
+    EOD_SECOND_REMINDER_ACTIVE, default false) -- added 2026-08-06, since
+    previously a driver who missed the 1900 send got no further nudge."""
     while True:
         try:
             db = SessionLocal()
@@ -92,6 +95,10 @@ async def _eod_survey_loop():
                 await asyncio.to_thread(eod_survey.run_eod_survey_check, db)
             except Exception as exc:
                 logger.warning("EOD survey check error: %s", exc)
+            try:
+                await asyncio.to_thread(eod_survey.run_eod_second_reminder, db)
+            except Exception as exc:
+                logger.warning("EOD second reminder error: %s", exc)
             finally:
                 db.close()
         except Exception as exc:

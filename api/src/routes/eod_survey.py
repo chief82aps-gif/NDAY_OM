@@ -1152,6 +1152,90 @@ def run_eod_survey_check(db: Session, force: bool = False) -> dict:
     }
 
 
+# ─── Second reminder at 2100 Pacific — added 2026-08-06 ────────────────────
+#
+# Previously the 1900 mass-send (run_eod_survey_check above) was the ONLY
+# automated EOD nudge -- "a driver who misses the window just doesn't get
+# a second nudge today" was a deliberate simplification at the time, but
+# left genuinely zero follow-up for anyone who missed it. This is a real,
+# second, later reminder for the same day -- same mass-send shape as
+# run_eod_survey_check, own dedup key, slightly more direct tone. Gated
+# by EOD_SECOND_REMINDER_ACTIVE (default false).
+
+_SECOND_REMINDER_KEY_PREFIX = "eod_second_reminder_"
+
+
+def run_eod_second_reminder(db: Session, force: bool = False) -> dict:
+    """Called every 60s from main.py's _eod_survey_loop. Fires exactly
+    once, at 2100 Pacific: DMs the survey link to every driver scheduled
+    today who still hasn't submitted after the 1900 mass-send. Dedup'd
+    via ReminderThrottleState. force=True (manual /trigger-second-reminder
+    only) bypasses both the hour gate and the already-sent-today guard."""
+    if not force and not get_flag("EOD_SECOND_REMINDER_ACTIVE"):
+        return {"status": "inactive", "note": "Set EOD_SECOND_REMINDER_ACTIVE=true on Render to enable"}
+
+    from api.src.driver_identity import resolve_roster_entry
+
+    now_pt = datetime.now(PACIFIC)
+    today = now_pt.date()
+    now_utc_naive = datetime.utcnow()
+
+    if not force and now_pt.hour != 21:
+        return {"status": "not_send_hour", "date": today.isoformat()}
+
+    if not force and _all_in_posted_today(db):
+        return {"status": "all_in_posted", "date": today.isoformat()}
+
+    state_key = f"{_SECOND_REMINDER_KEY_PREFIX}{today.isoformat()}"
+    if not force and get_reminder_state(db, state_key).get("sent_at"):
+        return {"status": "already_sent", "date": today.isoformat()}
+
+    scheduled = db.query(DailyRouteAssignment).filter_by(assignment_date=today).all()
+    if not scheduled:
+        return {"status": "no_schedule", "date": today.isoformat()}
+
+    sent = already_submitted = no_slack = 0
+
+    for a in scheduled:
+        roster_entry: Optional[DriverRosterEntry] = None
+        if a.roster_id is not None:
+            roster_entry = db.query(DriverRosterEntry).filter(DriverRosterEntry.id == a.roster_id).first()
+        if roster_entry is None:
+            roster_entry = resolve_roster_entry(a.driver_name, db)
+
+        if roster_entry and db.query(EodSurveyResponse).filter_by(
+            roster_id=roster_entry.id, survey_date=today
+        ).first():
+            already_submitted += 1
+            continue
+
+        if not roster_entry or not roster_entry.slack_member_id:
+            no_slack += 1
+            continue
+
+        eod_token = _issue_eod_token(roster_entry.id, roster_entry.position_id, roster_entry.payroll_name)
+        url = f"{APP_URL}/eod?token={eod_token}"
+        first_name = a.driver_name.split()[0] if a.driver_name else "there"
+        msg = (
+            f"🏁 Hi {first_name} — second reminder for your *End of Day Survey*. "
+            f"Please complete it before you're done for the night."
+        )
+        _dm(roster_entry.slack_member_id, msg, button_url=url, button_text="📋 Complete Survey")
+        sent += 1
+
+    set_reminder_state(db, state_key, {"sent_at": now_utc_naive.isoformat(), "sent": sent})
+    return {
+        "status": "sent", "date": today.isoformat(),
+        "sent": sent, "already_submitted": already_submitted, "no_slack_id": no_slack,
+    }
+
+
+@router.post("/trigger-second-reminder")
+def trigger_second_reminder(force: bool = True, db: Session = Depends(get_db)):
+    """Manual/forced trigger for testing — still respects EOD_SECOND_REMINDER_ACTIVE unless force bypasses it entirely."""
+    return run_eod_second_reminder(db, force=force)
+
+
 @router.get("/debug-today")
 def debug_today(db: Session = Depends(get_db)) -> dict:
     """Read-only — per-driver view of exactly what run_eod_survey_check()

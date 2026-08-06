@@ -477,6 +477,12 @@ def _parse_schedule_header_date(header_value: str, year_hint: int) -> Optional[d
 def _resolve_selected_schedule_date(assigned_dates: List[str], timestamp_date: Optional[date]) -> Tuple[str, Optional[date]]:
     """Pick the date label from file headers this schedule is establishing.
 
+    RULE ONE, see Governance/SHOWTIME_MODULE_RULES.md: showtimes ALWAYS
+    use the NEXT day's information. Read that doc's Incident History
+    before touching this function again -- this exact bug has already
+    recurred once after being "fixed" because a stale pre-fix ingest
+    result kept driving sends until a real subsequent ingest ran.
+
     timestamp_date is when the file itself was generated (A2's own
     timestamp) -- this file is always uploaded the evening before, to
     set up the NEXT day's shift (see DriverScheduleSummary.date's own

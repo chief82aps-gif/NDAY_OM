@@ -85,6 +85,24 @@ string.
   — every other system's driver_name string is ultimately trying to refer
   to that. Never match against `preferred_name` (display-only).
 
+**Third occurrence, 2026-08-06**: Logan Kelley's Slack Home tab showed
+"your Slack account isn't linked" even though `DriverRosterEntry.slack_member_id`
+was already set (`slack_verified=true`) — the stored ID was just stale/wrong
+(`U0BB4H6C5H9` vs. his real `U0BCBRKLS3F`), most likely from an earlier
+mis-match or a Slack account recreation. Root gap: `run_weekly_slack_relink()`
+(`drivers.py`) only ever re-matches drivers where `slack_member_id IS NULL`
+— an already-linked-but-wrong ID is never re-validated or corrected by
+anything. There is also a second, separate name-matching module,
+`api/src/driver_matching.py` (`best_slack_match()` etc.), used specifically
+for bulk-linking a roster name against a Slack member-list export — a
+legitimately different lookup direction than `driver_identity.py`'s
+(free-text name → existing roster_id), so it isn't strictly a duplicate,
+but it means there are now **two** driver-name-matching modules in this
+codebase. **Before writing any driver ↔ Slack identity code — matching,
+re-linking, or a "why isn't this account linked" check — read both
+`driver_identity.py` and `driver_matching.py` first and reuse one of them.
+Do not write a third fuzzy-name-matching implementation, even a small one.**
+
 ## Ingest: append-only, latest-snapshot, never auto-post
 
 This is the single most expensive lesson this project has learned (2026-07).

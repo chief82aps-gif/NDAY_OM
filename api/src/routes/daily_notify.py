@@ -275,18 +275,30 @@ def scan_cortex_channel(for_date: date) -> Optional[dict]:
         logger.warning("Cortex channel scan failed: %s", exc)
         return None
 
+    # Cortex legitimately gets re-shared multiple times through the day as
+    # routes update (ops_cadence.py's "fresh re-upload since last wave"
+    # check exists specifically for this) -- picking the FIRST filename
+    # match here instead of the MOST RECENT one meant a stale morning file
+    # could keep winning over a genuinely newer same-day re-upload, found
+    # 2026-08-05 when an evening re-upload kept losing to an 11 AM one.
+    # Slack's own `created` timestamp is the tie-breaker, not filename order.
+    best: Optional[dict] = None
+    best_created = -1
     for f in files_list:
         name: str = f.get("name", "")
         nl = name.lower()
         if ".xlsx" in nl and ("routes" in nl or "dlv3" in nl):
             file_date = _infer_file_date(name)
             if file_date == for_date:
-                return {
-                    "id": f.get("id"),
-                    "name": name,
-                    "url": f.get("url_private_download") or f.get("url_private"),
-                }
-    return None
+                created = f.get("created", 0) or 0
+                if created > best_created:
+                    best_created = created
+                    best = {
+                        "id": f.get("id"),
+                        "name": name,
+                        "url": f.get("url_private_download") or f.get("url_private"),
+                    }
+    return best
 
 
 def ingest_cortex_bytes(

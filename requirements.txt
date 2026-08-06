@@ -6,9 +6,13 @@ pdfplumber
 python-multipart
 reportlab
 sqlalchemy==2.0.46
-pyjwt
-python-jose[cryptography]
-passlib[bcrypt]
-psycopg2-binary
+psycopg2-binary==2.9.9
+python-dotenv==1.0.0
+python-jose==3.3.0
+bcrypt==4.0.1
+PyJWT>=2.9.0
 slack_sdk
 requests
+qrcode[pil]
+boto3
+anthropic

@@ -210,16 +210,23 @@ MGT_CHANNEL = os.getenv("SLACK_MGT_CHANNEL", "C0BCYAW7QP3")   # #nday-mgt
 
 
 def get_driver_status_counts(db: Session, snapshot: PackagesSnapshot) -> list[dict]:
-    """Per-driver breakdown of package_status counts for one snapshot,
-    sorted by unable-to-deliver count descending."""
+    """Per-driver breakdown for one snapshot, sorted by unable-to-deliver
+    count descending. "statuses" is the coarse package_status tally;
+    "unable_to_deliver_reasons" is Amazon's own Column H reason code
+    (e.g. "BUSINESS CLOSED", "TR CANCELLED", "CUSTOMER UNAVAILABLE"),
+    tallied only for the unable-to-deliver rows -- added 2026-08-05 per
+    explicit request ("can the undeliverables see the exact markings?
+    We need this rather than just 'Undeliverable'")."""
     rows = db.query(PackagesRecord).filter(PackagesRecord.snapshot_id == snapshot.id).all()
     by_driver: dict[str, dict] = {}
     for r in rows:
         name = r.transporter_name or "Unknown"
-        entry = by_driver.setdefault(name, {"transporter_id": r.transporter_id, "statuses": {}, "unable_to_deliver": 0})
+        entry = by_driver.setdefault(name, {"transporter_id": r.transporter_id, "statuses": {}, "unable_to_deliver_reasons": {}, "unable_to_deliver": 0})
         entry["statuses"][r.package_status] = entry["statuses"].get(r.package_status, 0) + 1
         if r.package_status in UNABLE_TO_DELIVER_STATUSES:
             entry["unable_to_deliver"] += 1
+            reason = r.reason_code or "(no reason given)"
+            entry["unable_to_deliver_reasons"][reason] = entry["unable_to_deliver_reasons"].get(reason, 0) + 1
     result = [{"driver_name": name, **data} for name, data in by_driver.items()]
     result.sort(key=lambda d: d["unable_to_deliver"], reverse=True)
     return result
@@ -244,10 +251,12 @@ def get_trailing_offender_report(db: Session, days: int = 7) -> list[dict]:
         if not snap:
             continue
         for entry in get_driver_status_counts(db, snap):
-            d = by_driver.setdefault(entry["driver_name"], {"transporter_id": entry["transporter_id"], "unable_to_deliver": 0, "days_flagged": 0})
+            d = by_driver.setdefault(entry["driver_name"], {"transporter_id": entry["transporter_id"], "unable_to_deliver": 0, "days_flagged": 0, "reason_codes": {}})
             if entry["unable_to_deliver"] > 0:
                 d["unable_to_deliver"] += entry["unable_to_deliver"]
                 d["days_flagged"] += 1
+                for reason, count in entry["unable_to_deliver_reasons"].items():
+                    d["reason_codes"][reason] = d["reason_codes"].get(reason, 0) + count
     result = [{"driver_name": name, **data} for name, data in by_driver.items() if data["unable_to_deliver"] > 0]
     result.sort(key=lambda d: d["unable_to_deliver"], reverse=True)
     return result
@@ -261,43 +270,166 @@ def _client():
     return WebClient(token=token)
 
 
+# Direct-to-driver DM for a NEW unable-to-deliver marking -- added
+# 2026-08-05 per explicit direction: drivers should be checking with
+# Blake and getting permission BEFORE marking a package this way (the
+# actual pre-marking permission gate is still backlog, not built --
+# see Governance backlog note), so until that exists, every new marking
+# gets this direct, pointed, slightly snarky ask. Replies land in the
+# driver's own DM and get relayed to HR via slack_interactions.py's
+# existing _relay_driver_dm_reply, no new plumbing needed for that part.
+_OFFENDER_DM_TEMPLATES = [
+    "👀 Hey {first} — I'm seeing you marked {count_phrase} today: {reasons}. There's a button for this, you know — "
+    "did you actually contact the customer? Try a redelivery? What's going on here? Why am I seeing this instead "
+    "of you checking with me first?",
+    "🤨 {first}, quick question — {count_phrase} today ({reasons}). Did you reach out to the customer about it? "
+    "We've got a process for confirming these before they go final, and I don't remember hearing from you. "
+    "What happened?",
+]
+
+
+def send_offender_dm(driver_name: str, flagged: list[dict], db: Session) -> dict:
+    """Direct DM to the specific driver for their own new unable-to-
+    deliver marking(s) -- separate from send_offender_alert_to_mgt()'s
+    #nday-mgt summary, which stays a human-review list, not a driver
+    confrontation."""
+    from api.src.driver_identity import resolve_roster_entry
+    entry = resolve_roster_entry(driver_name, db)
+    slack_id = entry.slack_member_id if entry else None
+    if not slack_id:
+        return {"status": "no_slack_id", "driver_name": driver_name}
+
+    client = _client()
+    if not client:
+        return {"status": "no_slack_token"}
+
+    first = (driver_name or "there").split()[0]
+    count_phrase = f"{len(flagged)} package(s)" if len(flagged) > 1 else "a package"
+    reason_counts: dict = {}
+    for p in flagged:
+        key = f"{p['reason_code']} ({p['package_status']})"
+        reason_counts[key] = reason_counts.get(key, 0) + 1
+    reasons = _format_reasons(reason_counts)
+
+    import random
+    text = random.choice(_OFFENDER_DM_TEMPLATES).format(first=first, count_phrase=count_phrase, reasons=reasons)
+    try:
+        client.chat_postMessage(channel=slack_id, text=text)
+    except Exception as exc:
+        logger.warning("Offender DM failed for %s: %s", driver_name, exc)
+        return {"status": "send_failed", "error": str(exc)}
+    return {"status": "sent", "driver_name": driver_name, "text": text}
+
+
+def get_new_unable_to_deliver_since_last_snapshot(db: Session, snapshot: PackagesSnapshot) -> list[dict]:
+    """Unable-to-deliver PackagesRecord rows in `snapshot` whose
+    tracking_id did NOT appear in the immediately prior snapshot for the
+    same report_date -- i.e. newly marked since the last upload, not
+    just "everything flagged today." Added 2026-08-05 per explicit
+    request ("we would also like to know new marking since last
+    update"). If this is the first snapshot of the day, everything
+    unable-to-deliver in it counts as new."""
+    prior = (
+        db.query(PackagesSnapshot)
+        .filter(PackagesSnapshot.report_date == snapshot.report_date, PackagesSnapshot.imported_at < snapshot.imported_at)
+        .order_by(PackagesSnapshot.imported_at.desc())
+        .first()
+    )
+    prior_tracking_ids = set()
+    if prior:
+        prior_tracking_ids = {
+            r.tracking_id for r in db.query(PackagesRecord.tracking_id).filter(PackagesRecord.snapshot_id == prior.id).all()
+        }
+
+    rows = (
+        db.query(PackagesRecord)
+        .filter(PackagesRecord.snapshot_id == snapshot.id, PackagesRecord.package_status.in_(UNABLE_TO_DELIVER_STATUSES))
+        .all()
+    )
+    return [
+        {
+            "driver_name": r.transporter_name or "Unknown",
+            "tracking_id": r.tracking_id,
+            "package_status": r.package_status,
+            "reason_code": r.reason_code or "(no reason given)",
+        }
+        for r in rows if r.tracking_id not in prior_tracking_ids
+    ]
+
+
+def _format_reasons(reasons: dict) -> str:
+    return ", ".join(f"{k} ({v})" for k, v in sorted(reasons.items(), key=lambda kv: -kv[1]))
+
+
 def send_offender_alert_to_mgt(db: Session, snapshot: Optional[PackagesSnapshot] = None, trailing_days: int = 7) -> dict:
-    """Posts today's snapshot breakdown + the trailing-N-day habitual
-    view to #nday-mgt for human review. Framed as "worth a look," never
-    as an automatic write-up -- these drivers haven't been through any
-    permission/dispute process, this is raw pattern-of-use data."""
+    """Posts new-since-last-update + today's snapshot breakdown + the
+    trailing-N-day habitual view to #nday-mgt for human review. Framed
+    as "worth a look," never as an automatic write-up -- these drivers
+    haven't been through any permission/dispute process, this is raw
+    pattern-of-use data. Shows Amazon's own exact reason code (Column H)
+    per driver, not just the coarse package_status bucket."""
     snapshot = snapshot or get_latest_snapshot(db)
     if not snapshot:
         return {"status": "no_snapshot"}
 
+    new_since_last = get_new_unable_to_deliver_since_last_snapshot(db, snapshot)
     today_counts = [d for d in get_driver_status_counts(db, snapshot) if d["unable_to_deliver"] > 0]
     trailing = get_trailing_offender_report(db, days=trailing_days)
 
     if not today_counts and not trailing:
         return {"status": "nothing_to_report"}
 
+    # Direct-to-driver DM for each NEW unable-to-deliver marking this
+    # cycle -- own try/except per driver so one bad Slack ID never blocks
+    # the rest, and never affects the #nday-mgt alert below.
+    driver_dm_results = []
+    if new_since_last:
+        packages_by_driver: dict[str, list[dict]] = {}
+        for row in new_since_last:
+            packages_by_driver.setdefault(row["driver_name"], []).append(row)
+        for name, flagged in packages_by_driver.items():
+            try:
+                driver_dm_results.append(send_offender_dm(name, flagged, db))
+            except Exception as exc:
+                logger.warning("Offender DM dispatch failed for %s: %s", name, exc)
+
     lines = ["📦 *Non-Delivered Marking Review* — for human review, not an automatic write-up.\n"]
+
+    if new_since_last:
+        new_by_driver: dict[str, dict] = {}
+        for row in new_since_last:
+            d = new_by_driver.setdefault(row["driver_name"], {})
+            key = f"{row['reason_code']} ({row['package_status']})"
+            d[key] = d.get(key, 0) + 1
+        lines.append(f"*🆕 New since last upload ({len(new_since_last)} package(s)):*")
+        for name, reasons in list(new_by_driver.items())[:10]:
+            lines.append(f"• *{name}* — {_format_reasons(reasons)}")
+        lines.append("")
+
     if today_counts:
         lines.append(f"*Today's snapshot ({snapshot.report_date.isoformat()}):*")
         for d in today_counts[:10]:
-            status_str = ", ".join(f"{k}: {v}" for k, v in d["statuses"].items() if k in UNABLE_TO_DELIVER_STATUSES)
-            lines.append(f"• *{d['driver_name']}* — {d['unable_to_deliver']} unable-to-deliver ({status_str})")
+            lines.append(f"• *{d['driver_name']}* — {d['unable_to_deliver']} unable-to-deliver: {_format_reasons(d['unable_to_deliver_reasons'])}")
     if trailing:
         lines.append(f"\n*Trailing {trailing_days} days (habitual pattern):*")
         for d in trailing[:10]:
             flag = " ⚠️ _repeat pattern_" if d["days_flagged"] >= 3 else ""
-            lines.append(f"• *{d['driver_name']}* — {d['unable_to_deliver']} total across {d['days_flagged']} day(s){flag}")
+            reason_str = f" — top reasons: {_format_reasons(d['reason_codes'])}" if d.get("reason_codes") else ""
+            lines.append(f"• *{d['driver_name']}* — {d['unable_to_deliver']} total across {d['days_flagged']} day(s){flag}{reason_str}")
     lines.append("\n_Reminder: drivers should confirm with Blake before marking a package this way — this list is to help spot who may not be doing that yet, not a punishment list._")
 
     client = _client()
     if not client:
-        return {"status": "no_slack_token", "text": "\n".join(lines)}
+        return {"status": "no_slack_token", "text": "\n".join(lines), "driver_dms": driver_dm_results}
     try:
         client.chat_postMessage(channel=MGT_CHANNEL, text="\n".join(lines))
     except Exception as exc:
         logger.warning("Non-delivered marking alert post failed: %s", exc)
-        return {"status": "send_failed", "error": str(exc)}
-    return {"status": "sent", "today_count": len(today_counts), "trailing_count": len(trailing)}
+        return {"status": "send_failed", "error": str(exc), "driver_dms": driver_dm_results}
+    return {
+        "status": "sent", "today_count": len(today_counts), "trailing_count": len(trailing),
+        "new_since_last": len(new_since_last), "driver_dms": driver_dm_results,
+    }
 
 
 @router.get("/offender-report")
@@ -308,6 +440,7 @@ def offender_report(trailing_days: int = 7, db: Session = Depends(get_db)):
         raise HTTPException(404, "No Packages snapshot found for today.")
     return {
         "snapshot": _serialize_snapshot(snap),
+        "new_since_last": get_new_unable_to_deliver_since_last_snapshot(db, snap),
         "today": get_driver_status_counts(db, snap),
         "trailing": get_trailing_offender_report(db, days=trailing_days),
     }

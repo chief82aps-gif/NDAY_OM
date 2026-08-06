@@ -136,6 +136,29 @@ async def _wave_competition_standings_loop():
         await asyncio.sleep(60)
 
 
+async def _wave_leads_standings_loop():
+    """Every 60 s — delegates to wave_lead.run_wave_leads_standings(),
+    which no-ops outside the 9 PM Pacific send hour (late enough that
+    today's EOD surveys are mostly in) and respects an "already sent
+    today" guard. Gated by WAVE_LEADS_CHANNEL_STANDINGS_ACTIVE (default
+    false). Distinct from _wave_competition_standings_loop above --
+    that one posts weekly quality standings to #nday-mgt at 7 AM; this
+    one posts today's EOD completion + this week's quality score, by
+    wave, to #nday-wave-leads."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                await asyncio.to_thread(wave_lead.run_wave_leads_standings, db)
+            except Exception as exc:
+                logger.warning("Wave leads standings loop error: %s", exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("Wave leads standings loop outer error: %s", exc)
+        await asyncio.sleep(60)
+
+
 async def _wave_channel_sync_loop():
     """Every 60 s, active 6-11 AM Pacific — delegates to
     wave_lead.sync_wave_channels(), which no-ops outside that window and
@@ -887,6 +910,7 @@ async def startup():
     asyncio.create_task(manager_accountability.manager_accountability_loop())
     asyncio.create_task(_callout_queue_loop())
     asyncio.create_task(_wave_competition_standings_loop())
+    asyncio.create_task(_wave_leads_standings_loop())
     asyncio.create_task(_wave_channel_sync_loop())
     ensure_driver_shift_dm_checklist_columns()
     asyncio.create_task(_nightly_roster_reminder_loop())

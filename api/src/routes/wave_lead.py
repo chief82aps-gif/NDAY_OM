@@ -925,13 +925,31 @@ def create_wave_leads_channel(db: Session = Depends(get_db)):
     return {"status": "created", "channel_name": WAVE_LEADS_CHANNEL_NAME, "channel_id": channel_id}
 
 
-@router.post("/wave-leads-channel/send-standings")
-def send_wave_leads_standings(db: Session = Depends(get_db)):
-    """Post today's standings to the existing #nday-wave-leads channel
-    (does not create it -- use /wave-leads-channel/create first)."""
+_WAVE_LEADS_SEND_HOUR = 21   # 9 PM Pacific -- late enough that today's EOD surveys are mostly in
+_WAVE_LEADS_MESSAGE_KEY = "wave_leads_standings"
+
+
+def run_wave_leads_standings(db: Session, force: bool = False) -> dict:
+    """Once per day: post the day/week standings to #nday-wave-leads.
+    force=True bypasses the hour gate and already-sent guard for manual
+    testing/an ad-hoc re-send. Does not create the channel -- use
+    /wave-leads-channel/create first."""
+    if not force and not get_flag("WAVE_LEADS_CHANNEL_STANDINGS_ACTIVE"):
+        return {"status": "inactive", "note": "Set WAVE_LEADS_CHANNEL_STANDINGS_ACTIVE=true on Render to enable"}
+
+    now_pt = datetime.now(PACIFIC)
+    today = now_pt.date()
+
+    if not force and now_pt.hour != _WAVE_LEADS_SEND_HOUR:
+        return {"status": "not_send_hour", "date": today.isoformat()}
+
+    state_key = f"{_WAVE_LEADS_MESSAGE_KEY}_{today.isoformat()}"
+    if not force and get_reminder_state(db, state_key).get("sent_at"):
+        return {"status": "already_sent", "date": today.isoformat()}
+
     token = os.getenv("SLACK_BOT_TOKEN")
     if not token:
-        raise HTTPException(status_code=503, detail="SLACK_BOT_TOKEN is not configured")
+        return {"status": "no_slack_token"}
     from slack_sdk import WebClient
     client = WebClient(token=token)
 
@@ -946,15 +964,31 @@ def send_wave_leads_standings(db: Session = Depends(get_db)):
         if not cursor:
             break
     if not channel_id:
-        raise HTTPException(status_code=404, detail=f"#{WAVE_LEADS_CHANNEL_NAME} not found -- create it first.")
+        return {"status": "channel_not_found", "note": f"#{WAVE_LEADS_CHANNEL_NAME} not found -- create it first."}
 
-    today = date.today()
     text = _wave_leads_message_text(db, today)
     try:
         client.chat_postMessage(channel=channel_id, text=text)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
-    return {"status": "sent", "channel_id": channel_id}
+        logger.warning("Wave leads standings post failed: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+    set_reminder_state(db, state_key, {"sent_at": datetime.utcnow().isoformat()})
+    return {"status": "sent", "channel_id": channel_id, "date": today.isoformat()}
+
+
+@router.post("/wave-leads-channel/send-standings")
+def send_wave_leads_standings(force: bool = True, db: Session = Depends(get_db)):
+    """Post today's standings to the existing #nday-wave-leads channel
+    (does not create it -- use /wave-leads-channel/create first).
+    force=True (default, matching /trigger-standings' sibling endpoint)
+    bypasses the hour gate and already-sent guard for manual/ad-hoc use."""
+    result = run_wave_leads_standings(db, force=force)
+    if result["status"] == "channel_not_found":
+        raise HTTPException(status_code=404, detail=result["note"])
+    if result["status"] == "error":
+        raise HTTPException(status_code=502, detail=result["detail"])
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────

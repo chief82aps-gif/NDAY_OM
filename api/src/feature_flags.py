@@ -66,6 +66,11 @@ FLAG_REGISTRY: dict[str, dict] = {
         "description": "Daily friendly-competition standings message across wave teams.",
         "category": "Wave Lead",
     },
+    "WAVE_LEADS_CHANNEL_STANDINGS_ACTIVE": {
+        "label": "Wave Leads Channel Standings",
+        "description": "Daily day/week standings post to #nday-wave-leads (today's EOD completion + this week's quality score, by wave).",
+        "category": "Wave Lead",
+    },
     "WAVE_PTT_CHANNELS_ACTIVE": {
         "label": "Wave PTT Channels",
         "description": "Auto-creates/syncs per-wave Slack channels for voice-clip PTT.",

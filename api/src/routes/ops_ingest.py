@@ -293,11 +293,21 @@ def _classify(filename: str, message: str, channel_id: str = "") -> str:
 # Channel scan (called by background loop + manual Scan Now button)
 # ─────────────────────────────────────────────────────────────────────────────
 
+_SCAN_LOOKBACK_HOURS = 24
+_SCAN_MAX_PAGES = 10   # up to ~2000 messages/channel -- backstop against a runaway loop on an extremely chatty channel, not a real limit on a normal day
+
+
 def scan_ops_channel(db: Session) -> list[str]:
     """
     Scan #nday-operations-management and #dlv3-nday-info for new file shares.
     Creates OpsIngestJob rows for anything not yet seen.
     Returns list of new filenames detected.
+
+    Paginates back _SCAN_LOOKBACK_HOURS (time-based), not a fixed message
+    count -- a flat limit=100 silently missed a real same-day upload twice
+    in one day (2026-08-06): once for a Cortex file, once for a CDF file,
+    both simply pushed past the 100 most recent messages by ordinary
+    channel chatter (every automated job confirmation posts here too).
     """
     client = _slack_client()
     if not client:
@@ -307,46 +317,53 @@ def scan_ops_channel(db: Session) -> list[str]:
     known_ids: set[str] = {
         row[0] for row in db.query(OpsIngestJob.slack_file_id).all()
     }
+    oldest = (datetime.now(timezone.utc) - timedelta(hours=_SCAN_LOOKBACK_HOURS)).timestamp()
 
     new_filenames: list[str] = []
     for channel_id in SCAN_CHANNELS:
-        try:
-            resp = client.conversations_history(channel=channel_id, limit=100)
-        except Exception as exc:
-            logger.warning("Ops channel history failed for %s: %s", channel_id, exc)
-            continue
+        cursor = None
+        for _page in range(_SCAN_MAX_PAGES):
+            try:
+                resp = client.conversations_history(channel=channel_id, oldest=str(oldest), limit=200, cursor=cursor)
+            except Exception as exc:
+                logger.warning("Ops channel history failed for %s: %s", channel_id, exc)
+                break
 
-        for msg in resp.get("messages", []):
-            files = msg.get("files", [])
-            if not files:
-                continue
-
-            msg_text: str = msg.get("text", "") or ""
-            msg_ts: str = msg.get("ts", "") or ""
-
-            for f in files:
-                fid: str = f.get("id", "")
-                if not fid or fid in known_ids:
+            for msg in resp.get("messages", []):
+                files = msg.get("files", [])
+                if not files:
                     continue
 
-                fname: str = f.get("name", "") or "unknown"
-                url: str = f.get("url_private_download") or f.get("url_private") or ""
-                dtype = _classify(fname, msg_text, channel_id)
+                msg_text: str = msg.get("text", "") or ""
+                msg_ts: str = msg.get("ts", "") or ""
 
-                job = OpsIngestJob(
-                    slack_file_id=fid,
-                    slack_message_ts=msg_ts,
-                    slack_message_text=msg_text[:1000] if msg_text else None,
-                    file_name=fname,
-                    file_url=url,
-                    detected_type=dtype,
-                    status="pending",
-                    detected_at=datetime.now(timezone.utc),
-                )
-                db.add(job)
-                known_ids.add(fid)
-                new_filenames.append(fname)
-                logger.info("Ops ingest: queued %s as %s (from %s)", fname, dtype, channel_id)
+                for f in files:
+                    fid: str = f.get("id", "")
+                    if not fid or fid in known_ids:
+                        continue
+
+                    fname: str = f.get("name", "") or "unknown"
+                    url: str = f.get("url_private_download") or f.get("url_private") or ""
+                    dtype = _classify(fname, msg_text, channel_id)
+
+                    job = OpsIngestJob(
+                        slack_file_id=fid,
+                        slack_message_ts=msg_ts,
+                        slack_message_text=msg_text[:1000] if msg_text else None,
+                        file_name=fname,
+                        file_url=url,
+                        detected_type=dtype,
+                        status="pending",
+                        detected_at=datetime.now(timezone.utc),
+                    )
+                    db.add(job)
+                    known_ids.add(fid)
+                    new_filenames.append(fname)
+                    logger.info("Ops ingest: queued %s as %s (from %s)", fname, dtype, channel_id)
+
+            cursor = resp.get("response_metadata", {}).get("next_cursor") or None
+            if not cursor:
+                break
 
     if new_filenames:
         db.commit()

@@ -26,9 +26,10 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from api.src.database import get_db, PackagesSnapshot, PackagesRecord
+from api.src.database import get_db, PackagesSnapshot, PackagesRecord, PackageMarkingTroubleshootingStep
 from api.src.ingest.packages import parse_packages
 from api.src.feature_flags import get_flag
 
@@ -450,6 +451,80 @@ def offender_report(trailing_days: int = 7, db: Session = Depends(get_db)):
         "today": get_driver_status_counts(db, snap),
         "trailing": get_trailing_offender_report(db, days=trailing_days),
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Reason-code troubleshooting guide — added 2026-08-06. Pure data-entry/
+# reference tool for dispatch (Luis, etc.) to define what a driver should
+# be asked/checked for each Amazon reason code, ahead of the real
+# resolution-process conversation (see Governance/PACKAGE_RTS_RESOLUTION_MODULE.md,
+# still in draft). Filling this in does NOT turn on PACKAGE_OFFENDER_DM_ACTIVE
+# or any other automated send -- it's reference data only until that
+# doc is rewritten with a real process and something is deliberately
+# wired to read it.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/troubleshooting-guide")
+def get_troubleshooting_guide(db: Session = Depends(get_db)):
+    """Every reason code ever seen in real package data, merged with any
+    troubleshooting steps dispatch has entered so far. Codes with no
+    steps yet are included with steps=null so the gaps are visible."""
+    seen_codes = {
+        row[0] for row in db.query(PackagesRecord.reason_code).distinct().all() if row[0]
+    }
+    entries = {e.reason_code: e for e in db.query(PackageMarkingTroubleshootingStep).all()}
+    all_codes = seen_codes | set(entries.keys())
+
+    guide = []
+    for code in sorted(all_codes):
+        entry = entries.get(code)
+        guide.append({
+            "reason_code": code,
+            "steps": entry.steps if entry else None,
+            "updated_by": entry.updated_by if entry else None,
+            "updated_at": entry.updated_at.isoformat() if entry and entry.updated_at else None,
+            "seen_in_data": code in seen_codes,
+        })
+    return {"guide": guide}
+
+
+class TroubleshootingStepRequest(BaseModel):
+    reason_code: str
+    steps: str
+    updated_by: Optional[str] = None
+
+
+@router.post("/troubleshooting-guide")
+def upsert_troubleshooting_step(payload: TroubleshootingStepRequest, db: Session = Depends(get_db)):
+    reason_code = payload.reason_code.strip()
+    if not reason_code or not payload.steps.strip():
+        raise HTTPException(400, "reason_code and steps are both required.")
+
+    entry = db.query(PackageMarkingTroubleshootingStep).filter_by(reason_code=reason_code).first()
+    if entry:
+        entry.steps = payload.steps.strip()
+        entry.updated_by = payload.updated_by
+    else:
+        entry = PackageMarkingTroubleshootingStep(
+            reason_code=reason_code, steps=payload.steps.strip(), updated_by=payload.updated_by,
+        )
+        db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return {
+        "reason_code": entry.reason_code, "steps": entry.steps,
+        "updated_by": entry.updated_by, "updated_at": entry.updated_at.isoformat() if entry.updated_at else None,
+    }
+
+
+@router.delete("/troubleshooting-guide/{reason_code}")
+def delete_troubleshooting_step(reason_code: str, db: Session = Depends(get_db)):
+    entry = db.query(PackageMarkingTroubleshootingStep).filter_by(reason_code=reason_code).first()
+    if not entry:
+        raise HTTPException(404, f"No troubleshooting entry for reason code {reason_code!r}")
+    db.delete(entry)
+    db.commit()
+    return {"status": "deleted", "reason_code": reason_code}
 
 
 @router.post("/send-offender-alert")

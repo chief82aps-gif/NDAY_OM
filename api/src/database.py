@@ -4165,6 +4165,24 @@ class TrainingVideoLink(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class PackageMarkingTroubleshootingStep(Base):
+    """Admin-maintained (dispatch-authored) troubleshooting steps for a
+    non-delivered-package reason code (packages.py's PackagesRecord.reason_code)
+    -- added 2026-08-06 so dispatch (Luis, etc.) can define, once per
+    reason code, what a driver should be asked/checked before a package
+    gets marked that way. Purely a reference/data-entry table -- filling
+    this in does NOT itself turn on any driver-facing send; see
+    Governance/PACKAGE_RTS_RESOLUTION_MODULE.md, still in draft as of
+    this table's creation."""
+    __tablename__ = "package_marking_troubleshooting_steps"
+
+    id = Column(Integer, primary_key=True)
+    reason_code = Column(String(200), unique=True, nullable=False, index=True)
+    steps = Column(Text, nullable=False)
+    updated_by = Column(String(150))
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class NdayPointsLedger(Base):
     """Persistent per-driver "NDAY Points" reward balance -- added
     2026-07-31. Deliberately named apart from attendance.py's own

@@ -287,7 +287,14 @@ def scan_cortex_channel(for_date: date) -> Optional[dict]:
     for f in files_list:
         name: str = f.get("name", "")
         nl = name.lower()
-        if ".xlsx" in nl and ("routes" in nl or "dlv3" in nl):
+        # Confirmed real bug 2026-08-06: a DVIC PreTrip export
+        # ("US_NDAY_DLV3_2026_week-32_...DVIC_PreTrip...xlsx") got matched
+        # here and ingested as if it were the Cortex Routes file -- "dlv3"
+        # alone is not a specific enough substring, since it's also the
+        # company/route-group identifier stamped on unrelated exports.
+        # Require the actual documented filename pattern (Routes_DLV3_...)
+        # as a prefix, not a loose substring anywhere in the name.
+        if nl.endswith(".xlsx") and nl.startswith("routes_dlv3") and "dvic" not in nl:
             file_date = _infer_file_date(name)
             if file_date == for_date:
                 created = f.get("created", 0) or 0

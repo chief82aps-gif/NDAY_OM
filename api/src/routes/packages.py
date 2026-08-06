@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 
 from api.src.database import get_db, PackagesSnapshot, PackagesRecord
 from api.src.ingest.packages import parse_packages
+from api.src.feature_flags import get_flag
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/packages", tags=["packages"])
@@ -381,9 +382,14 @@ def send_offender_alert_to_mgt(db: Session, snapshot: Optional[PackagesSnapshot]
 
     # Direct-to-driver DM for each NEW unable-to-deliver marking this
     # cycle -- own try/except per driver so one bad Slack ID never blocks
-    # the rest, and never affects the #nday-mgt alert below.
+    # the rest, and never affects the #nday-mgt alert below. Gated by
+    # PACKAGE_OFFENDER_DM_ACTIVE (default false) -- added 2026-08-06 after
+    # this shipped with no flag at all, unlike every other automated
+    # driver-facing send in this app; paused per explicit direction
+    # pending a real defined process (script/resolution steps) worked out
+    # with dispatch first. The #nday-mgt alert below is unaffected.
     driver_dm_results = []
-    if new_since_last:
+    if new_since_last and get_flag("PACKAGE_OFFENDER_DM_ACTIVE"):
         packages_by_driver: dict[str, list[dict]] = {}
         for row in new_since_last:
             packages_by_driver.setdefault(row["driver_name"], []).append(row)

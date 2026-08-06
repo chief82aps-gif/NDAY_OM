@@ -211,6 +211,11 @@ FLAG_REGISTRY: dict[str, dict] = {
         "description": "Automatically processes detected ingest files instead of requiring manual confirmation. On by default.",
         "category": "Ingest",
     },
+    "PACKAGE_OFFENDER_DM_ACTIVE": {
+        "label": "Package Offender DM",
+        "description": "Direct-to-driver DM asking about a new unable-to-deliver package marking. Paused 2026-08-06 pending a defined resolution process with dispatch -- see Governance package RTS resolution doc.",
+        "category": "Driver Communication",
+    },
     "DAILY_FALLBACK_PIN_ACTIVE": {
         "label": "Daily Fallback PIN",
         "description": "Generates one shared PIN per day, posted to #nday-mgt, accepted alongside (not instead of) each driver's own PIN everywhere it's checked.",

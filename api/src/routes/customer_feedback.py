@@ -59,9 +59,11 @@ def _store_customer_feedback(content: bytes, filename: str, slack_file_id: Optio
     }
 
     created = 0
+    seen_in_batch: set[str] = set()
     for rec in records:
-        if rec.delivery_group_id in existing_ids:
+        if rec.delivery_group_id in existing_ids or rec.delivery_group_id in seen_in_batch:
             continue
+        seen_in_batch.add(rec.delivery_group_id)
         db.add(CustomerFeedbackEvent(
             delivery_group_id=rec.delivery_group_id,
             driver_name=rec.driver_name,

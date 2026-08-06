@@ -1105,7 +1105,15 @@ def run_ops_auto_ingest(db: Session) -> dict:
         try:
             result = _dispatch(job, content, db)
         except Exception as exc:
-            logger.exception("Auto-ingest dispatch error for job %s (%s)", job.id, job.detected_type)
+            job_id, job_type = job.id, job.detected_type
+            # A failed flush inside _dispatch (e.g. a duplicate-key error) leaves
+            # this Session's transaction needing a rollback before it can be used
+            # again -- even just reading an expired attribute off `job` triggers a
+            # lazy-load that raises PendingRollbackError instead of the real error,
+            # which used to mask this handler's own job.status="error" write below.
+            db.rollback()
+            job = db.query(OpsIngestJob).filter(OpsIngestJob.id == job_id).first()
+            logger.exception("Auto-ingest dispatch error for job %s (%s)", job_id, job_type)
             job.status = "error"
             job.error_message = str(exc)[:500]
             job.result_json = None

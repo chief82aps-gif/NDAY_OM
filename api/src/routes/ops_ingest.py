@@ -1052,19 +1052,37 @@ def manual_misrouted_scan(db: Session = Depends(get_db)):
 _AUTO_INGEST_TYPES = ("dvic", "driver_schedule", "fleet", "quality_csv", "safety_events", "dsp_scorecard", "tenured_workforce", "daily_quality", "quality_rts", "customer_feedback", "packages")
 
 
+_STUCK_INGESTING_MINUTES = 10   # a real ingest (download + parse) finishes in seconds; anything still "ingesting" this long after detection was orphaned, not slow
+
+
 def run_ops_auto_ingest(db: Session) -> dict:
     """Ingest every pending OpsIngestJob of a type known to be safe to run
     unattended (see module docstring above for what's excluded and why).
     Mirrors /jobs/{id}/ingest's own logic (download -> _dispatch -> status
     update -> Slack confirmation) but runs automatically instead of waiting
     for a manual click. Processes oldest-first so a same-day correction
-    (e.g. a later driver-schedule re-upload) ends up as the final state."""
+    (e.g. a later driver-schedule re-upload) ends up as the final state.
+
+    Also retries jobs stuck at status=='ingesting' for more than
+    _STUCK_INGESTING_MINUTES -- confirmed 2026-08-05: a mid-flight
+    process restart (e.g. a Render redeploy landing between "job.status
+    = 'ingesting'; db.commit()" and the actual dispatch finishing) left
+    two real customer_feedback jobs permanently stuck, since only
+    status=='pending' was ever retried and nothing else ever re-checks
+    'ingesting' rows. The reminder correctly saw no status=='complete'
+    row and kept nagging even though the file had genuinely been
+    uploaded -- this was the real bug behind that, not a date/window
+    issue."""
     if not get_flag("OPS_AUTO_INGEST_ACTIVE"):
         return {"status": "inactive"}
 
+    stuck_cutoff = datetime.now(timezone.utc) - timedelta(minutes=_STUCK_INGESTING_MINUTES)
     jobs = (
         db.query(OpsIngestJob)
-        .filter(OpsIngestJob.detected_type.in_(_AUTO_INGEST_TYPES), OpsIngestJob.status == "pending")
+        .filter(
+            OpsIngestJob.detected_type.in_(_AUTO_INGEST_TYPES),
+            (OpsIngestJob.status == "pending") | ((OpsIngestJob.status == "ingesting") & (OpsIngestJob.detected_at < stuck_cutoff)),
+        )
         .order_by(OpsIngestJob.id.asc())
         .all()
     )

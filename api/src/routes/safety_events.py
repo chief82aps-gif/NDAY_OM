@@ -34,7 +34,12 @@ from api.src.feature_flags import get_flag
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/safety-events", tags=["safety-events"])
 
-SAFETY_EVENTS_CHANNEL = os.getenv("SAFETY_EVENTS_CHANNEL_ID", "C0ADM0M5UNQ")   # dedicated safety events channel
+# Redirected to #nday-mgt 2026-08-05 -- the dedicated channel this
+# previously pointed at (C0ADM0M5UNQ) no longer exists, which made every
+# review post fail with channel_not_found and retry forever every 60s
+# with no backoff. Same channel already used for the assignment matrix,
+# offender scrub, and other #nday-mgt management alerts.
+SAFETY_EVENTS_CHANNEL = os.getenv("SAFETY_EVENTS_CHANNEL_ID", "C0BCYAW7QP3")
 
 # Safety Violation Review/Dispute workflow — added 2026-07-23
 # (BUILD_QUEUE.md #6). Hard off-switch, same pattern as DRIVER_DM_ACTIVE/

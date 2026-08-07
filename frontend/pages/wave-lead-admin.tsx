@@ -125,18 +125,32 @@ export default function WaveLeadAdminPage() {
       // distinguishes the two; wave_number does.
       setSeniorLeads((rolesData.roles ?? []).filter((r: WaveLeadRole) => !!r.half && r.wave_number == null));
 
+      // One member fetch per team. Previously a bare Promise.all over
+      // `.then(r => r.json())`: ANY single failure -- a Render cold-start 502,
+      // a non-JSON body, a dropped request -- rejected the whole batch, so
+      // setMembers() never ran and every team silently kept rendering
+      // "No members yet" while the API had the data. That is exactly what a
+      // screen recording showed: standings/ranks refreshed correctly while the
+      // rosters underneath stayed empty. Each fetch now fails independently.
+      const teamList: TeamStanding[] = teamsData.teams ?? [];
+      const failed: string[] = [];
       const memberEntries = await Promise.all(
-        (teamsData.teams ?? []).map((t: TeamStanding) =>
-          fetch(`${api}/wave-lead/teams/${t.team_id}/members`).then(r => r.json())
+        teamList.map(t =>
+          fetch(`${api}/wave-lead/teams/${t.team_id}/members`)
+            .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+            .catch(() => { failed.push(t.team_label); return null; })
         )
       );
       const memberMap: Record<number, TeamMember[]> = {};
-      (teamsData.teams ?? []).forEach((t: TeamStanding, i: number) => {
+      teamList.forEach((t, i) => {
         memberMap[t.team_id] = memberEntries[i]?.members ?? [];
       });
       setMembers(memberMap);
-    } catch {
-      setStatus('Failed to load.');
+      if (failed.length) {
+        setStatus(`Couldn't load the roster for: ${failed.join(', ')}. Those show as empty but may not be — reload before changing them.`);
+      }
+    } catch (e: any) {
+      setStatus(`Failed to load the page data: ${e?.message ?? 'unknown error'}`);
     }
   }, [api]);
 
@@ -258,7 +272,19 @@ export default function WaveLeadAdminPage() {
           <p style={{ color: '#94a3b8', fontSize: 13, margin: '0 0 20px' }}>
             Assign standing wave leads and team membership. See Governance/05_NDL_Wave_Lead_Module_SRD.md for the full design.
           </p>
-          {status && <p style={{ color: '#60a5fa', fontSize: 13 }}>{status}</p>}
+          {/* Sticky: the wave cards are ~800px below this point, so a status
+              line pinned to the top of the document is invisible exactly when
+              you're using the Add buttons that produce it. Confirmed from a
+              screen recording where every message landed off-screen. */}
+          {status && (
+            <p style={{
+              position: 'sticky', top: 0, zIndex: 20, margin: '0 0 12px',
+              padding: '8px 12px', borderRadius: 6, fontSize: 13,
+              background: status.includes('failed') || status.includes('error') || status.includes('Pick a driver') ? '#3b1e1e' : '#14251b',
+              color: status.includes('failed') || status.includes('error') || status.includes('Pick a driver') ? '#f87171' : '#4ade80',
+              border: `1px solid ${status.includes('failed') || status.includes('error') || status.includes('Pick a driver') ? '#7f1d1d' : '#166534'}`,
+            }}>{status}</p>
+          )}
 
           {/* Team suggestions from real schedule history */}
           <div style={s.card}>

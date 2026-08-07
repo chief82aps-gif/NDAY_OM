@@ -41,6 +41,7 @@ from sqlalchemy.orm import Session
 from api.src.database import get_db, DailyRouteAssignment, DriverShiftDM, PackagesRecord
 from api.src.routes.packages import get_latest_snapshot
 from api.src.timezone import PACIFIC as PT
+from api.src.pilot_roster import allow_driver
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/driver-progress", tags=["driver-progress"])
@@ -321,6 +322,11 @@ def send_progress_dm(driver_name: str, db: Session, target_date: Optional[date] 
     slack_id = entry.slack_member_id if entry else None
     if not slack_id:
         return {"status": "no_slack_id", "driver_name": driver_name}
+    # Pilot scoping — checked after the feature's own flag, never instead of
+    # it. No pilot set == everyone, exactly as before. See pilot_roster.py.
+    if not allow_driver(entry.id if entry else None, db):
+        return {"status": "skipped_not_in_pilot", "driver_name": driver_name}
+
 
     client = _client()
     if not client:

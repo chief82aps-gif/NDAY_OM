@@ -42,6 +42,7 @@ from api.src.database import (
 )
 from api.src.authorization import require_any_role
 from api.src.feature_flags import get_flag
+from api.src.pilot_roster import allow_driver
 from api.src.timezone import PACIFIC
 
 logger = logging.getLogger(__name__)
@@ -295,6 +296,9 @@ def send_sentiment_survey(roster_ids: Optional[list[int]], send_to_all: bool, db
     for entry in candidates:
         if not entry.slack_member_id:
             no_slack += 1
+            continue
+        # Pilot scoping — after the feature flag, never instead of it.
+        if not allow_driver(entry.id, db):
             continue
         existing = db.query(SentimentSurveyResponse).filter_by(roster_id=entry.id, survey_date=today).first()
         if existing:

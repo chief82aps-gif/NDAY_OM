@@ -52,6 +52,7 @@ from api.src.driver_identity import resolve_roster_entry, resolve_roster_id
 from api.src.outstanding_items import get_outstanding_items
 from api.src.schedule_config import SHOWTIME_OFFSET_MINUTES
 from api.src.feature_flags import get_flag
+from api.src.pilot_roster import allow_driver
 from api.src.timezone import PACIFIC
 
 logger = logging.getLogger(__name__)
@@ -2152,6 +2153,13 @@ def run_arrival_nudges(db: Session, now: Optional[datetime] = None) -> dict:
             continue
         minutes_late = (now - showtime_dt).total_seconds() / 60
         if minutes_late < _ARRIVAL_NUDGE_1_MINUTES:
+            continue
+
+        # Pilot scoping (2026-08-07) — checked after ARRIVAL_NUDGE_ACTIVE,
+        # never instead of it. Resolved through driver_identity rather than a
+        # second name lookup; no pilot set == everyone, exactly as before.
+        _pilot_entry = resolve_roster_entry(r.driver_name, db)
+        if not allow_driver(_pilot_entry.id if _pilot_entry else None, db):
             continue
 
         value = json.dumps({"shift_date": today.isoformat(), "driver_name": r.driver_name})

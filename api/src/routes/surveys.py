@@ -54,6 +54,7 @@ from api.src.database import (
 )
 from api.src.authorization import require_any_role
 from api.src.feature_flags import get_flag
+from api.src.pilot_roster import allow_driver
 from api.src.slack_notification_gate import sends_paused, was_suppressed
 
 logger = logging.getLogger(__name__)
@@ -543,6 +544,11 @@ def run_survey_nudges(db: Session) -> dict:
         for a in due:
             entry = db.query(DriverRosterEntry).filter(DriverRosterEntry.id == a.roster_id).first()
             if not entry or not entry.slack_member_id:
+                continue
+            # Pilot scoping — after the feature flag, never instead of it.
+            # Only the automatic nudge loop is scoped; an admin pressing Send
+            # is an explicit human action and stays unrestricted.
+            if not allow_driver(entry.id, db):
                 continue
             token = _issue_survey_token(survey.id, entry.id, entry.payroll_name)
             if _dm_survey_link(entry.slack_member_id, survey, token, is_nudge=True):

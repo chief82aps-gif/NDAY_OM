@@ -296,10 +296,16 @@ def send_offender_dm(driver_name: str, flagged: list[dict], db: Session) -> dict
     #nday-mgt summary, which stays a human-review list, not a driver
     confrontation."""
     from api.src.driver_identity import resolve_roster_entry
+    from api.src.pilot_roster import allow_driver
     entry = resolve_roster_entry(driver_name, db)
     slack_id = entry.slack_member_id if entry else None
     if not slack_id:
         return {"status": "no_slack_id", "driver_name": driver_name}
+    # Pilot scoping — checked after the feature's own flag, never instead of
+    # it. No pilot set == everyone, exactly as before. See pilot_roster.py.
+    if not allow_driver(entry.id if entry else None, db):
+        return {"status": "skipped_not_in_pilot", "driver_name": driver_name}
+
 
     client = _client()
     if not client:

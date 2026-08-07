@@ -46,6 +46,7 @@ from api.src.ingest.coaching_notifications import parse_coaching_notifications_h
 from api.src.driver_identity import resolve_roster_entry
 from api.src.routes.document_routing import get_role_slack_ids
 from api.src.feature_flags import get_flag
+from api.src.pilot_roster import allow_driver
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/coaching-notifications", tags=["coaching-notifications"])
@@ -347,6 +348,9 @@ def _notify_driver_stage(notification: CoachingNotification, roster: DriverRoste
             }],
         },
     ]
+    # Pilot scoping — after the feature flag, never instead of it.
+    if not allow_driver(roster.id, db):
+        return {"status": "skipped_not_in_pilot", "driver": roster.payroll_name}
     try:
         resp = client.chat_postMessage(channel=roster.slack_member_id, text=f"Coaching note — {notification.behavior}", blocks=blocks)
         approval.status = "notified"

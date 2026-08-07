@@ -518,6 +518,12 @@ class DriverRosterEntry(Base):
     # Profile provenance — this table is the interim source of truth, fed by
     # schedule uploads, until a future HR module owns creation/termination.
     source = Column(String(30), default="adp_import")   # adp_import | schedule_upload | hr_module
+    # Offboarding module (2026-08-07). employment_status explains WHY a driver
+    # is inactive -- is_active alone conflated "terminated" with "on leave".
+    transporter_id = Column(String(32), index=True)          # Amazon's stable per-account id
+    employment_status = Column(String(20), default="active")  # active | leave_of_absence | terminated
+    employment_status_source = Column(String(40))
+    employment_status_at = Column(DateTime)
     last_seen_on_schedule = Column(Date)                  # most recent schedule date this driver appeared on
     flagged_inactive = Column(Boolean, default=False)     # not seen on any schedule in 30+ days — review, not auto-deactivated
     flagged_inactive_at = Column(DateTime)
@@ -2548,6 +2554,57 @@ def ensure_driver_roster_tracking_columns():
         ("last_seen_on_schedule", "DATE"),
         ("flagged_inactive", "BOOLEAN DEFAULT FALSE"),
         ("flagged_inactive_at", "TIMESTAMP"),
+    ]:
+        try:
+            with engine.begin() as conn:
+                if DATABASE_URL.startswith("sqlite"):
+                    conn.execute(text(f"ALTER TABLE driver_roster ADD COLUMN {col} {typedef}"))
+                else:
+                    conn.execute(text(f"ALTER TABLE driver_roster ADD COLUMN IF NOT EXISTS {col} {typedef}"))
+        except Exception:
+            pass  # Column already exists
+
+
+class OffboardingFileSnapshot(Base):
+    """The most recent Associate Data / Offboarded export, parsed and kept so
+    the removal action can be re-run without re-uploading, and so its age can
+    be checked -- per explicit direction 2026-08-07, the Remove action must
+    prompt for fresh files when these are more than 24h old.
+
+    Both exports download from Amazon under the SAME filename
+    ("AssociateData (N).csv") with identical columns, so file_kind is decided
+    by CONTENT (every row Status == OFFBOARDED => the offboarded export),
+    never by filename. Same lesson as the Cortex/DVIC filename-routing bug."""
+    __tablename__ = "offboarding_file_snapshots"
+
+    id = Column(Integer, primary_key=True)
+    file_kind = Column(String(20), nullable=False, index=True)   # associates | offboarded
+    source_file_name = Column(String(300))
+    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    uploaded_by = Column(String(150))
+    row_count = Column(Integer, default=0)
+    payload = Column(Text)   # JSON: [{name, transporter_id, email, status}]
+
+
+def ensure_driver_employment_status_columns():
+    """Employment status + Amazon's own identifier on driver_roster — added
+    2026-08-07 for the offboarding module.
+
+    `is_active` alone was overloaded: it was set False both for genuinely
+    terminated drivers and for anyone the Associate Data export merely listed
+    as INACTIVE, and the UI labelled the whole bucket "Terminated". Against
+    the real 2026-08-07 exports that mislabelled 44 people who were on leave
+    of absence as fired. employment_status records WHY someone is inactive.
+
+    transporter_id is Amazon's stable per-account identifier, present in both
+    the Associate Data and Offboarded exports. Without it every join to those
+    files goes through fuzzy name matching, which is what makes re-hires
+    (same person, new account, new email) indistinguishable from duplicates."""
+    for col, typedef in [
+        ("transporter_id", "VARCHAR(32)"),
+        ("employment_status", "VARCHAR(20) DEFAULT 'active'"),   # active | leave_of_absence | terminated
+        ("employment_status_source", "VARCHAR(40)"),             # which file/decision set it
+        ("employment_status_at", "TIMESTAMP"),
     ]:
         try:
             with engine.begin() as conn:

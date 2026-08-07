@@ -16,11 +16,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.src.routes import uploads, auth, audit, enhanced_audit, weekly_audit, weekly_audit_upload, rescue
 from api.src.routes import daily_notify, quality, attendance, attendance_reports, ops_ingest, dvic, dsp_scorecard_weekly, eod_survey, route_assignment, slack_interactions, slack_home, manager_accountability
-from api.src.routes import rostering, cortex_tracking, adp, rts, mgt_reminders, document_routing, crash_report, drivers, candidates, safety_events, okami_capacity, driver_scoring, route_bands, driver_lead_schedule, injury_report, sentiment_survey, wave_lead, glitch_reports, daily_quality, nday_points, feature_flags, coaching_notifications, quality_rts, customer_feedback, packages, ops_cadence, ops_daily_digest, suggestions, driver_progress_dm, team_room_monitor, tenured_workforce, owner_meeting, surveys
+from api.src.routes import rostering, cortex_tracking, adp, rts, mgt_reminders, document_routing, crash_report, drivers, candidates, safety_events, okami_capacity, driver_scoring, route_bands, driver_lead_schedule, injury_report, sentiment_survey, wave_lead, glitch_reports, daily_quality, nday_points, feature_flags, coaching_notifications, quality_rts, customer_feedback, packages, ops_cadence, ops_daily_digest, suggestions, driver_progress_dm, team_room_monitor, tenured_workforce, owner_meeting, surveys, offboarding
 from api.src.routes.daily_notify import check_and_notify, check_ecp_and_prompt
 from api.src.routes.rostering import send_nightly_roster_reminder, send_wave_lead_pre_wave_dm, send_missing_drivers_summary
 from api.src.schedule_config import SCHEDULE_GAP_CHECK_HOUR
-from api.src.database import Base, engine, SessionLocal, ensure_dop_driver_name_column, ensure_ssn_last4_column, ensure_callout_signature_column, ensure_assignment_board_columns, _ensure_manager_signature_columns, _ensure_position_id_nullable, ensure_driver_shift_dm_checklist_columns, ensure_route_duration_columns, ensure_dvic_raw_fields_column, ensure_driver_roster_tracking_columns, ensure_daily_route_assignment_unique_index, ensure_okami_capacity_finalize_columns, ensure_crash_report_evidence_columns, ensure_daily_route_assignment_notified_snapshot_column, ensure_user_auth_columns, ensure_route_sheet_load_size_columns, ensure_driver_shift_dm_decline_column, ensure_driver_shift_dm_callout_column, ensure_dvic_manager_signature_columns, ensure_eod_crash_columns, ensure_eod_management_contact_reason_column, ensure_driver_roster_preferred_name_column, ensure_driver_identity_roster_id_columns, ensure_dvic_video_watch_column, ensure_daily_route_assignment_pending_ack_column, ensure_safety_event_review_columns, ensure_dvic_video_started_column, ensure_dvic_escalation_columns, ensure_dvic_violation_instance_columns, ensure_rescue_bonus_ledger_columns, ensure_wave_lead_role_half_column, ensure_sentiment_survey_rating_columns, ensure_sentiment_survey_response_columns, ensure_attendance_reason_valid_column, ensure_coaching_notification_status_column, ensure_driver_shift_dm_arrival_nudge_columns
+from api.src.database import Base, engine, SessionLocal, ensure_dop_driver_name_column, ensure_ssn_last4_column, ensure_callout_signature_column, ensure_assignment_board_columns, _ensure_manager_signature_columns, _ensure_position_id_nullable, ensure_driver_shift_dm_checklist_columns, ensure_route_duration_columns, ensure_dvic_raw_fields_column, ensure_driver_roster_tracking_columns, ensure_daily_route_assignment_unique_index, ensure_okami_capacity_finalize_columns, ensure_crash_report_evidence_columns, ensure_daily_route_assignment_notified_snapshot_column, ensure_user_auth_columns, ensure_route_sheet_load_size_columns, ensure_driver_shift_dm_decline_column, ensure_driver_shift_dm_callout_column, ensure_dvic_manager_signature_columns, ensure_eod_crash_columns, ensure_eod_management_contact_reason_column, ensure_driver_roster_preferred_name_column, ensure_driver_employment_status_columns, ensure_driver_identity_roster_id_columns, ensure_dvic_video_watch_column, ensure_daily_route_assignment_pending_ack_column, ensure_safety_event_review_columns, ensure_dvic_video_started_column, ensure_dvic_escalation_columns, ensure_dvic_violation_instance_columns, ensure_rescue_bonus_ledger_columns, ensure_wave_lead_role_half_column, ensure_sentiment_survey_rating_columns, ensure_sentiment_survey_response_columns, ensure_attendance_reason_valid_column, ensure_coaching_notification_status_column, ensure_driver_shift_dm_arrival_nudge_columns
 from api.src.slack_notification_gate import apply_slack_send_gate
 
 logger = logging.getLogger(__name__)
@@ -923,6 +923,7 @@ async def startup():
     ensure_eod_crash_columns()
     ensure_eod_management_contact_reason_column()
     ensure_driver_roster_preferred_name_column()
+    ensure_driver_employment_status_columns()
     ensure_driver_identity_roster_id_columns()
     ensure_dvic_video_watch_column()
     ensure_dvic_video_started_column()
@@ -1019,6 +1020,7 @@ app.add_middleware(
 
 app.include_router(uploads.router, prefix="/upload")
 app.include_router(auth.router, prefix="/auth")
+app.include_router(offboarding.router)
 app.include_router(audit.router, prefix="/audit")
 app.include_router(enhanced_audit.router)
 app.include_router(weekly_audit.router)

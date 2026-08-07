@@ -49,6 +49,11 @@ _DEFAULT_TRUE_FLAGS = {
 
 
 FLAG_REGISTRY: dict[str, dict] = {
+    "OFFBOARDING_SLACK_REMOVAL_ACTIVE": {
+        "label": "Remove Terminated Drivers from Slack Channels",
+        "description": "Lets the offboarding action kick terminated drivers out of every Slack channel. Defaults OFF — this is irreversible from the app's side (re-adding means a human re-inviting them per channel). Only ever touches employment_status='terminated', never leave-of-absence.",
+        "category": "Driver Communication",
+    },
     "EOD_SURVEY_DM_ACTIVE": {
         "label": "EOD Survey Driver DMs",
         "description": "The 19:00 end-of-day survey mass-DM to every scheduled driver, and its 19:30-22:00 reminder chase. Defaults ON — this is a kill switch for something already live, not an off-by-default feature.",

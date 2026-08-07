@@ -48,6 +48,7 @@ from api.src.driver_identity import resolve_roster_entry
 from api.src.timezone import PACIFIC
 from api.src.authorization import require_any_role
 from api.src.feature_flags import get_flag
+from api.src.pilot_roster import allow_driver
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/dvic", tags=["dvic"])
@@ -467,6 +468,16 @@ def _action_new_violations(week: str, db: Session, only_tid: Optional[str] = Non
         if not roster or not roster.slack_member_id:
             db.commit()
             results.append({"driver": name, "violation_id": v.id, "status": "no_slack_id", "stage": stage})
+            continue
+
+        # Pilot scoping. Checked AFTER the feature flag above, never instead of
+        # it -- the pilot list restricts who receives a feature that is already
+        # switched on, it does not switch anything on. No pilot set == everyone,
+        # exactly as before. See api/src/pilot_roster.py.
+        if not allow_driver(roster.id, db):
+            db.commit()
+            results.append({"driver": name, "violation_id": v.id,
+                            "status": "skipped_not_in_pilot", "stage": stage})
             continue
 
         # Set the read lock BEFORE building blocks so the notice can render

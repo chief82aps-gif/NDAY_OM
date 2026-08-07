@@ -35,7 +35,7 @@ def _tokens(name: Optional[str]) -> frozenset:
     return frozenset((name or "").lower().replace(",", "").split())
 
 
-def resolve_roster_entry(name: str, db: Session) -> Optional[DriverRosterEntry]:
+def resolve_roster_entry(name: str, db: Session, include_inactive: bool = False) -> Optional[DriverRosterEntry]:
     """Resolve a free-text driver name to its DriverRosterEntry, or None.
 
     Exact (case-sensitive) payroll_name match first, then a best-match
@@ -45,15 +45,24 @@ def resolve_roster_entry(name: str, db: Session) -> Optional[DriverRosterEntry]:
     deliberate improvement over the original call sites this consolidates
     (rostering.py:_get_driver_slack_id and others), which returned on the
     first hit and were nondeterministic under ties.
+
+    include_inactive (added 2026-08-07, default False so every existing call
+    site is unchanged): by default this only ever matches ACTIVE entries, so a
+    terminated driver resolves to None — indistinguishable from a name that
+    was never on the roster at all. Callers that need to *detect* a terminated
+    driver rather than skip them (e.g. suppressing them from the Mentoring
+    Dashboard, where Amazon's quality export still carries their weeks) pass
+    True and check `.is_active` themselves. This parameter exists so that
+    check reuses this one resolver instead of a second name-matching
+    implementation — see the module note in CLAUDE.md.
     """
     if not name:
         return None
 
-    exact = (
-        db.query(DriverRosterEntry)
-        .filter(DriverRosterEntry.payroll_name == name, DriverRosterEntry.is_active == True)
-        .first()
-    )
+    q = db.query(DriverRosterEntry).filter(DriverRosterEntry.payroll_name == name)
+    if not include_inactive:
+        q = q.filter(DriverRosterEntry.is_active == True)
+    exact = q.first()
     if exact:
         return exact
 
@@ -61,9 +70,13 @@ def resolve_roster_entry(name: str, db: Session) -> Optional[DriverRosterEntry]:
     if not name_tokens:
         return None
 
+    cand_q = db.query(DriverRosterEntry)
+    if not include_inactive:
+        cand_q = cand_q.filter(DriverRosterEntry.is_active == True)
+
     best_entry = None
     best_score = 0
-    for candidate in db.query(DriverRosterEntry).filter(DriverRosterEntry.is_active == True).all():
+    for candidate in cand_q.all():
         score = len(name_tokens & _tokens(candidate.payroll_name))
         if score >= TOKEN_MATCH_THRESHOLD and score > best_score:
             best_entry = candidate

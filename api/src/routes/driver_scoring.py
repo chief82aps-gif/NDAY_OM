@@ -366,6 +366,31 @@ def compute_driver_scores(db: Session) -> list[dict]:
         .all()
     )
 
+    # Suppress drivers who no longer work here (2026-08-07). Amazon's weekly
+    # quality export still carries anyone who drove during that week, so a
+    # terminated driver kept appearing on the Mentoring Dashboard for weeks
+    # after leaving — reported live for Dakota Doser, who was already
+    # is_active=False. Nothing in this module filtered on roster status at all.
+    #
+    # Resolution goes through driver_identity's one resolver (include_inactive
+    # so a terminated driver is *detected* rather than silently unresolvable)
+    # rather than a second name-matching implementation.
+    from api.src.driver_identity import resolve_roster_entry
+    live_rows = []
+    suppressed = 0
+    for r in rows:
+        entry = resolve_roster_entry(r.driver_name, db, include_inactive=True)
+        # Unknown names are kept: absent from the roster is not proof of
+        # termination (new hires land in the quality export before the roster
+        # catches up). Only an explicit inactive roster entry suppresses.
+        if entry is not None and not entry.is_active:
+            suppressed += 1
+            continue
+        live_rows.append(r)
+    if suppressed:
+        logger.info("driver_scoring: suppressed %d terminated/inactive driver(s) from scores", suppressed)
+    rows = live_rows
+
     # Reliability deduction maps -- built ONCE per call, not per-row (same
     # "resolve identity once, key by roster_id" pattern as rostering.py's
     # _latest_quality_map()). Imported lazily to avoid a route-module

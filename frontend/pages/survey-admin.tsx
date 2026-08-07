@@ -9,6 +9,20 @@ function resolveApi(): string {
   return 'http://127.0.0.1:8001';
 }
 
+// Every write on this page (create/assign/send/close) is behind
+// require_any_role("owner","hr","ops_manager") on the backend. Without this
+// header the API returns 401 "Missing Authorization header" and the action
+// silently does nothing -- ProtectedRoute only gates the page client-side, so
+// the user still appears logged in. Matches the convention in feature-flags.tsx
+// and wave-lead-admin.tsx.
+function authHeaders(json = false): Record<string, string> {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+  return {
+    ...(json ? { 'Content-Type': 'application/json' } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
 interface QuestionDraft {
   question_text: string;
   question_type: 'multiple_choice' | 'true_false' | 'free_text';
@@ -31,11 +45,19 @@ interface SurveySummary {
 interface StatusRow {
   roster_id: number;
   driver_name: string;
+  assigned_at: string | null;
+  // null => never successfully DMed. Note this is indistinguishable from a DM
+  // that Slack rejected: _dm_survey_link() logs a warning and returns False,
+  // and the driver is counted in neither `sent` nor `no_slack_id`.
+  first_sent_at: string | null;
+  last_nudge_at: string | null;
   nudge_count: number;
   completed_at: string | null;
   score_pct: number | null;
   passed: boolean | null;
 }
+
+interface StatusMeta { total_assigned: number; completed: number; }
 
 interface DriverOption { id: number; payroll_name: string; is_active: boolean; }
 
@@ -56,6 +78,9 @@ export default function SurveyAdminPage() {
   const [error, setError] = useState('');
   const [expanded, setExpanded] = useState<number | null>(null);
   const [statusRows, setStatusRows] = useState<StatusRow[] | null>(null);
+  const [statusMeta, setStatusMeta] = useState<StatusMeta | null>(null);
+  const [outstandingOnly, setOutstandingOnly] = useState(false);
+  const [notice, setNotice] = useState('');
 
   // Create form state
   const [title, setTitle] = useState('');
@@ -69,7 +94,7 @@ export default function SurveyAdminPage() {
 
   const loadSurveys = useCallback(async () => {
     try {
-      const res = await fetch(`${api}/surveys`);
+      const res = await fetch(`${api}/surveys`, { headers: authHeaders() });
       const data = await res.json();
       setSurveys(data.surveys ?? []);
     } catch { setError('Failed to load surveys.'); }
@@ -77,7 +102,10 @@ export default function SurveyAdminPage() {
 
   useEffect(() => { loadSurveys(); }, [loadSurveys]);
   useEffect(() => {
-    fetch(`${api}/drivers`).then(r => r.json()).then(d => setDrivers((d.drivers ?? []).filter((x: DriverOption) => x.is_active))).catch(() => {});
+    fetch(`${api}/drivers`, { headers: authHeaders() })
+      .then(r => r.json())
+      .then(d => setDrivers((d.drivers ?? []).filter((x: DriverOption) => x.is_active)))
+      .catch(() => {});
   }, [api]);
 
   const addQuestion = () => setQuestions(prev => [...prev, emptyQuestion()]);
@@ -86,7 +114,7 @@ export default function SurveyAdminPage() {
     setQuestions(prev => prev.map((q, idx) => idx === i ? { ...q, ...patch } : q));
 
   const createAndAssign = async () => {
-    setError('');
+    setError(''); setNotice('');
     if (!title.trim()) { setError('Title is required.'); return; }
     if (questions.some(q => !q.question_text.trim())) { setError('Every question needs text.'); return; }
     if (isQuiz && questions.some(q => q.question_type !== 'free_text' && !q.correct_answer.trim())) {
@@ -97,7 +125,7 @@ export default function SurveyAdminPage() {
     setCreating(true);
     try {
       const createRes = await fetch(`${api}/surveys`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: authHeaders(true),
         body: JSON.stringify({
           title, description: description || null, is_quiz: isQuiz,
           passing_score_pct: isQuiz ? passingScore : null,
@@ -113,13 +141,22 @@ export default function SurveyAdminPage() {
       const created = await createRes.json();
 
       const assignRes = await fetch(`${api}/surveys/${created.id}/assign`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: authHeaders(true),
         body: JSON.stringify(allActive ? { all_active: true } : { roster_ids: pickedDriverIds }),
       });
-      if (!assignRes.ok) throw new Error('Created, but assigning drivers failed.');
+      if (!assignRes.ok) {
+        const b = await assignRes.json().catch(() => ({}));
+        throw new Error(b.detail || 'Created, but assigning drivers failed.');
+      }
+      const assigned = await assignRes.json().catch(() => ({}));
+      const savedTitle = title;   // captured before the form resets below
 
       setTitle(''); setDescription(''); setIsQuiz(false); setQuestions([emptyQuestion()]); setPickedDriverIds([]);
       await loadSurveys();
+      setNotice(
+        `✅ Created "${savedTitle}" and assigned ${assigned.total_assigned ?? assigned.added ?? 0} driver(s). ` +
+        `Nothing has been sent yet — press "Send / Nudge Now" on it below to DM them.`
+      );
     } catch (err: any) {
       setError(err.message || 'Network error.');
     } finally {
@@ -128,27 +165,53 @@ export default function SurveyAdminPage() {
   };
 
   const send = async (id: number) => {
+    setError(''); setNotice('');
     try {
-      const res = await fetch(`${api}/surveys/${id}/send`, { method: 'POST' });
-      if (!res.ok) throw new Error('Send failed.');
+      const res = await fetch(`${api}/surveys/${id}/send`, { method: 'POST', headers: authHeaders() });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        throw new Error(b.detail || 'Send failed.');
+      }
+      const r = await res.json();
+      if (r.status === 'closed') {
+        setError('That survey is closed — reopen or create a new one; nothing was sent.');
+      } else {
+        const sent = r.sent ?? 0, done = r.already_completed ?? 0, noSlack = r.no_slack_id ?? 0;
+        // A DM Slack rejects is counted in NEITHER `sent` nor `no_slack_id` --
+        // the backend only logs a warning. The shortfall against the assigned
+        // total is the only signal those sends failed, so surface it.
+        const total = surveys?.find(s => s.id === id)?.assignment_count ?? (sent + done + noSlack);
+        const failed = Math.max(0, total - sent - done - noSlack);
+        setNotice(
+          `Sent ${sent} · already completed ${done} · no Slack ID ${noSlack}` +
+          (failed > 0 ? ` · ⚠️ ${failed} failed to send (check backend logs)` : '')
+        );
+      }
       await loadSurveys();
       if (expanded === id) await openStatus(id);
-    } catch { setError('Send failed.'); }
+    } catch (err: any) { setError(err.message || 'Send failed.'); }
   };
 
   const close = async (id: number) => {
+    setError(''); setNotice('');
     try {
-      await fetch(`${api}/surveys/${id}/close`, { method: 'POST' });
+      const res = await fetch(`${api}/surveys/${id}/close`, { method: 'POST', headers: authHeaders() });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        throw new Error(b.detail || 'Close failed.');
+      }
       await loadSurveys();
-    } catch { setError('Close failed.'); }
+      setNotice('Survey closed — nudges stop immediately.');
+    } catch (err: any) { setError(err.message || 'Close failed.'); }
   };
 
   const openStatus = async (id: number) => {
     setExpanded(id);
     try {
-      const res = await fetch(`${api}/surveys/${id}/status`);
+      const res = await fetch(`${api}/surveys/${id}/status`, { headers: authHeaders() });
       const data = await res.json();
       setStatusRows(data.all ?? []);
+      setStatusMeta({ total_assigned: data.total_assigned ?? 0, completed: data.completed ?? 0 });
     } catch { setError('Failed to load status.'); }
   };
 
@@ -163,6 +226,7 @@ export default function SurveyAdminPage() {
           </p>
 
           {error && <div style={{ ...box, borderColor: '#7f1d1d', background: '#3b1e1e', color: '#f87171' }}>{error}</div>}
+          {notice && <div style={{ ...box, borderColor: '#166534', background: '#14251b', color: '#4ade80' }}>{notice}</div>}
 
           {/* Create form */}
           <div style={box}>
@@ -222,6 +286,11 @@ export default function SurveyAdminPage() {
               </div>
             )}
 
+            {/* Repeated next to the button on purpose: the banners at the top of
+                the page are off-screen once the form is scrolled to, which made
+                a failed create look like the button simply did nothing. */}
+            {error && <div style={{ marginBottom: 10, fontSize: 13, color: '#f87171' }}>⚠️ {error}</div>}
+            {notice && <div style={{ marginBottom: 10, fontSize: 13, color: '#4ade80' }}>{notice}</div>}
             <button style={btn(true)} onClick={createAndAssign} disabled={creating}>
               {creating ? 'Creating…' : 'Create & Assign'}
             </button>
@@ -244,30 +313,62 @@ export default function SurveyAdminPage() {
                 </div>
               </div>
 
-              {expanded === s.id && statusRows && (
-                <div style={{ marginTop: 12, overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                    <thead>
-                      <tr style={{ color: '#64748b', textAlign: 'left' }}>
-                        <th style={{ padding: '4px 8px' }}>Driver</th>
-                        <th style={{ padding: '4px 8px' }}>Nudges</th>
-                        <th style={{ padding: '4px 8px' }}>Completed</th>
-                        <th style={{ padding: '4px 8px' }}>Score</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {statusRows.map(r => (
-                        <tr key={r.roster_id} style={{ borderTop: '1px solid #334155' }}>
-                          <td style={{ padding: '6px 8px', color: '#e2e8f0' }}>{r.driver_name}</td>
-                          <td style={{ padding: '6px 8px', color: '#94a3b8' }}>{r.nudge_count}</td>
-                          <td style={{ padding: '6px 8px', color: r.completed_at ? '#4ade80' : '#f87171' }}>{r.completed_at ? '✅' : '— incomplete'}</td>
-                          <td style={{ padding: '6px 8px', color: '#94a3b8' }}>{r.score_pct !== null ? `${r.score_pct}%${r.passed ? ' ✅' : ' ❌'}` : '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+              {expanded === s.id && statusRows && (() => {
+                const notSent = statusRows.filter(r => !r.first_sent_at).length;
+                const completed = statusMeta?.completed ?? statusRows.filter(r => r.completed_at).length;
+                const total = statusMeta?.total_assigned ?? statusRows.length;
+                const outstanding = total - completed;
+                const pct = total ? Math.round((completed / total) * 100) : 0;
+                const rows = outstandingOnly ? statusRows.filter(r => !r.completed_at) : statusRows;
+                // UTC-naive timestamps from the API -- append Z so the browser
+                // renders them in local time instead of treating them as local.
+                const fmt = (t: string) => new Date(t + 'Z').toLocaleString();
+                return (
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center', marginBottom: 8 }}>
+                      <span style={{ fontSize: 20, fontWeight: 700, color: '#f1f5f9' }}>{completed}/{total}</span>
+                      <span style={{ fontSize: 13, color: '#94a3b8' }}>completed ({pct}%)</span>
+                      <span style={{ fontSize: 13, color: outstanding ? '#f87171' : '#4ade80' }}>{outstanding} outstanding</span>
+                      {notSent > 0 && <span style={{ fontSize: 13, color: '#fbbf24' }}>⚠️ {notSent} never sent</span>}
+                      <label style={{ fontSize: 12, color: '#94a3b8', display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+                        <input type="checkbox" checked={outstandingOnly} onChange={e => setOutstandingOnly(e.target.checked)} />
+                        Outstanding only
+                      </label>
+                    </div>
+                    <div style={{ height: 6, background: '#0f172a', borderRadius: 3, overflow: 'hidden', marginBottom: 12 }}>
+                      <div style={{ width: `${pct}%`, height: '100%', background: '#4ade80' }} />
+                    </div>
+
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                        <thead>
+                          <tr style={{ color: '#64748b', textAlign: 'left' }}>
+                            <th style={{ padding: '4px 8px' }}>Driver</th>
+                            <th style={{ padding: '4px 8px' }}>Sent</th>
+                            <th style={{ padding: '4px 8px' }}>Nudges</th>
+                            <th style={{ padding: '4px 8px' }}>Completed</th>
+                            <th style={{ padding: '4px 8px' }}>Score</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map(r => (
+                            <tr key={r.roster_id} style={{ borderTop: '1px solid #334155' }}>
+                              <td style={{ padding: '6px 8px', color: '#e2e8f0' }}>{r.driver_name}</td>
+                              <td style={{ padding: '6px 8px', color: r.first_sent_at ? '#94a3b8' : '#fbbf24' }}>{r.first_sent_at ? fmt(r.first_sent_at) : '— not sent'}</td>
+                              <td style={{ padding: '6px 8px', color: '#94a3b8' }}>{r.nudge_count}</td>
+                              <td style={{ padding: '6px 8px', color: r.completed_at ? '#4ade80' : '#f87171' }}>{r.completed_at ? `✅ ${fmt(r.completed_at)}` : '— incomplete'}</td>
+                              <td style={{ padding: '6px 8px', color: '#94a3b8' }}>{r.score_pct !== null ? `${r.score_pct}%${r.passed ? ' ✅' : ' ❌'}` : '—'}</td>
+                            </tr>
+                          ))}
+                          {rows.length === 0 && (
+                            <tr><td colSpan={5} style={{ padding: '10px 8px', color: '#4ade80' }}>Everyone assigned has completed this one. 🎉</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           ))}
         </div>

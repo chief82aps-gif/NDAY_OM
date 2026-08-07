@@ -45,10 +45,21 @@ _DEFAULT_TRUE_FLAGS = {
     # with real submissions) -- this adds the off-switch that was missing,
     # nothing more.
     "EOD_SURVEY_DM_ACTIVE",
+    # Added 2026-08-07. The driver Home tab is a PULL surface -- the driver
+    # opens the app to see it and nothing is sent -- but it was gated on
+    # DRIVER_DM_ACTIVE, so the whole driver estate saw a "Coming Soon"
+    # placeholder throughout the DM pause. Defaults ON: it was working before
+    # the Blake app swap and blocking it buys no safety.
+    "DRIVER_HOME_TAB_ACTIVE",
 }
 
 
 FLAG_REGISTRY: dict[str, dict] = {
+    "DRIVER_HOME_TAB_ACTIVE": {
+        "label": "Driver Slack Home Tab",
+        "description": "Shows drivers their dashboard on Blake's App Home. Defaults ON — this is a pull surface (the driver opens it; nothing is sent), so it is deliberately independent of the driver-DM pause.",
+        "category": "Driver Communication",
+    },
     "DVIC_DM_ACTIVE": {
         "label": "DVIC Sub-90s Safety Notices",
         "description": "Sends the sub-90-second pre-trip inspection notice to drivers. Independent of DRIVER_DM_ACTIVE so this safety message can run while other driver DMs stay paused. Acknowledge is locked for 95 seconds after delivery.",

@@ -781,10 +781,17 @@ def _build_combined_home_blocks(slack_user_id: str, db: Session) -> tuple[list, 
         blocks.append({"type": "divider"})
         info["sections"].append("hr_staff")
 
-    # Driver dashboard — always included, no role filter. Still gated by
-    # DRIVER_DM_ACTIVE (a different, unrelated flag about whether it's
-    # safe to show/DM real driver content at all).
-    if not get_flag("DRIVER_DM_ACTIVE"):
+    # Driver dashboard — always included, no role filter.
+    #
+    # Gated by DRIVER_HOME_TAB_ACTIVE (default ON), NOT by DRIVER_DM_ACTIVE
+    # as it was until 2026-08-07. The Home tab is a PULL surface: the driver
+    # has to open the app to see it, and nothing is sent. Gating it on the
+    # driver-DM pause therefore bought no safety — it just took away drivers'
+    # self-service view while the pause was on, and every driver in the new
+    # Blake app saw a "Coming Soon" placeholder (reported for Colby Morgan;
+    # the older NDAY Route Manager app only looked healthy because Slack
+    # retains the last published view, from before the pause).
+    if not get_flag("DRIVER_HOME_TAB_ACTIVE"):
         blocks += _INACTIVE_BLOCKS
         info["sections"].append("dm_inactive")
     else:

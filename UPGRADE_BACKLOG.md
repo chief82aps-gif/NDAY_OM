@@ -335,6 +335,7 @@ Idea logged 2026-08-03, not yet scoped.
 - 🔲 Rotation schedule to prevent overuse
 
 ### 3.5 — Driver Scorecard & Coaching System
+> **Voice/persona + coaching-tone spec (added 2026-08-05):** `Governance/08_NDL_Blake_Persona_SRD.md` (Blake — never-harsh, hand-up coaching). Personalized Pro Tips + SOP quiz concept: `Governance/09_NDL_Blake_SOP_Quiz_SRD.md`. These define *how* the coaching engine and 1:1 guides should sound and what the personalized nudges/contests are.
 - 🔲 Automated KPI calculation (on-time %, safety incidents, attendance)
 - 🔲 Performance tiers and trend analysis
 - 🔲 Coaching recommendation engine by weakness area
@@ -342,6 +343,7 @@ Idea logged 2026-08-03, not yet scoped.
 - 🔲 Top performer celebration alerts
 
 ### 3.6 — Motivational Phrase Generator
+> **Persona/voice source of truth (added 2026-08-05):** `Governance/08_NDL_Blake_Persona_SRD.md`. Blake's sayings, coaching moves, and never-harsh rule define the phrase library and its tone — build the generator off that spec, not generic quotes.
 - 🔲 Track phrase impact on key metrics per driver cohort
 - 🔲 A/B test motivational vs safety messaging
 - 🔲 Recommend best-performing phrase per driver profile
@@ -405,6 +407,48 @@ Idea logged 2026-08-03, not yet scoped.
 - 🔲 Staffing requirement predictions
 - 🔲 Hiring recommendations
 - 🔲 Seasonal pattern analysis
+
+---
+
+## Survey/Quiz Module — Backlog (added 2026-08-06)
+
+The ad-hoc survey/quiz module (`api/src/routes/surveys.py`, `/survey`,
+`/survey-admin`) shipped 2026-08-06 as a v1: admin-authored questions,
+optional grading, ad-hoc driver assignment, and indefinite re-nudging
+until completed. Three items explicitly deferred out of v1:
+
+- 🔲 **Automated routing gate.** Per explicit direction, v1 only
+  surfaces who's incomplete (`GET /surveys/{id}/status`) — dispatch
+  holds a driver back from routing manually. A real automated gate
+  (blocking `send_day_of_dms()`/the route DM until a required
+  survey/quiz is completed) would reuse the same pattern as
+  `outstanding_items.py`'s existing gate — see that module's
+  `get_outstanding_items()` and its bypass mechanism
+  (`bypass_outstanding_items` on `send_day_of_dms()`) before building a
+  second, parallel gate.
+- 🔲 **Escalation-to-termination consequence.** Confirmed via direct
+  research before building v1: no mechanism anywhere in this codebase
+  currently auto-terminates a driver — `attendance.py`'s HRM-023.1
+  points ladder only ever *computes and displays* a "Termination"
+  label at ≥10.0 points; a human always has to act on it separately
+  via `POST /drivers/{id}/terminate`. Whatever this escalation
+  eventually looks like, it should very likely feed into that same
+  existing points ladder rather than invent a second, competing
+  consequence system.
+- 🔲 **Cross-survey dashboard/summary report.** Today's admin page
+  (`survey-admin.tsx`) shows completion counts in the list view and a
+  full status table per survey when expanded, but there's no single
+  rolled-up view across all surveys/quizzes at once (e.g. "everyone
+  who's overdue on anything, across every active survey"). Worth
+  building once there's more than a couple of surveys running at once.
+- 🔲 **New-hire orientation / ORE training tracking.** Explicitly
+  flagged as a future use case for this same module: log how well new
+  hires absorb orientation content and ORE training via the same
+  quiz/grading mechanism, rather than building a separate system.
+  Ties into `driver_scoring.py`'s existing tenure-phase concept
+  (`get_tenure_phase()` — ORE/NL1/NL2/NL3/pre-tenured/tenured) for
+  natural targeting (assign the orientation quiz specifically to
+  drivers still in the ORE/NL1 phase).
 
 ---
 

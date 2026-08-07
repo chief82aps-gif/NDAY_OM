@@ -232,32 +232,56 @@ def _counseling_message(stage: int, name: str, violation: "DvicViolation") -> st
             "they'll give you a code once you've talked, and you'll enter it below to clear this."
         )
 
+    # Tone deliberately firmer than the rest of Blake's driver messaging
+    # (2026-08-07, explicit direction). The general "never harsh" coaching rule
+    # in 08_NDL_Blake_Persona_SRD.md still governs performance feedback — this
+    # is a safety-compliance notice, not coaching, and is the one place the
+    # dial is turned up on purpose. Firm and direct; still not insulting.
     if stage == 1:
         return (
-            f":wave: Hey {first}, this is Dispatch/Safety checking in — not a write-up, just us looking out for you.\n\n"
-            f"On {date_str} you had a pre-trip inspection logged at *{duration} seconds* — under the 90-second "
-            "minimum. We get it — you're trying to get moving fast. But that walk-around is one of the only things "
-            "standing between you and a flat tire, a bad mirror, or a brake issue nobody caught before you were 20 "
-            "miles into your route.\n\n"
-            "*You're too important to us to risk getting hurt over a rushed checklist.* Take the full 90 seconds — "
-            "every shift, no exceptions. It's not about the paperwork, it's about you going home the same way you "
-            "came in.\n\n"
-            "No action needed here beyond tapping *Acknowledge* — just wanted you to know we noticed, and we've got "
-            "your back."
+            f":warning: {first}, your pre-trip inspection on {date_str} was logged at *{duration} seconds*. "
+            "The minimum is 90.\n\n"
+            "*90 seconds is not a difficult ask. Can you please explain why your safety, and that of "
+            "everyone around you, isn't worth 90 seconds?*\n\n"
+            "That walk-around is what catches a bad tire, a dead mirror, or a brake problem — before you're "
+            "20 miles out with thousands of pounds moving at highway speed. Skipping it doesn't save you "
+            "time, it just moves the risk onto you and everyone sharing the road with you.\n\n"
+            "Take the full 90 seconds. Every shift. No exceptions.\n\n"
+            "Read this properly, then acknowledge below."
         )
     else:
         return (
-            f":memo: Hey {first}, another pre-trip inspection came in under 90 seconds — *{duration} seconds* on "
-            f"{date_str}.\n\n"
-            "Since this isn't your first, this one requires you to watch the full safety training video before you "
-            "can acknowledge it — that's the case every time going forward, for any inspection under 90 seconds. "
-            "Taking the full 90 seconds is the only way to skip this step.\n\n"
-            "This isn't about punishing you — it's about making sure you're actually checking the van before you "
-            "drive it. A rushed pre-trip is a real safety risk, to you and everyone else on the road."
+            f":warning: {first}, this is *not* the first time. Another pre-trip inspection came in under 90 "
+            f"seconds — *{duration} seconds* on {date_str}.\n\n"
+            "*90 seconds is not a difficult ask. Can you please explain why your safety, and that of "
+            "everyone around you, isn't worth 90 seconds?*\n\n"
+            "Because this has happened before, this one requires you to watch the full safety training video "
+            "before you can acknowledge it — and that will be the case every time from here on, for any "
+            "inspection under 90 seconds. Taking the full 90 seconds is the only way to avoid it.\n\n"
+            "We are not asking you to do paperwork. We are asking you to actually check the van before you "
+            "drive it."
         )
 
 
-def _dm_blocks(violation: "DvicViolation", stage: int, name: str) -> list:
+# The Acknowledge button stays locked this long after the notice is sent, so
+# the driver has to actually sit with it rather than reflex-tapping it away
+# (2026-08-07, explicit direction). 95s deliberately exceeds the 90s the
+# inspection itself should have taken — the point is felt, not incidental.
+ACK_LOCK_SECONDS = 95
+
+
+def _lock_notice_block(unlocks_at: datetime) -> dict:
+    return {
+        "type": "context",
+        "elements": [{
+            "type": "mrkdwn",
+            "text": (f":hourglass_flowing_sand:  *Acknowledge unlocks in {ACK_LOCK_SECONDS} seconds.*  "
+                     "Take the time to read this — that's rather the point."),
+        }],
+    }
+
+
+def _dm_blocks(violation: "DvicViolation", stage: int, name: str, ack_locked: bool = False) -> list:
     text = _counseling_message(stage, name, violation)
     value = json.dumps({"violation_id": violation.id})
 
@@ -294,6 +318,15 @@ def _dm_blocks(violation: "DvicViolation", stage: int, name: str) -> list:
             "value": value,
             "url": video_url,
         }]
+    elif ack_locked:
+        # Slack has no disabled-button state, so the button is simply absent
+        # until the lock expires — run_dvic_ack_unlock_sweep() swaps it in via
+        # chat_update. Showing a button that would be rejected is worse than
+        # showing none (same reasoning as the video-gate branch above).
+        return [
+            {"type": "section", "text": {"type": "mrkdwn", "text": text}},
+            _lock_notice_block(violation.ack_unlocks_at or datetime.utcnow()),
+        ]
     else:
         actions = [{
             "type": "button",
@@ -367,8 +400,12 @@ def _action_new_violations(week: str, db: Session, only_tid: Optional[str] = Non
     single-driver preview/resend) — it does not affect the prior-action
     lookups, which always consider the driver's full history regardless.
     """
-    if not get_flag("DRIVER_DM_ACTIVE"):
-        return {"status": "inactive", "note": "Set DRIVER_DM_ACTIVE=true on Render to enable driver DMs"}
+    # DVIC has its own switch (2026-08-07) so the sub-90s safety notice can go
+    # live while the rest of the driver-DM estate stays paused. DRIVER_DM_ACTIVE
+    # still enables it too, so nothing that relied on the master gate changes.
+    if not (get_flag("DVIC_DM_ACTIVE") or get_flag("DRIVER_DM_ACTIVE")):
+        return {"status": "inactive",
+                "note": "Turn on DVIC_DM_ACTIVE (or DRIVER_DM_ACTIVE) to enable DVIC safety notices."}
 
     snap = (
         db.query(DvicSnapshot)
@@ -432,13 +469,23 @@ def _action_new_violations(week: str, db: Session, only_tid: Optional[str] = Non
             results.append({"driver": name, "violation_id": v.id, "status": "no_slack_id", "stage": stage})
             continue
 
-        blocks = _dm_blocks(v, stage, name)
+        # Set the read lock BEFORE building blocks so the notice can render
+        # its own countdown. The weekly-frequency tier is excluded: that one
+        # already can't be self-cleared (it needs a code from dispatch), so a
+        # timer would add nothing.
+        ack_locked = v.escalation_tier != "weekly_frequency"
+        if ack_locked:
+            v.ack_unlocks_at = datetime.utcnow() + timedelta(seconds=ACK_LOCK_SECONDS)
+
+        blocks = _dm_blocks(v, stage, name, ack_locked=ack_locked)
         fallback = f"DVIC Safety Notice — {name} — stage {stage}"
         ok, channel, ts = _dm_with_blocks(roster.slack_member_id, fallback, blocks)
         if ok:
             v.dm_channel = channel
             v.dm_ts = ts
             sent_count += 1
+        else:
+            v.ack_unlocks_at = None   # nothing was delivered, so nothing to unlock
         db.commit()
 
         if v.escalation_tier == "weekly_frequency":
@@ -459,6 +506,51 @@ def _action_new_violations(week: str, db: Session, only_tid: Optional[str] = Non
         "sent": sent_count,
         "results": results,
     }
+
+
+def run_dvic_ack_unlock_sweep(db: Session) -> dict:
+    """Swap the Acknowledge button into notices whose 95s read lock has
+    expired. Called from main.py's existing 60s DVIC loop.
+
+    DB-driven rather than an in-process timer on purpose: a sleeping task
+    would be lost on every redeploy, and Render restarts constantly. Same
+    lesson as the reminder-throttle state that used to live in a module-level
+    dict (see CLAUDE.md).
+    """
+    now = datetime.utcnow()
+    due = (
+        db.query(DvicViolation)
+        .filter(DvicViolation.ack_unlocks_at.isnot(None))
+        .filter(DvicViolation.ack_unlocks_at <= now)
+        .filter(DvicViolation.dm_ts.isnot(None))
+        .filter(DvicViolation.ack_status != "acknowledged")
+        .all()
+    )
+    if not due:
+        return {"status": "nothing_due"}
+
+    client = _client()
+    if not client:
+        return {"status": "no_slack_token", "pending": len(due)}
+
+    unlocked, failed = 0, 0
+    for v in due:
+        try:
+            name = v.transporter_name or "Driver"
+            blocks = _dm_blocks(v, v.action_stage or 1, name, ack_locked=False)
+            client.chat_update(channel=v.dm_channel, ts=v.dm_ts,
+                               text=f"DVIC Safety Notice — {name}", blocks=blocks)
+            # Clearing this is what makes the sweep idempotent — the row stops
+            # being "due" once its button is live.
+            v.ack_unlocks_at = None
+            unlocked += 1
+        except Exception as exc:
+            failed += 1
+            logger.warning("DVIC ack unlock failed for violation %s: %s", v.id, exc)
+    db.commit()
+    if unlocked:
+        logger.info("DVIC: unlocked Acknowledge on %d notice(s)", unlocked)
+    return {"status": "done", "unlocked": unlocked, "failed": failed}
 
 
 def _process_week(week: str, db: Session, only_tid: Optional[str] = None) -> dict:
@@ -1155,6 +1247,18 @@ def record_violation_acknowledgment(violation_id: int, signature_name: str, db: 
             "status": "already_acknowledged",
             "transporter_name": violation.transporter_name,
             "acknowledged_at": violation.acknowledged_at.isoformat() if violation.acknowledged_at else None,
+        }
+
+    # 95-second read lock. Same belt-and-suspenders reasoning as the video
+    # gate below: the button shouldn't be visible yet, but the endpoint must
+    # not trust the client. A stale Slack payload or a replayed action would
+    # otherwise clear the notice instantly.
+    if violation.ack_unlocks_at and datetime.utcnow() < violation.ack_unlocks_at:
+        remaining = int((violation.ack_unlocks_at - datetime.utcnow()).total_seconds()) + 1
+        return {
+            "status": "ack_locked",
+            "seconds_remaining": remaining,
+            "detail": f"Please read the notice — you can acknowledge in {remaining} seconds.",
         }
 
     if (

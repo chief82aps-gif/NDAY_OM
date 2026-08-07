@@ -49,6 +49,11 @@ _DEFAULT_TRUE_FLAGS = {
 
 
 FLAG_REGISTRY: dict[str, dict] = {
+    "DVIC_DM_ACTIVE": {
+        "label": "DVIC Sub-90s Safety Notices",
+        "description": "Sends the sub-90-second pre-trip inspection notice to drivers. Independent of DRIVER_DM_ACTIVE so this safety message can run while other driver DMs stay paused. Acknowledge is locked for 95 seconds after delivery.",
+        "category": "Driver Communication",
+    },
     "OFFBOARDING_SLACK_REMOVAL_ACTIVE": {
         "label": "Remove Terminated Drivers from Slack Channels",
         "description": "Lets the offboarding action kick terminated drivers out of every Slack channel. Defaults OFF — this is irreversible from the app's side (re-adding means a human re-inviting them per channel). Only ever touches employment_status='terminated', never leave-of-absence.",

@@ -2587,6 +2587,19 @@ class OffboardingFileSnapshot(Base):
     payload = Column(Text)   # JSON: [{name, transporter_id, email, status}]
 
 
+def ensure_dvic_ack_unlock_column():
+    """Add ack_unlocks_at to dvic_violations — added 2026-08-07 for the
+    95-second Acknowledge lock on sub-90s pre-trip notices."""
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE dvic_violations ADD COLUMN ack_unlocks_at TIMESTAMP"))
+            else:
+                conn.execute(text("ALTER TABLE dvic_violations ADD COLUMN IF NOT EXISTS ack_unlocks_at TIMESTAMP"))
+    except Exception:
+        pass  # Column already exists
+
+
 def ensure_driver_employment_status_columns():
     """Employment status + Amazon's own identifier on driver_roster — added
     2026-08-07 for the offboarding module.
@@ -2843,6 +2856,10 @@ class DvicViolation(Base):
     action_stage = Column(Integer, nullable=True)   # 1 or 2, set alongside actioned_at
     dm_channel = Column(String(50))
     dm_ts = Column(String(50))
+    # Acknowledge stays locked until this moment (2026-08-07): the driver is
+    # asked to actually read the notice before they can dismiss it. Enforced
+    # server-side in record_violation_acknowledgment() as well as visually.
+    ack_unlocks_at = Column(DateTime, nullable=True)
     ack_status = Column(String(20), nullable=True)   # pending | acknowledged
     acknowledged_at = Column(DateTime, nullable=True)
     ack_signature_name = Column(String(150), nullable=True)

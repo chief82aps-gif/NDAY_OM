@@ -2,7 +2,7 @@
 
 Use this index to quickly locate governing standards, ingest rules, audit rules, and technical governance references.
 
-> **Latest snapshot:** [WHERE_WE_LEFT_OFF_2026-07-31.md](WHERE_WE_LEFT_OFF_2026-07-31.md) — tier calibration fix, ECP screenshot reminder, full Wave/Rank Rostering design (not yet built — read before scoping that work).
+> **Latest snapshot:** [WHERE_WE_LEFT_OFF_2026-08-06.md](WHERE_WE_LEFT_OFF_2026-08-06.md) — a real production incident night (broken Slack signing secret, a chain of ingest bugs, a corrupted-data incident) followed by a deliberate pause on all driver DMs/team-room posts, then a build stretch (owner-meeting scheduler, wave-leads standings, arrival re-nudge, EOD second reminder, a full survey/quiz module). Read [FEATURE_ASSESSMENT_AND_ROLLOUT_2026-08-06.md](FEATURE_ASSESSMENT_AND_ROLLOUT_2026-08-06.md) first for the fastest "what's tested, what's not" answer.
 
 ---
 
@@ -36,6 +36,13 @@ Use this index to quickly locate governing standards, ingest rules, audit rules,
 - [Rostering & Driver DM Rules](ROSTERING_DM_RULES.md) — **Corrected 2026-08-04: these are two independent flags, not one.** Driver DMs are gated behind `DRIVER_DM_ACTIVE`. The Slack assignment matrix (`ROSTERING_ACTIVE`) is separate and already live — it is not affected by the driver-DM gate. See `ROSTERING_DM_RULES.md` for the authoritative detail.
 - [Daily Driver DM Content Rules](DRIVER_DM_CONTENT_RULES.md) — what fields the daily driver DM contains and why (successor to the printed handout card spec); ACE Eligibility is a static TBD placeholder pending a future module
 - **Callout Rule (implemented):** Called-out drivers drop below all available drivers in the assignment queue; only assigned when non-callout pool is exhausted (`is_callout_coverage=True`)
+
+---
+
+## Voice & Engagement (Blake)
+
+- [Blake Persona SRD](08_NDL_Blake_Persona_SRD.md) — canonical house voice for driver/ops comms (warm, steady, witty, **never-harsh** coaching). Powers the reserved Performance Coaching Message in [DRIVER_DM_CONTENT_RULES.md](DRIVER_DM_CONTENT_RULES.md) and the motivational layer in `UPGRADE_BACKLOG.md` §3.5/§3.6. Modeled on a real 25-yr Air Force Chief; includes signature phrases, coaching moves, and hard tone rules.
+- [Blake SOP Quiz & Pro Tips SRD](09_NDL_Blake_SOP_Quiz_SRD.md) — recurring Pro Tips (broadcast + personalized driver DM) and gamified SOP quizzes/contests; personalized off `DRIVER_SCORING_RULES.md`; all answers gated on SOP verification.
 
 ---
 

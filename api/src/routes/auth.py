@@ -119,13 +119,16 @@ def seed_default_users(db: Session) -> None:
 # connection this same session, this links it directly at startup instead
 # of requiring a password at all. Idempotent — no-ops once slack_user_id
 # is already set on the target account, safe to leave in permanently.
-_OWNER_SLACK_USER_ID = "U0BA8APSPAP"          # jaysonwatson@newdaylogisticsllc.com
-# Confirmed 2026-07-27: a genuinely separate second Slack account for the
-# same person (chief82aps@gmail.com), not just a second email on one
-# account — Slack's own user search returns a different User ID for each
-# email in this workspace. Added as an alias so Sign in with Slack works
-# regardless of which of the two identities the browser is signed into.
-_OWNER_SLACK_ALIAS_USER_ID = "U0AHUGZDYJF"    # chief82aps@gmail.com
+# SWAPPED 2026-08-07: the owner had two Slack accounts for the same person
+# (Slack returns a different User ID per email in this workspace), and the
+# work-domain one was DEACTIVATED on 2026-08-07. The surviving account is now
+# primary; the deactivated one is kept as an alias so any historical link
+# recorded against it still resolves rather than orphaning.
+# Overridable by env var so this stops being person-identifying config in a
+# public repo (CLAUDE.md security rule) — the literals remain as fallbacks
+# only because owner sign-in must not break if the var is unset.
+_OWNER_SLACK_USER_ID = os.getenv("OWNER_SLACK_USER_ID", "U0AHUGZDYJF")        # live account
+_OWNER_SLACK_ALIAS_USER_ID = os.getenv("OWNER_SLACK_ALIAS_USER_ID", "U0BA8APSPAP")  # deactivated 2026-08-07
 
 
 def ensure_owner_slack_link(db: Session) -> None:

@@ -521,6 +521,7 @@ class DriverRosterEntry(Base):
     # Offboarding module (2026-08-07). employment_status explains WHY a driver
     # is inactive -- is_active alone conflated "terminated" with "on leave".
     transporter_id = Column(String(32), index=True)          # Amazon's stable per-account id
+    email = Column(String(200), index=True)                  # Amazon account email — the duplicate-account discriminator
     employment_status = Column(String(20), default="active")  # active | leave_of_absence | terminated
     employment_status_source = Column(String(40))
     employment_status_at = Column(DateTime)
@@ -2602,6 +2603,7 @@ def ensure_driver_employment_status_columns():
     (same person, new account, new email) indistinguishable from duplicates."""
     for col, typedef in [
         ("transporter_id", "VARCHAR(32)"),
+        ("email", "VARCHAR(200)"),
         ("employment_status", "VARCHAR(20) DEFAULT 'active'"),   # active | leave_of_absence | terminated
         ("employment_status_source", "VARCHAR(40)"),             # which file/decision set it
         ("employment_status_at", "TIMESTAMP"),

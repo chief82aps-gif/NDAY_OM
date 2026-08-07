@@ -235,24 +235,51 @@ def scan(db: Session = Depends(get_db)):
     assoc = json.loads(_load_snapshot(db, "associates").payload)
     off = json.loads(_load_snapshot(db, "offboarded").payload)
 
+    # EMAIL is the primary key for identity between these files (explicit
+    # direction 2026-08-07). The same person's duplicate accounts differ ONLY
+    # by the email address, so the email is what distinguishes the live account
+    # from the retired one — transporter_id and name are fallbacks for rows
+    # where email is blank.
+    assoc_by_email = {r["email"]: r for r in assoc if r["email"]}
     assoc_by_tid = {r["transporter_id"]: r for r in assoc if r["transporter_id"]}
     assoc_by_name = {r["norm_name"]: r for r in assoc if r["norm_name"]}
+    off_emails = {r["email"] for r in off if r["email"]}
     off_tids = {r["transporter_id"] for r in off if r["transporter_id"]}
     off_names = {r["norm_name"] for r in off if r["norm_name"]}
+
+    # Every email Amazon currently lists as ACTIVE. Nothing in this set may
+    # ever be deactivated, whatever the offboarded file says about some other
+    # account belonging to the same human.
+    active_emails = {r["email"] for r in assoc if r["email"] and r["status"] == "ACTIVE"}
 
     terminated, loa, still_active, unknown, protected = [], [], [], [], []
 
     for entry in db.query(DriverRosterEntry).all():
         nn = _norm_name(entry.payroll_name)
         tid = (entry.transporter_id or "").strip()
-        arow = assoc_by_tid.get(tid) if tid else None
+        em = (entry.email or "").strip().lower()
+
+        # Match order: email (the discriminator) -> transporter_id -> name.
+        arow = assoc_by_email.get(em) if em else None
+        if arow is None and tid:
+            arow = assoc_by_tid.get(tid)
         if arow is None:
             arow = assoc_by_name.get(nn)
 
-        in_off = (tid in off_tids) if tid else (nn in off_names)
+        # Offboarded membership is judged on the SAME identity we matched on,
+        # so a retired old account can never drag down the live one.
+        resolved_email = em or (arow or {}).get("email") or ""
+        if resolved_email:
+            in_off = resolved_email in off_emails and resolved_email not in active_emails
+        elif tid:
+            in_off = tid in off_tids
+        else:
+            in_off = nn in off_names
+
         rec = {
             "roster_id": entry.id, "payroll_name": entry.payroll_name,
             "transporter_id": tid or (arow or {}).get("transporter_id") or None,
+            "email": resolved_email or None,
             "is_active_now": entry.is_active,
             "associate_status": (arow or {}).get("status"),
             "in_offboarded_file": in_off,
@@ -309,12 +336,34 @@ def apply(payload: ApplyRequest, db: Session = Depends(get_db),
     now = datetime.utcnow()
     changed_term, changed_loa = [], []
 
+    # Absolute invariant, stated explicitly 2026-08-07: NEVER deactivate anyone
+    # Amazon lists as ACTIVE. This re-derives the ACTIVE email set straight
+    # from the file rather than trusting the plan, so it holds even if the
+    # classifier is later changed or has a bug. Belt and braces on purpose —
+    # the failure mode is terminating someone who is working today.
+    assoc_rows = json.loads(_load_snapshot(db, "associates").payload)
+    active_emails = {r["email"] for r in assoc_rows if r["email"] and r["status"] == "ACTIVE"}
+    active_tids = {r["transporter_id"] for r in assoc_rows if r["transporter_id"] and r["status"] == "ACTIVE"}
+    refused = []
+
     for rec in plan["terminated"]:
         entry = db.query(DriverRosterEntry).filter(DriverRosterEntry.id == rec["roster_id"]).first()
         if not entry:
             continue
+        em = (rec.get("email") or entry.email or "").strip().lower()
+        tid = (rec.get("transporter_id") or entry.transporter_id or "").strip()
+        if (em and em in active_emails) or (tid and tid in active_tids):
+            refused.append({"payroll_name": entry.payroll_name, "email": em or None,
+                            "reason": "Listed ACTIVE in Associate Data — refused to deactivate."})
+            logger.warning(
+                "Offboarding REFUSED to deactivate %r (%s) — ACTIVE in Associate Data",
+                entry.payroll_name, em or tid,
+            )
+            continue
         if rec["transporter_id"] and not entry.transporter_id:
             entry.transporter_id = rec["transporter_id"]
+        if em and not entry.email:
+            entry.email = em
         entry.is_active = False
         entry.employment_status = "terminated"
         entry.employment_status_source = "offboarded_export"
@@ -362,6 +411,10 @@ def apply(payload: ApplyRequest, db: Session = Depends(get_db),
         "terminated": {"count": len(changed_term), "drivers": changed_term},
         "leave_of_absence": {"count": len(changed_loa), "drivers": changed_loa},
         "protected_rehires": plan["counts"]["protected_rehires"],
+        # Anyone the guard stopped. Should normally be empty — a non-empty list
+        # means the classifier tried to deactivate a currently-employed driver
+        # and is worth investigating, not ignoring.
+        "refused_active": {"count": len(refused), "drivers": refused},
         "slack_removal": slack_result,
     }
 

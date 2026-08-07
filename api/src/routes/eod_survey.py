@@ -32,7 +32,6 @@ from api.src.database import (
     get_reminder_state, set_reminder_state,
 )
 from api.src.feature_flags import get_flag
-from api.src.pilot_roster import allow_driver
 from api.src.timezone import PACIFIC
 
 logger = logging.getLogger(__name__)
@@ -957,9 +956,6 @@ def post_daily_survey_message(force: bool = False) -> dict:
                 no_slack += 1
                 continue
 
-            # Pilot scoping — after the feature flag, never instead of it.
-            if not allow_driver(roster_entry.id, db):
-                continue
 
             eod_token = _issue_eod_token(roster_entry.id, roster_entry.position_id, roster_entry.payroll_name)
             url = f"{APP_URL}/eod?token={eod_token}"
@@ -1027,9 +1023,6 @@ def send_eod_reminders(force: bool = False) -> dict:
             if not roster_entry or not roster_entry.slack_member_id:
                 continue
 
-            # Pilot scoping — after the feature flag, never instead of it.
-            if not allow_driver(roster_entry.id, db):
-                continue
 
             eod_token = _issue_eod_token(roster_entry.id, roster_entry.position_id, roster_entry.payroll_name)
             url = f"{APP_URL}/eod?token={eod_token}"

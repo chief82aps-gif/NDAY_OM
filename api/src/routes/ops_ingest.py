@@ -1093,7 +1093,10 @@ def run_ops_auto_ingest(db: Session) -> dict:
     if not get_flag("OPS_AUTO_INGEST_ACTIVE"):
         return {"status": "inactive"}
 
-    stuck_cutoff = datetime.now(timezone.utc) - timedelta(minutes=_STUCK_INGESTING_MINUTES)
+    # detected_at is a naive DateTime column (naive UTC). Comparing it against a
+    # timezone-AWARE value pushes an implicit timestamp/timestamptz cast into the
+    # WHERE clause — keep both sides naive UTC so the comparison is unambiguous.
+    stuck_cutoff = datetime.utcnow() - timedelta(minutes=_STUCK_INGESTING_MINUTES)
     jobs = (
         db.query(OpsIngestJob)
         .filter(
@@ -1193,8 +1196,42 @@ def is_type_ingested_today(db: Session, detected_type: str, today: date) -> bool
 @router.post("/auto-ingest")
 def manual_ops_auto_ingest(db: Session = Depends(get_db)):
     """Manual trigger for run_ops_auto_ingest() — same call the background
-    loop makes, for testing or to force an immediate catch-up on backlog."""
-    return run_ops_auto_ingest(db)
+    loop makes, for testing or to force an immediate catch-up on backlog.
+
+    Returns the failure detail instead of a bare 500. Confirmed live
+    2026-08-07: this endpoint returned "Internal Server Error" with no body on
+    every call, so the background loop was silently failing too and NOTHING
+    auto-ingested — five Quality RTS files and two Packages files sat pending
+    for hours while the reminders correctly reported them missing. A batch
+    ingest whose only failure signal is an empty 500 is undebuggable from
+    outside.
+    """
+    try:
+        return run_ops_auto_ingest(db)
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Auto-ingest run failed")
+        return {"status": "error", "error": f"{type(exc).__name__}: {exc}"[:600]}
+
+
+@router.post("/jobs/{job_id}/reset")
+def reset_job(job_id: int, db: Session = Depends(get_db)):
+    """Return a job stuck at 'ingesting' to 'pending' so it can be retried.
+
+    A job is left orphaned when the process dies mid-dispatch (e.g. a Render
+    redeploy landing between the status write and the dispatch finishing).
+    /jobs/{id}/ingest deliberately refuses anything not pending/error, so
+    without this the only recovery was the auto-ingest sweep — which is
+    exactly what was broken."""
+    job = db.query(OpsIngestJob).filter(OpsIngestJob.id == job_id).first()
+    if not job:
+        raise HTTPException(404, f"Job {job_id} not found")
+    previous = job.status
+    job.status = "pending"
+    job.error_message = None
+    db.commit()
+    return {"status": "reset", "job_id": job_id, "from": previous, "to": "pending",
+            "file_name": job.file_name}
 
 
 @router.post("/jobs/{job_id}/ingest")

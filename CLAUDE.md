@@ -430,14 +430,34 @@ upload page), not removing the human from the download step.
 - **`SLACK_NOTIFICATIONS_ACTIVE`** (env var, default `false`) — a hard,
   system-wide kill switch on every outbound Slack send (`chat.postMessage`,
   `chat.update`, `chat.postEphemeral`), implemented as a monkey-patch on
-  `slack_sdk.WebClient` in `api/main.py` rather than touching each
-  module's own Slack client (there are 24+ scattered `WebClient(...)`
-  call sites across 15 files — see the architecture note above). Read-only
-  Slack calls (file scanning, ingestion, channel history) are unaffected —
-  only sends are gated. This sits *above* `ROSTERING_ACTIVE` and
-  `DRIVER_DM_ACTIVE`: while it's off, nothing goes out regardless of what
-  those two flags say. Added 2026-07-13 because the system isn't in live
-  operation yet — do not set to `true` without the user's explicit go-ahead.
+  `slack_sdk.WebClient` in **`api/src/slack_notification_gate.py`**, applied
+  at import time from `api/main.py`, rather than touching each module's own
+  Slack client (there are 139 `chat_postMessage` call sites across ~20 files
+  — see the architecture note above). Read-only Slack calls (file scanning,
+  ingestion, channel history) are unaffected — only sends are gated. This
+  sits *above* `ROSTERING_ACTIVE` and `DRIVER_DM_ACTIVE`: while it's off,
+  nothing goes out regardless of what those two flags say. Added 2026-07-13
+  because the system isn't in live operation yet — do not set to `true`
+  without the user's explicit go-ahead. Because it's applied at import
+  time it is deliberately **not** in the `/feature-flags` DB system;
+  changing it means a Render env-var change plus a restart.
+- **The pause gate returns a fake success, not an exception — "no exception"
+  never means "delivered."** The suppressed stub returns
+  `{"ok": True, "paused": True}` so that a paused system doesn't throw out of
+  139 call sites. The cost: any caller that wraps a send in `try/except` and
+  records a sent-marker on success will persist a delivery that never
+  happened. Confirmed live 2026-08-06 — a survey DM stamped `first_sent_at`
+  and a nudge count while the gate was on and nothing reached the driver;
+  the admin dashboard reported it as sent. **Any code that persists a
+  sent/notified marker must call `was_suppressed(response)` from
+  `slack_notification_gate.py` before recording it.** Every "sent" timestamp
+  written anywhere in this codebase while the gate was on is suspect.
+  Fixed so far in `surveys.py` only — `send_driver_shift_dms()`,
+  `send_day_of_dms()` and `send_single_day_of_dm()` (all locked, need
+  explicit authorization), plus `post_mgt_summary()`,
+  `manager_accountability._send_pending_dms()`,
+  `coaching_notifications._notify_driver_stage()`/`_notify_role_stage()`
+  and `crash_report._notify_stage()` still record on exception-only.
 - No credential/key files are currently tracked in git (verified
   2026-07-12) — keep it that way. `.env`, `.env.development`, `.env.local`,
   `*.db` must stay gitignored, never committed.

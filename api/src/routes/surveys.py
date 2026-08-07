@@ -54,6 +54,7 @@ from api.src.database import (
 )
 from api.src.authorization import require_any_role
 from api.src.feature_flags import get_flag
+from api.src.slack_notification_gate import sends_paused, was_suppressed
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/surveys", tags=["surveys"])
@@ -108,7 +109,7 @@ def _dm_survey_link(slack_user_id: str, survey: Survey, token: str, is_nudge: bo
         + "\nThis needs your acknowledgment — please don't put it off."
     )
     try:
-        client.chat_postMessage(
+        resp = client.chat_postMessage(
             channel=slack_user_id, text=text,
             blocks=[
                 {"type": "section", "text": {"type": "mrkdwn", "text": text}},
@@ -118,6 +119,15 @@ def _dm_survey_link(slack_user_id: str, survey: Survey, token: str, is_nudge: bo
                 }]},
             ],
         )
+        # The pause gate returns a fake-success dict rather than raising, so a
+        # bare try/except would record this as delivered. See
+        # slack_notification_gate.was_suppressed().
+        if was_suppressed(resp):
+            logger.warning(
+                "Survey DM to %s suppressed by SLACK_NOTIFICATIONS_ACTIVE=false "
+                "— not recording it as sent.", slack_user_id,
+            )
+            return False
         return True
     except Exception as exc:
         logger.warning("Survey DM failed for %s: %s", slack_user_id, exc)
@@ -311,7 +321,14 @@ def send_survey(
             a.last_nudge_at = now
             sent += 1
     db.commit()
-    return {"status": "sent", "sent": sent, "already_completed": already_done, "no_slack_id": no_slack}
+    return {
+        "status": "sent", "sent": sent, "already_completed": already_done,
+        "no_slack_id": no_slack,
+        # When true, every send was swallowed by the system-wide pause and
+        # nothing reached a driver -- surfaced so the admin page can say so
+        # outright instead of reporting a silent "sent 0".
+        "paused": sends_paused(),
+    }
 
 
 @router.get("/{survey_id}/status")

@@ -175,6 +175,13 @@ export default function SurveyAdminPage() {
       const r = await res.json();
       if (r.status === 'closed') {
         setError('That survey is closed — reopen or create a new one; nothing was sent.');
+      } else if (r.paused) {
+        // The system-wide gate swallows sends and returns a fake success, so
+        // this would otherwise read as a silent "Sent 0" with no explanation.
+        setError(
+          'Slack sends are globally paused (SLACK_NOTIFICATIONS_ACTIVE=false) — nothing was delivered. ' +
+          'No driver was marked as sent. Turn that env var on in Render to actually send.'
+        );
       } else {
         const sent = r.sent ?? 0, done = r.already_completed ?? 0, noSlack = r.no_slack_id ?? 0;
         // A DM Slack rejects is counted in NEITHER `sent` nor `no_slack_id` --

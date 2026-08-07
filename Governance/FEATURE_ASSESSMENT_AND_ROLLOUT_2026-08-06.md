@@ -128,7 +128,23 @@ could plausibly have been feeding them bad dates/data for a while.
      that absence is what made this check awkward, and a trivial
      `GET /version` returning the deployed git SHA would make every future
      "is the fix actually live?" question a one-second answer. Worth adding.**
-  3. **Real subsequent ingest: PENDING.** Baseline is job **415**
+  3. **Real subsequent ingest: PASS — Phase 0 is closed.** Job **435**
+     (`Week-32-Schedule (4).xlsx`), detected **2026-08-06 18:03:21 PT**,
+     entirely after the fix was live, resolved `schedule_date: **08/07/2026**`
+     — the next day, 317 drivers saved. This is the first driver_schedule
+     ingest on record to resolve to tomorrow rather than its own upload day,
+     and it satisfies this doc's own standard that a date-resolution fix isn't
+     verified until a real post-fix event proves it.
+
+     **One leg deferred:** checklist step 3 in `SHOWTIME_MODULE_RULES.md` also
+     asks that `GET /rostering/shift-dms/{resolved date}` show real
+     `dm_sent_at` timestamps. It returns `total: 0` for 2026-08-07 — expected
+     and correct while `DRIVER_DM_ACTIVE` is paused (the showtime watchdog
+     computes the right date but the send is gated). The *date resolution* is
+     proven; the *DM delivery* half stays unverified until the pause lifts,
+     and should be re-checked on the first evening after it does.
+
+     Prior baseline for comparison was job **415**
      (`Week-32-Schedule (3).xlsx`, detected 2026-08-05 18:19 PT →
      `schedule_date: 08/05/2026`, i.e. same-day — the documented bug). All 16
      historical `driver_schedule` jobs show that same signature. Tonight's job

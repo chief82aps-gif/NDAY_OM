@@ -25,6 +25,32 @@ logger = logging.getLogger(__name__)
 _PAUSED_RESPONSE = {"ok": True, "paused": True}
 
 
+def sends_paused() -> bool:
+    """True when outbound Slack sends are currently suppressed."""
+    return os.getenv("SLACK_NOTIFICATIONS_ACTIVE", "false").lower() != "true"
+
+
+def was_suppressed(response) -> bool:
+    """True if this response came from the pause gate rather than from Slack.
+
+    The gate deliberately returns a fake-success dict instead of raising, so
+    that a paused system doesn't throw exceptions out of 139 call sites. The
+    cost is that any caller which treats "no exception" as "delivered" will
+    persist a sent-marker for a message that never left the process --
+    confirmed live 2026-08-06, when a survey DM recorded `first_sent_at` and
+    a nudge while the gate was on and nothing was delivered.
+
+    **Any code that persists a sent/notified marker must check this before
+    recording it.** Checking only for an exception is not sufficient.
+    """
+    try:
+        if response is None or not hasattr(response, "get"):
+            return False
+        return bool(response.get("paused"))
+    except Exception:
+        return False
+
+
 def apply_slack_send_gate() -> None:
     """Call once, as early as possible (module import time), before any
     request or background task can construct a WebClient and send."""

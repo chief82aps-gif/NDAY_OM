@@ -323,7 +323,12 @@ def list_flags(db: Session) -> list[dict]:
     results = []
     for key, meta in FLAG_REGISTRY.items():
         override = overrides.get(key)
-        default = "true" if key == "OPS_AUTO_INGEST_ACTIVE" else "false"
+        # Must use the SAME default set as get_flag(). This line used to carry
+        # its own copy ("true" if key == "OPS_AUTO_INGEST_ACTIVE" else "false")
+        # and was missed when _DEFAULT_TRUE_FLAGS was introduced, so the admin
+        # page reported default-ON flags as OFF while the runtime correctly
+        # treated them as ON — the page lying about live state.
+        default = "true" if key in _DEFAULT_TRUE_FLAGS else "false"
         env_value = os.getenv(key, default).lower() == "true"
         results.append({
             "key": key,

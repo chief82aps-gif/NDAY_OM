@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -1081,3 +1081,44 @@ app.include_router(surveys.router)
 @app.get("/")
 def root():
     return {"message": "NDAY_OM API is running."}
+
+
+# Process start time, captured at import — so /version reports when THIS
+# build actually started serving, not when the request arrived.
+_PROCESS_STARTED_AT = datetime.now(timezone.utc)
+
+
+@app.get("/version")
+def version():
+    """Which build is actually live, and since when.
+
+    Added 2026-08-07 after three separate incidents where "is the fix
+    deployed?" could only be answered by guessing:
+      - the showtime date fix appeared to regress because a pre-fix ingest had
+        already run (2026-08-06);
+      - the survey route-collision fix had to be confirmed by probing
+        unrelated endpoints for strings;
+      - the driver Home tab fix could not be distinguished from a stalled
+        deploy at all, because it added no new route to probe.
+
+    Render exposes RENDER_GIT_COMMIT to the running service; falls back to
+    "unknown" locally. Deliberately unauthenticated — it exposes nothing but a
+    commit SHA, and needing a token is precisely what makes a health check
+    useless during an incident.
+    """
+    commit = (
+        os.getenv("RENDER_GIT_COMMIT")
+        or os.getenv("GIT_COMMIT")
+        or os.getenv("SOURCE_VERSION")
+        or "unknown"
+    )
+    now = datetime.now(timezone.utc)
+    return {
+        "commit": commit,
+        "commit_short": commit[:7] if commit != "unknown" else "unknown",
+        "branch": os.getenv("RENDER_GIT_BRANCH") or "unknown",
+        "service": os.getenv("RENDER_SERVICE_NAME") or "local",
+        "started_at": _PROCESS_STARTED_AT.isoformat(),
+        "uptime_seconds": int((now - _PROCESS_STARTED_AT).total_seconds()),
+        "server_time_utc": now.isoformat(),
+    }

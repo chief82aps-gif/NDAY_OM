@@ -452,6 +452,53 @@ until completed. Three items explicitly deferred out of v1:
 
 ---
 
+## Route Sheet Ingest — Reliability & Feedback (added 2026-08-07)
+
+Reported live: Blake kept asking for the Route Sheet that had already been
+posted. Investigated 2026-08-07 — **the reminder was correct, the data really
+was missing.**
+
+**What was ruled out:** the `OpsIngestJob` rows for `NDAY RS.pdf` sitting at
+`status: pending` are *expected*, not the bug. `route_sheets` is deliberately
+excluded from `_AUTO_INGEST_TYPES` (`ops_ingest.py`) because `daily_notify.py`
+owns that pipeline. And `mgt_reminders.py` resolves the route-sheet reminder
+against `get_latest_route_sheet_rows()` — real ingested rows, not job status.
+
+**Evidence the ingest genuinely failed:** every one of 2026-08-07's 42
+`DailyRouteAssignment` rows has `packages: null`, and package counts come from
+the Route Sheet.
+
+**Prime suspect, NOT yet proven:** the file arrives as `NDAY RS.pdf` — the
+same name every single day — so a dedup keyed on filename would skip the
+second and subsequent days. This is the mirror image of the failure CLAUDE.md's
+ingest rules were written for (Amazon re-dropping under *changing* names).
+Trace `daily_notify.py`'s watcher dedup before acting: "it's the filename" has
+been the wrong answer here before.
+
+- 🔲 **Trace the real cause** in `daily_notify.py`'s file-detection dedup —
+  is it keyed on `slack_file_id`, filename, or date? Fix accordingly.
+- 🔲 **Make the reminder specific.** Today it cannot distinguish "never
+  arrived" from "arrived and failed to parse", which is exactly the confusion
+  reported. It should name the missing date — "Route Sheet for Thursday,
+  Aug 7 not received" — and carry a real upload button rather than a generic
+  nag with a link.
+- 🔲 **Confirm what was ingested.** Post back "Route Sheet ingested: Aug 7,
+  42 routes, 1,180 packages" after a successful parse. Silence currently makes
+  a failed ingest indistinguishable from a successful one — the same
+  no-feedback pattern behind the survey-link and wave-lead bugs the same week.
+- 🔲 **Consider promoting direct upload over Slack** for this source. Per
+  explicit direction 2026-08-07: a dedicated ingest location removes filename
+  ambiguity and lets the uploader state the date explicitly instead of the
+  system inferring it. `/upload?view=daily` already exists and is what the
+  reminder links to — this is about making it the primary path, not building
+  something new.
+
+Note this source is NOT subject to the Amazon-portal automation ban (DOP and
+Route Sheet are posted straight into Slack, never portal-gated), so automating
+detection further is allowed — see CLAUDE.md.
+
+---
+
 ## External Dependencies Tracker
 
 | Dependency | Status | Owner | Notes |

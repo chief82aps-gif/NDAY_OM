@@ -923,6 +923,11 @@ def post_daily_survey_message(force: bool = False) -> dict:
     (manual recovery if the automatic window was missed, e.g. a redeploy
     landed mid-window) — still respects the "already sent today" guard
     either way, so this is always safe to call."""
+    # Same gate as run_eod_survey_check() — the 3 PM personal-link DM is the
+    # same driver-facing EOD send, one window earlier.
+    if not get_flag("EOD_SURVEY_DM_ACTIVE"):
+        return {"status": "inactive", "note": "EOD_SURVEY_DM_ACTIVE is off — no EOD survey DMs sent."}
+
     now = datetime.now(PACIFIC)
     today = now.date()
 
@@ -975,6 +980,11 @@ def send_eod_reminders(force: bool = False) -> dict:
     """7:30 PM Pacific: DM any scheduled driver who hasn't submitted yet.
     Pass force=True for manual recovery outside the normal window — still
     respects the "already ran today" guard, safe to call any time."""
+    # Same gate as run_eod_survey_check() — this is the 19:30-22:00 chase for
+    # the same mass send, so the two must be switchable together.
+    if not get_flag("EOD_SURVEY_DM_ACTIVE"):
+        return {"status": "inactive", "note": "EOD_SURVEY_DM_ACTIVE is off — no EOD reminder DMs sent."}
+
     now = datetime.now(PACIFIC)
     today = now.date()
 
@@ -1097,6 +1107,14 @@ def run_eod_survey_check(db: Session, force: bool = False) -> dict:
     the already-sent-today guard, for an ad-hoc "catch up the stragglers
     right now" send at any time of day."""
     from api.src.driver_identity import resolve_roster_entry
+
+    # Defaults TRUE -- see _DEFAULT_TRUE_FLAGS in feature_flags.py. This send
+    # ran with no gate at all until 2026-08-06; the flag exists so it can be
+    # stopped from /feature-flags without a redeploy, not to turn it off.
+    # Deliberately checked even when force=True, matching run_survey_nudges():
+    # a kill switch that a manual trigger can bypass is not a kill switch.
+    if not get_flag("EOD_SURVEY_DM_ACTIVE"):
+        return {"status": "inactive", "note": "EOD_SURVEY_DM_ACTIVE is off — no EOD survey DMs sent."}
 
     now_pt = datetime.now(PACIFIC)
     today = now_pt.date()

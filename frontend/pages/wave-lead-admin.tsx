@@ -54,6 +54,25 @@ function authHeaders(): Record<string, string> {
   };
 }
 
+// Every GET this page uses (/attendance/roster-list, /wave-lead/teams,
+// /wave-lead/roles) is public, but every write requires a role. So the page
+// renders fully populated for someone whose token is missing or expired, and
+// the writes then fail -- previously with a bare "Failed to assign." that named
+// neither the status code nor the reason. Surface both.
+async function failureMessage(res: Response, action: string): Promise<string> {
+  let detail = '';
+  try {
+    const body = await res.json();
+    if (typeof body.detail === 'string') detail = body.detail;
+    else if (Array.isArray(body.detail)) {
+      detail = body.detail.map((d: any) => d?.msg).filter(Boolean).join('; ');
+    }
+  } catch { /* non-JSON body */ }
+  if (res.status === 401) return `${action} failed — you are not signed in (401). Your session expired; sign in again and retry.`;
+  if (res.status === 403) return `${action} failed — your account lacks permission (403). ${detail}`;
+  return `${action} failed — HTTP ${res.status}${detail ? ': ' + detail : ''}`;
+}
+
 function resolveApi(): string {
   if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
   if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
@@ -125,7 +144,11 @@ export default function WaveLeadAdminPage() {
 
   const assignToTeam = async (teamId: number) => {
     const rosterId = selectedDriver[teamId];
-    if (!rosterId) return;
+    // Previously a silent `return` -- pressing Add with nothing selected did
+    // nothing at all and said nothing, which is indistinguishable from a
+    // failed save. On mobile a native <select> that is scrolled but not
+    // committed leaves this empty, so this was easy to hit.
+    if (!rosterId) { setStatus('Pick a driver from that team\'s dropdown first, then press Add.'); return; }
     setStatus('Saving...');
     try {
       const res = await fetch(`${api}/wave-lead/teams/assign`, {
@@ -133,21 +156,27 @@ export default function WaveLeadAdminPage() {
         headers: authHeaders(),
         body: JSON.stringify({ roster_id: parseInt(rosterId, 10), team_id: teamId, assigned_by: user?.username ?? 'dispatch' }),
       });
-      if (res.ok) { setStatus('Assigned.'); await loadAll(); } else { setStatus('Failed to assign.'); }
-    } catch { setStatus('Network error.'); }
+      if (res.ok) {
+        setStatus('Assigned.');
+        setSelectedDriver(p => ({ ...p, [teamId]: '' }));
+        await loadAll();
+      } else {
+        setStatus(await failureMessage(res, 'Assign'));
+      }
+    } catch (e: any) { setStatus(`Network error: ${e?.message ?? 'request never reached the server'}`); }
   };
 
   const removeFromTeam = async (rosterId: number) => {
     setStatus('Removing...');
     try {
       const res = await fetch(`${api}/wave-lead/teams/members/${rosterId}`, { method: 'DELETE', headers: authHeaders() });
-      if (res.ok) { setStatus('Removed.'); await loadAll(); } else { setStatus('Failed to remove.'); }
-    } catch { setStatus('Network error.'); }
+      if (res.ok) { setStatus('Removed.'); await loadAll(); } else { setStatus(await failureMessage(res, 'Remove')); }
+    } catch (e: any) { setStatus(`Network error: ${e?.message ?? 'request never reached the server'}`); }
   };
 
   const assignLead = async (waveNumber: number, half: 'front' | 'back') => {
     const rosterId = wave5LeadDriver[half];
-    if (!rosterId) return;
+    if (!rosterId) { setStatus(`Pick a driver for the ${half} half first, then press Assign.`); return; }
     setStatus('Saving...');
     try {
       const res = await fetch(`${api}/wave-lead/roles/assign`, {
@@ -155,13 +184,13 @@ export default function WaveLeadAdminPage() {
         headers: authHeaders(),
         body: JSON.stringify({ wave_number: waveNumber, half, roster_id: parseInt(rosterId, 10), assigned_by: user?.username ?? 'dispatch' }),
       });
-      if (res.ok) { setStatus('Lead assigned.'); await loadAll(); } else { setStatus('Failed to assign lead.'); }
-    } catch { setStatus('Network error.'); }
+      if (res.ok) { setStatus('Lead assigned.'); await loadAll(); } else { setStatus(await failureMessage(res, 'Assign lead')); }
+    } catch (e: any) { setStatus(`Network error: ${e?.message ?? 'request never reached the server'}`); }
   };
 
   const assignSeniorLead = async (half: 'front' | 'back') => {
     const rosterId = seniorLeadDriver[half];
-    if (!rosterId) return;
+    if (!rosterId) { setStatus(`Pick a driver for the ${half} half first, then press Assign.`); return; }
     setStatus('Saving...');
     try {
       const res = await fetch(`${api}/wave-lead/senior/assign`, {
@@ -169,16 +198,16 @@ export default function WaveLeadAdminPage() {
         headers: authHeaders(),
         body: JSON.stringify({ half, roster_id: parseInt(rosterId, 10), assigned_by: user?.username ?? 'dispatch' }),
       });
-      if (res.ok) { setStatus('Senior Wave Lead assigned.'); await loadAll(); } else { setStatus('Failed to assign lead.'); }
-    } catch { setStatus('Network error.'); }
+      if (res.ok) { setStatus('Senior Wave Lead assigned.'); await loadAll(); } else { setStatus(await failureMessage(res, 'Assign lead')); }
+    } catch (e: any) { setStatus(`Network error: ${e?.message ?? 'request never reached the server'}`); }
   };
 
   const deactivateLead = async (roleId: number) => {
     setStatus('Removing lead...');
     try {
       const res = await fetch(`${api}/wave-lead/roles/${roleId}`, { method: 'DELETE', headers: authHeaders() });
-      if (res.ok) { setStatus('Lead removed.'); await loadAll(); } else { setStatus('Failed to remove lead.'); }
-    } catch { setStatus('Network error.'); }
+      if (res.ok) { setStatus('Lead removed.'); await loadAll(); } else { setStatus(await failureMessage(res, 'Remove lead')); }
+    } catch (e: any) { setStatus(`Network error: ${e?.message ?? 'request never reached the server'}`); }
   };
 
   const loadSuggestions = async () => {
@@ -204,8 +233,8 @@ export default function WaveLeadAdminPage() {
         setStatus('Applied.');
         await loadAll();
         setSuggestions(prev => prev ? prev.map(x => x.roster_id === s.roster_id ? { ...x, current_team_id: s.suggested_team_id, current_team_label: s.suggested_team_label, matches_current: true } : x) : prev);
-      } else { setStatus('Failed to apply.'); }
-    } catch { setStatus('Network error.'); }
+      } else { setStatus(await failureMessage(res, 'Apply suggestion')); }
+    } catch (e: any) { setStatus(`Network error: ${e?.message ?? 'request never reached the server'}`); }
   };
 
   const teamsByWave: Record<number, TeamStanding[]> = {};

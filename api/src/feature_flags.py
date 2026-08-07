@@ -30,7 +30,30 @@ from sqlalchemy.orm import Session
 from api.src.database import SessionLocal, FeatureFlag
 
 
+# Flags whose coded default is ON. Everything else defaults OFF — the
+# deploy-dark safety pattern described above. A flag belongs here only when it
+# gates something ALREADY running in production, where introducing the gate
+# must not change behaviour: the point is to gain a kill switch, not to switch
+# the feature off retroactively.
+_DEFAULT_TRUE_FLAGS = {
+    "OPS_AUTO_INGEST_ACTIVE",
+    # Added 2026-08-06. The 19:00 EOD survey mass-DM and its 19:30-22:00
+    # reminder had NO gate of any kind -- they were the only driver-facing
+    # sends still firing during the driver-DM pause, and a repo-wide audit
+    # found them the sole ungated automatic path. Defaulted true because they
+    # were working correctly and delivering (39 DMs sent 2026-08-06 19:00:08,
+    # with real submissions) -- this adds the off-switch that was missing,
+    # nothing more.
+    "EOD_SURVEY_DM_ACTIVE",
+}
+
+
 FLAG_REGISTRY: dict[str, dict] = {
+    "EOD_SURVEY_DM_ACTIVE": {
+        "label": "EOD Survey Driver DMs",
+        "description": "The 19:00 end-of-day survey mass-DM to every scheduled driver, and its 19:30-22:00 reminder chase. Defaults ON — this is a kill switch for something already live, not an off-by-default feature.",
+        "category": "Driver Communication",
+    },
     "DRIVER_DM_ACTIVE": {
         "label": "Driver Morning DM",
         "description": "Master gate for the daily route-assignment DM sent to drivers.",
@@ -255,7 +278,7 @@ def get_flag(key: str, db: Optional[Session] = None) -> bool:
         if owns_session:
             db.close()
 
-    default = "true" if key == "OPS_AUTO_INGEST_ACTIVE" else "false"
+    default = "true" if key in _DEFAULT_TRUE_FLAGS else "false"
     return os.getenv(key, default).lower() == "true"
 
 

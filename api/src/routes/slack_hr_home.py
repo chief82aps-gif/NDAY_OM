@@ -82,6 +82,12 @@ def build_hr_home_view_blocks(db: Session, dash_user, dash_token: str) -> list:
                 },
                 {
                     "type": "button",
+                    "action_id": "hr_home_open_survey_admin",
+                    "text": {"type": "plain_text", "text": "📋 Surveys & Quizzes", "emoji": True},
+                    "url": _slack_login_url("/survey-admin", dash_user, dash_token),
+                },
+                {
+                    "type": "button",
                     "action_id": "hr_home_open_discipline_tracker",
                     "text": {"type": "plain_text", "text": "📝 Write-Ups", "emoji": True},
                     "url": _slack_login_url("/discipline-tracker", dash_user, dash_token),

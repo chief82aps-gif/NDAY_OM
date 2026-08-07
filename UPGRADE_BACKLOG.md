@@ -452,6 +452,50 @@ until completed. Three items explicitly deferred out of v1:
 
 ---
 
+## Driver Self-Routing Channel — "pick your area" buttons (added 2026-08-07)
+
+Requested after seeing Amazon's `#dlv3-nday-co-leaders-pst` COEx webhook post:
+a channel message carrying a real action **button**, so the channel itself is
+the entry point rather than drivers guessing who to DM.
+
+**Goal:** a driver-facing room where drivers pick the *area* their issue
+belongs to and the system routes it to the right people — instead of every
+question landing in `#nday-team-room` and being triaged by whoever notices.
+
+**Shape to build:**
+- A pinned/persistent Block Kit message in a driver-accessible channel with one
+  button per area — e.g. Van / Fleet, Package or Route problem, Pay or Hours,
+  Time Off, Safety or Injury, App problem, Something else.
+- Tapping a button opens a modal (`views.open`) for the detail, so the channel
+  stays clean and the driver isn't composing in public.
+- Submission routes to the owning role and posts a tracked item, rather than a
+  message that scrolls away.
+
+**Reuse, don't rebuild — most of this already exists:**
+- `document_routing.py` already maps a type → roles → real Slack IDs via
+  `DocumentRoutingRule` + `RoleDirectory` (owner / hr / dispatch / ops_manager,
+  all admin-editable at `PUT /document-config/roles`). That is exactly the
+  routing backbone this needs; add areas as new routing types rather than
+  inventing a parallel table.
+- `slack_interactions.py` already owns `action_id` dispatch and modal handling
+  (see the callout, DVIC PIN and glitch-report flows).
+- Blake's App Home already has a partial version of this — Report Injury,
+  Incident, App Glitch. This is the channel-based, wider-category sibling;
+  decide deliberately whether both surfaces persist or the Home tab buttons
+  become a link into this one.
+- `AppGlitchReport` is the model for "persists as a real open/resolved item"
+  rather than a DM that disappears.
+
+**Watch out for:**
+- Adding `action_id`s to the dispatch chain risks the prefix-collision class of
+  bug already seen (Home tab, 2026-08-05) — keep new ids distinct and prefixed.
+- Anything posting to a driver-facing channel must respect
+  `TEAM_ROOM_MESSAGES_ACTIVE`-style gating and get its own `_ACTIVE` flag.
+- Categories should map to roles, never to hardcoded individuals — this repo is
+  public (CLAUDE.md security rule).
+
+---
+
 ## Route Sheet Ingest — Reliability & Feedback (added 2026-08-07)
 
 Reported live: Blake kept asking for the Route Sheet that had already been

@@ -88,6 +88,7 @@ keep the staff-facing names; this is additive, not a replacement.
 """
 from __future__ import annotations
 
+import logging
 from datetime import timedelta, datetime
 from typing import Optional
 
@@ -96,6 +97,8 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from api.src.timezone import PACIFIC
+
+logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException
 from pydantic import BaseModel

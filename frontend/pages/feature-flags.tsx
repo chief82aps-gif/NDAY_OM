@@ -20,11 +20,34 @@ interface Flag {
   updated_by: string | null;
 }
 
+interface PilotDriver {
+  roster_id: number;
+  payroll_name: string;
+  is_active: boolean | null;
+  slack_member_id: string | null;
+  reachable: boolean;
+}
+
+interface PilotState {
+  pilot_active: boolean;
+  count: number;
+  roster_ids: number[];
+  drivers: PilotDriver[];
+  note: string;
+}
+
+interface RosterDriver { id: number; payroll_name: string }
+
 export default function FeatureFlagsPage() {
   const api = resolveApi();
   const [flags, setFlags] = useState<Flag[] | null>(null);
   const [error, setError] = useState('');
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [pilot, setPilot] = useState<PilotState | null>(null);
+  const [roster, setRoster] = useState<RosterDriver[]>([]);
+  const [picked, setPicked] = useState<number[]>([]);
+  const [pilotBusy, setPilotBusy] = useState(false);
+  const [pilotMsg, setPilotMsg] = useState('');
 
   const authHeaders = (): HeadersInit => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
@@ -47,7 +70,46 @@ export default function FeatureFlagsPage() {
     }
   }, [api]);
 
-  useEffect(() => { load(); }, [load]);
+  const loadPilot = useCallback(async () => {
+    try {
+      const [p, r] = await Promise.all([
+        fetch(`${api}/pilot/roster`).then(x => x.json()),
+        fetch(`${api}/attendance/roster-list`).then(x => x.json()),
+      ]);
+      setPilot(p);
+      setPicked(p.roster_ids ?? []);
+      setRoster(r.drivers ?? []);
+    } catch { /* panel just stays empty; the flags page still works */ }
+  }, [api]);
+
+  const savePilot = async (ids: number[]) => {
+    setPilotBusy(true); setPilotMsg('');
+    try {
+      const res = await fetch(`${api}/pilot/roster`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ roster_ids: ids }),
+      });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        throw new Error(typeof b.detail === 'string' ? b.detail : `Save failed (HTTP ${res.status}).`);
+      }
+      const p: PilotState = await res.json();
+      setPilot(p); setPicked(p.roster_ids ?? []);
+      const unreachable = (p.drivers ?? []).filter(d => !d.reachable);
+      setPilotMsg(
+        p.pilot_active
+          ? `Pilot set to ${p.count} driver(s).` +
+            (unreachable.length
+              ? ` ⚠️ ${unreachable.map(d => d.payroll_name).join(', ')} not reachable — they will receive nothing.`
+              : ' All reachable.')
+          : 'Pilot cleared — piloted features now behave normally for everyone.'
+      );
+    } catch (e: any) { setPilotMsg(e.message || 'Save failed.'); }
+    finally { setPilotBusy(false); }
+  };
+
+  useEffect(() => { load(); loadPilot(); }, [load, loadPilot]);
 
   const toggle = async (key: string, enabled: boolean) => {
     setBusyKey(key);
@@ -85,6 +147,68 @@ export default function FeatureFlagsPage() {
               {error}
             </div>
           )}
+
+          {/* Pilot roster — deliberately ABOVE the flags. Choosing WHO a
+              feature reaches has to come before switching it on: flipping a
+              flag with no pilot set sends to every driver. */}
+          <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 10, padding: 18, marginBottom: 24 }}>
+            <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#f1f5f9' }}>🎯 Pilot Drivers</h2>
+            <p style={{ margin: '4px 0 12px', fontSize: 12, color: '#94a3b8' }}>
+              Tick drivers to limit piloted features to them only. With nobody ticked, features go to
+              <strong> everyone</strong>. This restricts who a feature reaches — it does not switch anything on.
+            </p>
+
+            <div style={{
+              padding: '8px 12px', borderRadius: 6, marginBottom: 12, fontSize: 13,
+              background: pilot?.pilot_active ? '#14251b' : '#0f172a',
+              border: `1px solid ${pilot?.pilot_active ? '#166534' : '#334155'}`,
+              color: pilot?.pilot_active ? '#4ade80' : '#94a3b8',
+            }}>
+              {pilot
+                ? (pilot.pilot_active
+                    ? `Pilot ACTIVE — ${pilot.count} driver(s): ${pilot.drivers.map(d => d.payroll_name).join(', ')}`
+                    : 'No pilot set — piloted features reach every driver.')
+                : 'Loading pilot…'}
+            </div>
+
+            {pilot && pilot.drivers.some(d => !d.reachable) && (
+              <div style={{ padding: '8px 12px', borderRadius: 6, marginBottom: 12, fontSize: 13,
+                            background: '#3b2f1e', border: '1px solid #854d0e', color: '#fbbf24' }}>
+                ⚠️ Not reachable (no Slack link or inactive):{' '}
+                {pilot.drivers.filter(d => !d.reachable).map(d => d.payroll_name).join(', ')} — they will receive nothing.
+              </div>
+            )}
+
+            <div style={{ maxHeight: 220, overflowY: 'auto', background: '#0f172a', border: '1px solid #334155', borderRadius: 6, padding: 10 }}>
+              {roster.length === 0 && <span style={{ color: '#64748b', fontSize: 13 }}>Loading drivers…</span>}
+              {roster.map(d => (
+                <label key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#e2e8f0', padding: '3px 0' }}>
+                  <input
+                    type="checkbox"
+                    checked={picked.includes(d.id)}
+                    onChange={e => setPicked(prev => e.target.checked ? [...prev, d.id] : prev.filter(x => x !== d.id))}
+                  />
+                  {d.payroll_name}
+                </label>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12, flexWrap: 'wrap' }}>
+              <button
+                onClick={() => savePilot(picked)}
+                disabled={pilotBusy}
+                style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid #2563eb', background: '#2563eb',
+                         color: '#fff', fontSize: 13, fontWeight: 600, cursor: pilotBusy ? 'default' : 'pointer', opacity: pilotBusy ? 0.6 : 1 }}
+              >{pilotBusy ? 'Saving…' : `Save pilot (${picked.length})`}</button>
+              <button
+                onClick={() => { setPicked([]); savePilot([]); }}
+                disabled={pilotBusy}
+                style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a',
+                         color: '#94a3b8', fontSize: 13, fontWeight: 600, cursor: pilotBusy ? 'default' : 'pointer' }}
+              >Clear pilot (send to everyone)</button>
+              {pilotMsg && <span style={{ fontSize: 12, color: pilotMsg.includes('⚠️') || pilotMsg.includes('failed') ? '#fbbf24' : '#4ade80' }}>{pilotMsg}</span>}
+            </div>
+          </div>
 
           {!error && !flags && <p style={{ color: '#64748b' }}>Loading…</p>}
 

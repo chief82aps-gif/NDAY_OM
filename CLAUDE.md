@@ -446,12 +446,19 @@ upload page), not removing the human from the download step.
   `{"ok": True, "paused": True}` so that a paused system doesn't throw out of
   139 call sites. The cost: any caller that wraps a send in `try/except` and
   records a sent-marker on success will persist a delivery that never
-  happened. Confirmed live 2026-08-06 — a survey DM stamped `first_sent_at`
-  and a nudge count while the gate was on and nothing reached the driver;
-  the admin dashboard reported it as sent. **Any code that persists a
-  sent/notified marker must call `was_suppressed(response)` from
-  `slack_notification_gate.py` before recording it.** Every "sent" timestamp
-  written anywhere in this codebase while the gate was on is suspect.
+  happened. **This is a latent trap, not a known-active incident** — it was
+  identified 2026-08-06 while (wrongly) diagnosing a missing survey DM; the
+  gate turned out to be `true` at the time and the DM had in fact been
+  delivered correctly. The defect is real for any period the gate *is* off.
+  **Any code that persists a sent/notified marker must call
+  `was_suppressed(response)` from `slack_notification_gate.py` before
+  recording it**, and any sent-marker written while the gate was off should
+  be treated as unverified. Process lesson from that same misdiagnosis:
+  `SLACK_NOTIFICATIONS_ACTIVE` is Render-env-only and absent from
+  `/feature-flags`, so its state cannot be inferred from any doc or from the
+  DB — read the actual Render env var before blaming it for a missing
+  message, and confirm delivery directly in Slack first (message timestamps
+  can be matched against the DB's own sent-marker).
   Fixed so far in `surveys.py` only — `send_driver_shift_dms()`,
   `send_day_of_dms()` and `send_single_day_of_dm()` (all locked, need
   explicit authorization), plus `post_mgt_summary()`,

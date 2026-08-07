@@ -171,6 +171,11 @@ FLAG_REGISTRY: dict[str, dict] = {
         "description": "Quarterly nudge to re-download and re-ingest a fresh Tenured Workforce file, catching drivers who worked elsewhere or were rehired that our own route-count tracker wouldn't otherwise know about.",
         "category": "Reminders",
     },
+    "SURVEY_NUDGE_ACTIVE": {
+        "label": "Survey/Quiz Nudge",
+        "description": "Re-sends an active survey/quiz link to any assigned driver who hasn't completed it, once every 24h, indefinitely, until they submit or an admin closes the survey.",
+        "category": "Driver Communication",
+    },
     "OWNER_MEETING_ACTIVE": {
         "label": "Owner Meeting Reminder",
         "description": "Monday/Wednesday night reminder for the owner to confirm the scheduled low-sentiment-rating driver meeting is still on.",

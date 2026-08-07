@@ -4206,6 +4206,87 @@ class PackageMarkingTroubleshootingStep(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class Survey(Base):
+    """Ad-hoc survey/quiz module -- added 2026-08-06 per explicit request:
+    admin-authored questions (optionally graded), assigned to a specific
+    ad-hoc set of drivers (not necessarily "everyone scheduled today"),
+    with repeat nudging until completed. Deliberately does NOT gate
+    routing/DRIVER_DM_ACTIVE in this version -- per explicit direction,
+    v1 only surfaces who's incomplete so dispatch can gate manually;
+    an automated routing gate + escalation-to-termination consequence is
+    backlogged, not built (see project_survey_quiz_module memory /
+    UPGRADE_BACKLOG.md)."""
+    __tablename__ = "surveys"
+
+    id = Column(Integer, primary_key=True)
+    title = Column(String(300), nullable=False)
+    description = Column(Text)
+    is_quiz = Column(Boolean, default=False, nullable=False)   # graded (has a pass/fail) vs plain acknowledgment survey
+    passing_score_pct = Column(DECIMAL(5, 2), nullable=True)   # only meaningful when is_quiz
+    status = Column(String(20), default="draft", nullable=False)  # draft, active, closed
+    created_by = Column(String(150))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    closed_at = Column(DateTime, nullable=True)
+
+    questions = relationship("SurveyQuestion", back_populates="survey", order_by="SurveyQuestion.order_index", cascade="all, delete-orphan")
+    assignments = relationship("SurveyAssignment", back_populates="survey", cascade="all, delete-orphan")
+
+
+class SurveyQuestion(Base):
+    __tablename__ = "survey_questions"
+
+    id = Column(Integer, primary_key=True)
+    survey_id = Column(Integer, ForeignKey("surveys.id", ondelete="CASCADE"), nullable=False, index=True)
+    order_index = Column(Integer, nullable=False, default=0)
+    question_text = Column(Text, nullable=False)
+    question_type = Column(String(20), nullable=False)   # "multiple_choice" | "true_false" | "free_text"
+    options = Column(JSON, nullable=True)                 # list[str], multiple_choice only
+    correct_answer = Column(String(500), nullable=True)   # used for grading; null for free_text (never auto-graded)
+    points = Column(Integer, default=1, nullable=False)
+
+    survey = relationship("Survey", back_populates="questions")
+
+
+class SurveyAssignment(Base):
+    """The ad-hoc audience for one survey -- a driver must be explicitly
+    assigned, never inferred from "everyone scheduled today." Tracks
+    nudge history so /surveys/{id}/status can show dispatch exactly who
+    to manually hold back from routing, per the deferred-gate decision."""
+    __tablename__ = "survey_assignments"
+
+    id = Column(Integer, primary_key=True)
+    survey_id = Column(Integer, ForeignKey("surveys.id", ondelete="CASCADE"), nullable=False, index=True)
+    roster_id = Column(Integer, ForeignKey("driver_roster.id"), nullable=False, index=True)
+    assigned_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    first_sent_at = Column(DateTime, nullable=True)
+    last_nudge_at = Column(DateTime, nullable=True)
+    nudge_count = Column(Integer, default=0, nullable=False)
+    completed_at = Column(DateTime, nullable=True)   # denormalized from SurveyResponse for a fast "who's incomplete" query
+
+    survey = relationship("Survey", back_populates="assignments")
+
+    __table_args__ = (
+        UniqueConstraint("survey_id", "roster_id", name="uq_survey_assignment"),
+    )
+
+
+class SurveyResponse(Base):
+    __tablename__ = "survey_responses"
+
+    id = Column(Integer, primary_key=True)
+    survey_id = Column(Integer, ForeignKey("surveys.id", ondelete="CASCADE"), nullable=False, index=True)
+    roster_id = Column(Integer, ForeignKey("driver_roster.id"), nullable=False, index=True)
+    driver_name = Column(String(255))
+    submitted_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    answers = Column(JSON, nullable=False)   # {question_id: answer}
+    score_pct = Column(DECIMAL(5, 2), nullable=True)   # null for a plain (non-quiz) survey
+    passed = Column(Boolean, nullable=True)            # null unless is_quiz and passing_score_pct is set
+
+    __table_args__ = (
+        UniqueConstraint("survey_id", "roster_id", name="uq_survey_response"),
+    )
+
+
 class NdayPointsLedger(Base):
     """Persistent per-driver "NDAY Points" reward balance -- added
     2026-07-31. Deliberately named apart from attendance.py's own

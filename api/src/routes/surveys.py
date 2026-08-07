@@ -386,6 +386,47 @@ def close_survey(
     return {"status": "closed"}
 
 
+@router.delete("/{survey_id:int}")
+def delete_survey(
+    survey_id: int, db: Session = Depends(get_db),
+    caller_role: str = Depends(require_any_role("owner", "hr", "ops_manager")),
+):
+    """Hard-delete a survey and everything attached to it. IRREVERSIBLE --
+    responses and scores go with it, so prefer /close for anything whose
+    results still matter. Added 2026-08-07 to clear out the v1 test
+    surveys; closing alone leaves dead rows in the admin list forever
+    since there is no reopen path.
+
+    Children are removed explicitly rather than leaning on the
+    ondelete="CASCADE" FKs: Postgres enforces those in production, but
+    SQLite ignores them unless PRAGMA foreign_keys=ON, so doing it by hand
+    keeps local and prod behaviour identical.
+
+    Uses the `:int` converter for the same reason as GET /{survey_id:int}
+    -- so it can never swallow a future static path like /surveys/purge.
+    """
+    survey = db.query(Survey).filter(Survey.id == survey_id).first()
+    if not survey:
+        raise HTTPException(404, f"Survey {survey_id} not found")
+
+    title = survey.title
+    responses = db.query(SurveyResponse).filter(SurveyResponse.survey_id == survey_id).delete(synchronize_session=False)
+    assignments = db.query(SurveyAssignment).filter(SurveyAssignment.survey_id == survey_id).delete(synchronize_session=False)
+    questions = db.query(SurveyQuestion).filter(SurveyQuestion.survey_id == survey_id).delete(synchronize_session=False)
+    db.delete(survey)
+    db.commit()
+
+    logger.warning(
+        "Survey %s (%r) hard-deleted by %s — %d responses, %d assignments, %d questions removed",
+        survey_id, title, caller_role, responses, assignments, questions,
+    )
+    return {
+        "status": "deleted", "survey_id": survey_id, "title": title,
+        "deleted_responses": responses, "deleted_assignments": assignments,
+        "deleted_questions": questions,
+    }
+
+
 @router.get("/{survey_id}/responses")
 def survey_responses(survey_id: int, db: Session = Depends(get_db)):
     """Full answer detail per response -- for reviewing free_text answers

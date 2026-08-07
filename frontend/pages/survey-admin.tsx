@@ -212,6 +212,24 @@ export default function SurveyAdminPage() {
     } catch (err: any) { setError(err.message || 'Close failed.'); }
   };
 
+  const destroy = async (id: number, title: string) => {
+    // Irreversible and takes responses/scores with it, so make the user
+    // confirm against the actual title rather than a generic "are you sure".
+    if (!window.confirm(`Permanently delete "${title}" and all of its questions, assignments and responses?\n\nThis cannot be undone.`)) return;
+    setError(''); setNotice('');
+    try {
+      const res = await fetch(`${api}/surveys/${id}`, { method: 'DELETE', headers: authHeaders() });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        throw new Error(typeof b.detail === 'string' ? b.detail : `Delete failed (HTTP ${res.status}).`);
+      }
+      const r = await res.json();
+      if (expanded === id) { setExpanded(null); setStatusRows(null); setStatusMeta(null); }
+      await loadSurveys();
+      setNotice(`Deleted "${r.title}" — removed ${r.deleted_questions} question(s), ${r.deleted_assignments} assignment(s), ${r.deleted_responses} response(s).`);
+    } catch (err: any) { setError(err.message || 'Delete failed.'); }
+  };
+
   const openStatus = async (id: number) => {
     setExpanded(id);
     try {
@@ -317,6 +335,10 @@ export default function SurveyAdminPage() {
                   <button style={btn()} onClick={() => openStatus(s.id)}>Status</button>
                   {s.status !== 'closed' && <button style={btn(true)} onClick={() => send(s.id)}>Send / Nudge Now</button>}
                   {s.status !== 'closed' && <button style={btn()} onClick={() => close(s.id)}>Close</button>}
+                  <button
+                    style={{ ...btn(), borderColor: '#7f1d1d', color: '#f87171' }}
+                    onClick={() => destroy(s.id, s.title)}
+                  >Delete</button>
                 </div>
               </div>
 

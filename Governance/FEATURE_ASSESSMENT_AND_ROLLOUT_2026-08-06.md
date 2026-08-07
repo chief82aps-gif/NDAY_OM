@@ -111,6 +111,30 @@ could plausibly have been feeding them bad dates/data for a while.
 
 ### Phase 0 — Close out tonight's open items (no flags touched)
 - Confirm the driver-schedule date fix against tonight's real 5:30-8pm PT upload.
+
+  **Status 2026-08-06 ~17:40 PT — two of three preconditions proven, third pending:**
+  1. **Resolver logic: PASS.** `_resolve_selected_schedule_date()` unit-tested
+     against the real header format (`"Thu, 06/Aug"`) and the real Week-32
+     column set. Resolves to `timestamp_date + 1 day` in every case, including
+     the exact scenario that failed last night, and never to the upload date
+     itself.
+  2. **Fix is actually deployed: CONFIRMED.** This was the real failure last
+     time — the fix went live *after* the evening ingest, so the stale pre-fix
+     result drove the sends. Verified by probing production's OpenAPI for
+     endpoints that only exist in the 2026-08-06 build
+     (`/rostering/arrival-nudges/trigger`, `/eod-survey/trigger-second-reminder`,
+     `/owner-meeting/invite`) — all three live, so the running build is newer
+     than the showtime fix. **There is no version/build endpoint on this API;
+     that absence is what made this check awkward, and a trivial
+     `GET /version` returning the deployed git SHA would make every future
+     "is the fix actually live?" question a one-second answer. Worth adding.**
+  3. **Real subsequent ingest: PENDING.** Baseline is job **415**
+     (`Week-32-Schedule (3).xlsx`, detected 2026-08-05 18:19 PT →
+     `schedule_date: 08/05/2026`, i.e. same-day — the documented bug). All 16
+     historical `driver_schedule` jobs show that same signature. Tonight's job
+     must resolve to **08/07/2026**. Check:
+     `GET /ops-ingest/jobs` → newest `driver_schedule` job → `result.schedule_date`
+     is the day *after* that job's own `detected_at` (note: `detected_at` is UTC).
 - Nothing else blocks Phase 1.
 
 ### Phase 1 — Single real-driver smoke test (no global flag flips)
@@ -156,9 +180,30 @@ process definition).
 
 ---
 
-## 5. Open Decisions Needed From You
+## 5. Open Decisions — ANSWERED 2026-08-06
 
-1. Scope for the Blake voice pass — which message surfaces first?
-2. Green light to build the shared pilot-roster-allowlist utility (needed for a real Phase 2).
-3. Who are the actual 5-10 pilot drivers?
-4. When's the dispatch meeting for Package RTS resolution (Luis, Spencer, etc.)?
+1. **Blake voice pass — start with the daily route DM + showtime DM.** These are
+   the highest-volume, most-read driver touchpoints. Note the constraint: both are
+   built by functions inside **locked** modules (`_build_driver_dm()` /
+   `_build_shift_dm()` in `rostering.py`, locked 2026-07-21). This is a
+   copy/wording change only — the Acknowledge/Arrived/Call-Out button structure,
+   the Showtime-vs-Route-Assignment button split, and the outstanding-items
+   early-exit branch must all stay exactly as-is. Treat it as an authorized
+   edit to message *text* within those functions, not a licence to restructure
+   them.
+2. **Shared pilot-roster allowlist utility — approved, build it.** One shared
+   check consulted by every driver-facing loop *before* the global flag: if a
+   pilot list exists, send only to those `roster_id`s regardless of who else
+   qualifies. Build once, reuse across arrival nudge, EOD second reminder,
+   progress DM, coaching highlights and owner meeting. This is the actual
+   unblocker for Phase 2 — without it the only option is the all-or-nothing
+   flip that caused this pause.
+3. **Pilot drivers — the user will name them directly.** Do not auto-select from
+   roster/scoring data. Still hold to the doc's own requirement that the group
+   span at least two waves so early-vs-late showtime timing edge cases get
+   exercised; if the named list doesn't, flag that plainly rather than
+   silently substituting names.
+4. **Package RTS dispatch meeting — this week.** Keeps the package offender DM
+   at the tail of the Phase 3 order rather than slipping it. The troubleshooting
+   guide stays built-but-empty until that interview happens;
+   `PACKAGE_OFFENDER_DM_ACTIVE` stays off until it's populated.

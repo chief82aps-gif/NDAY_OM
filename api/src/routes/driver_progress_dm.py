@@ -41,7 +41,7 @@ from sqlalchemy.orm import Session
 from api.src.database import get_db, DailyRouteAssignment, DriverShiftDM, PackagesRecord
 from api.src.routes.packages import get_latest_snapshot
 from api.src.timezone import PACIFIC as PT
-from api.src.pilot_roster import allow_driver
+from api.src.pilot_roster import allow_driver, mirror_pilot_send
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/driver-progress", tags=["driver-progress"])
@@ -339,6 +339,7 @@ def send_progress_dm(driver_name: str, db: Session, target_date: Optional[date] 
         logger.warning("Driver progress DM failed for %s: %s", driver_name, exc)
         return {"status": "send_failed", "error": str(exc)}
 
+    mirror_pilot_send(db, driver_name=driver_name, feature="Progress DM", text=text)
     return {"status": "sent", "driver_name": driver_name, "text": text, "stats": stats}
 
 

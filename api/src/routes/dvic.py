@@ -48,7 +48,7 @@ from api.src.driver_identity import resolve_roster_entry
 from api.src.timezone import PACIFIC
 from api.src.authorization import require_any_role
 from api.src.feature_flags import get_flag
-from api.src.pilot_roster import allow_driver
+from api.src.pilot_roster import allow_driver, mirror_pilot_send
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/dvic", tags=["dvic"])
@@ -495,6 +495,8 @@ def _action_new_violations(week: str, db: Session, only_tid: Optional[str] = Non
             v.dm_channel = channel
             v.dm_ts = ts
             sent_count += 1
+            mirror_pilot_send(db, driver_name=name, feature=f"DVIC sub-90s (stage {stage})",
+                              text=_counseling_message(stage, name, v))
         else:
             v.ack_unlocks_at = None   # nothing was delivered, so nothing to unlock
         db.commit()

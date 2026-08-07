@@ -30,6 +30,7 @@ recorded in CLAUDE.md's "never store reminder/throttle state in memory".
 from __future__ import annotations
 
 import logging
+import os
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -81,9 +82,72 @@ def set_pilot_roster_ids(db: Session, roster_ids: list[int], updated_by: str = "
         except (TypeError, ValueError):
             continue
     clean = sorted(set(clean))
-    set_reminder_state(db, PILOT_ROSTER_KEY, {"roster_ids": clean, "updated_by": updated_by})
+    # Merge, don't replace — the mirror channel lives in this same blob, and
+    # overwriting it wholesale would silently disable pilot mirroring every
+    # time the roster was edited.
+    state = get_reminder_state(db, PILOT_ROSTER_KEY) or {}
+    state.update({"roster_ids": clean, "updated_by": updated_by})
+    set_reminder_state(db, PILOT_ROSTER_KEY, state)
     logger.warning("Pilot roster set to %s by %s", clean, updated_by or "unknown")
     return describe_pilot(db)
+
+
+def get_mirror_channel(db: Session) -> str:
+    """Slack channel that receives a copy of every pilot-scoped DM.
+
+    Stored in the same state blob as the roster so it can be changed without
+    a deploy, and so a channel id identifying an internal room never has to
+    be committed to this public repo (CLAUDE.md security rule). Falls back to
+    PILOT_MIRROR_CHANNEL_ID if set.
+    """
+    state = get_reminder_state(db, PILOT_ROSTER_KEY) or {}
+    return (state.get("mirror_channel_id") or os.getenv("PILOT_MIRROR_CHANNEL_ID", "")).strip()
+
+
+def set_mirror_channel(db: Session, channel_id: str) -> dict:
+    state = get_reminder_state(db, PILOT_ROSTER_KEY) or {}
+    state["mirror_channel_id"] = (channel_id or "").strip()
+    set_reminder_state(db, PILOT_ROSTER_KEY, state)
+    return describe_pilot(db)
+
+
+def mirror_pilot_send(db: Session, *, driver_name: str, feature: str, text: str) -> None:
+    """Post a copy of a pilot-scoped DM into the observation channel.
+
+    Why this exists: during a pilot, the only evidence a DM actually reached a
+    driver was the driver screenshotting it — nobody running the test can read
+    another user's DMs, and the app's own "sent" markers have been shown to
+    lie (the Slack pause gate returned a fake success, 2026-08-06). Mirroring
+    makes every pilot send observable to the people running the test, in real
+    time, and puts feedback next to the exact message it refers to.
+
+    Best-effort and completely silent on failure — a mirror that breaks a real
+    driver send would be far worse than no mirror at all.
+    """
+    try:
+        if not pilot_is_active(db):
+            return
+        channel = get_mirror_channel(db)
+        if not channel:
+            return
+        token = os.getenv("SLACK_BOT_TOKEN")
+        if not token:
+            return
+        from slack_sdk import WebClient
+        WebClient(token=token).chat_postMessage(
+            channel=channel,
+            text=f"[pilot copy] {feature} → {driver_name}",
+            blocks=[
+                {"type": "context", "elements": [{
+                    "type": "mrkdwn",
+                    "text": f":outbox_tray:  *Pilot copy* — *{feature}* just sent to *{driver_name}*",
+                }]},
+                {"type": "section", "text": {"type": "mrkdwn", "text": text[:2900]}},
+                {"type": "divider"},
+            ],
+        )
+    except Exception as exc:  # noqa: BLE001 - never break a real send
+        logger.warning("Pilot mirror failed for %s/%s: %s", feature, driver_name, exc)
 
 
 def describe_pilot(db: Session) -> dict:

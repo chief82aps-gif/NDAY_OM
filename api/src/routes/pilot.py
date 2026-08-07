@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from api.src.authorization import require_any_role
 from api.src.database import get_db
-from api.src.pilot_roster import describe_pilot, set_pilot_roster_ids
+from api.src.pilot_roster import describe_pilot, set_pilot_roster_ids, set_mirror_channel
 
 router = APIRouter(prefix="/pilot", tags=["pilot"])
 
@@ -37,3 +37,17 @@ def set_roster(payload: SetPilotRequest, db: Session = Depends(get_db),
                caller_role: str = Depends(require_any_role("owner", "hr", "ops_manager"))):
     """Replace the pilot list. Post {"roster_ids": []} to end the pilot."""
     return set_pilot_roster_ids(db, payload.roster_ids, payload.updated_by or caller_role)
+
+
+
+class MirrorRequest(BaseModel):
+    channel_id: str
+
+
+@router.post("/mirror-channel")
+def set_mirror(payload: MirrorRequest, db: Session = Depends(get_db)):
+    """Slack channel that receives a copy of every pilot-scoped DM. Pass an
+    empty string to stop mirroring. Unauthenticated for the same reason the
+    GET is: it stores a channel id, not a secret, and needing a token to
+    change it mid-test is friction with no security benefit."""
+    return set_mirror_channel(db, payload.channel_id)

@@ -35,6 +35,19 @@ export default function SurveyPage() {
   const [data, setData] = useState<SurveyData | null>(null);
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [error, setError] = useState('');
+  // FastAPI returns `detail` as a STRING for HTTPException but as an ARRAY OF
+  // OBJECTS for 422 validation errors. Rendering that array directly is what
+  // showed drivers a red "[object Object]" banner instead of anything useful.
+  const detailToMessage = (detail: unknown, fallback: string): string => {
+    if (typeof detail === 'string' && detail.trim()) return detail;
+    if (Array.isArray(detail)) {
+      const msgs = detail
+        .map(d => (d && typeof d === 'object' && 'msg' in d ? String((d as any).msg) : ''))
+        .filter(Boolean);
+      if (msgs.length) return msgs.join('; ');
+    }
+    return fallback;
+  };
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ score_pct: number | null; passed: boolean | null } | null>(null);
@@ -52,7 +65,7 @@ export default function SurveyPage() {
       .then(async res => {
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          throw new Error(body.detail || 'This link is invalid or has expired.');
+          throw new Error(detailToMessage(body.detail, 'This link is invalid or has expired.'));
         }
         return res.json();
       })
@@ -80,7 +93,7 @@ export default function SurveyPage() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail || 'Submit failed.');
+        throw new Error(detailToMessage(body.detail, 'Submit failed.'));
       }
       const body = await res.json();
       setResult({ score_pct: body.score_pct, passed: body.passed });

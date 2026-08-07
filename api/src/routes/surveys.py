@@ -228,7 +228,14 @@ def list_surveys(db: Session = Depends(get_db)):
     ]}
 
 
-@router.get("/{survey_id}")
+# `:int` converter is load-bearing, do not drop it. Without it this route is
+# declared before GET /surveys/lookup and swallows it -- FastAPI matches in
+# declaration order, so /surveys/lookup?token=... resolved to survey_id="lookup"
+# and returned a 422 int_parsing error. That broke EVERY driver-facing survey
+# link (the "Open Quiz" button in the DM) while the admin side looked healthy,
+# which is why completion sat at 0 across all surveys. Found 2026-08-06.
+# Same class of bug as the Slack Home tab routing collision (2026-08-05).
+@router.get("/{survey_id:int}")
 def get_survey(survey_id: int, db: Session = Depends(get_db)):
     survey = db.query(Survey).filter(Survey.id == survey_id).first()
     if not survey:

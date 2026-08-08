@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import ProtectedRoute from '../components/ProtectedRoute';
 
-type IngestStatus = 'pending' | 'ingesting' | 'complete' | 'error' | 'skipped' | 'unsupported';
+type IngestStatus = 'pending' | 'ingesting' | 'complete' | 'error' | 'skipped' | 'unsupported' | 'quarantined';
 
 interface IngestJob {
   id: number;
@@ -141,8 +141,11 @@ export default function OpsIngestPage() {
     }
   };
 
-  const pending = jobs.filter(j => j.status === 'pending' || j.status === 'error');
-  const history = jobs.filter(j => j.status !== 'pending' && j.status !== 'error');
+  // 'quarantined' belongs with the actionable jobs, not buried in history --
+  // it means a file was set aside after repeated failures and needs a human.
+  const ACTIONABLE: IngestStatus[] = ['pending', 'error', 'quarantined'];
+  const pending = jobs.filter(j => ACTIONABLE.includes(j.status));
+  const history = jobs.filter(j => !ACTIONABLE.includes(j.status));
 
   const displayed = tab === 'pending' ? pending : history;
 

@@ -2664,6 +2664,19 @@ def ensure_packages_record_column_widths():
             pass  # table absent, or already at least this wide
 
 
+def ensure_ops_ingest_job_attempts_column():
+    """Add attempts to ops_ingest_jobs — added 2026-08-07 for the
+    auto-ingest poison-pill quarantine. See OpsIngestJob.attempts."""
+    try:
+        with engine.begin() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text("ALTER TABLE ops_ingest_jobs ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"))
+            else:
+                conn.execute(text("ALTER TABLE ops_ingest_jobs ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0"))
+    except Exception:
+        pass  # Column already exists
+
+
 def ensure_dvic_ack_unlock_column():
     """Add ack_unlocks_at to dvic_violations — added 2026-08-07 for the
     95-second Acknowledge lock on sub-90s pre-trip notices."""
@@ -3664,6 +3677,16 @@ class OpsIngestJob(Base):
     error_message = Column(Text)
     detected_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     ingested_at = Column(DateTime)
+    # Poison-pill guard (added 2026-08-07). A job whose dispatch kills the
+    # worker outright -- rather than raising an exception the loop can catch
+    # -- never reaches the status="error" write, so it stays 'ingesting',
+    # ages past the stuck cutoff, and is picked up again next sweep. Because
+    # the sweep runs oldest-first it dies on that same row every cycle and
+    # never reaches anything behind it (see
+    # ensure_packages_record_column_widths for the incident where this held
+    # up twenty files, a driver schedule among them). Counting attempts lets
+    # the sweep give up on one file instead of the whole queue.
+    attempts = Column(Integer, nullable=False, default=0, server_default="0")
 
 
 class MisroutedFileAlert(Base):

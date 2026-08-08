@@ -1001,6 +1001,7 @@ def _job_to_dict(j: OpsIngestJob) -> dict:
         "type_label": _TYPE_LABELS.get(j.detected_type, j.detected_type),
         "description": j.slack_message_text,
         "status": j.status,
+        "attempts": j.attempts or 0,
         "result": j.result_json,
         "error_message": j.error_message,
         "detected_at": j.detected_at.isoformat() if j.detected_at else None,
@@ -1070,6 +1071,7 @@ _AUTO_INGEST_TYPES = ("dvic", "driver_schedule", "fleet", "quality_csv", "safety
 
 
 _STUCK_INGESTING_MINUTES = 10   # a real ingest (download + parse) finishes in seconds; anything still "ingesting" this long after detection was orphaned, not slow
+_MAX_INGEST_ATTEMPTS = 3        # after this many tries the file is set aside rather than retried forever -- one bad file must never hold up the queue behind it
 
 
 def run_ops_auto_ingest(db: Session) -> dict:
@@ -1106,11 +1108,35 @@ def run_ops_auto_ingest(db: Session) -> dict:
         .order_by(OpsIngestJob.id.asc())
         .all()
     )
-    ingested = errors = 0
+    ingested = errors = quarantined = 0
     by_type: dict = {}
     for job in jobs:
         if not job.file_url:
             continue
+
+        # Count the attempt BEFORE dispatching, and commit it. If the dispatch
+        # kills the worker outright rather than raising, this is the only
+        # record that we tried -- an increment written afterwards would never
+        # run, and the job would be retried forever, blocking every job behind
+        # it on every sweep (oldest-first).
+        job.attempts = (job.attempts or 0) + 1
+        if job.attempts > _MAX_INGEST_ATTEMPTS:
+            job.status = "quarantined"
+            job.error_message = (
+                f"Quarantined after {job.attempts - 1} failed attempts. "
+                "This file was blocking the queue; fix it and POST "
+                f"/ops-ingest/jobs/{job.id}/reset to try again."
+            )
+            db.commit()
+            quarantined += 1
+            label = _TYPE_LABELS.get(job.detected_type, job.detected_type)
+            _post_confirmation(
+                f":no_entry: *{label} quarantined* — `{job.file_name}`\n"
+                f"Failed {job.attempts - 1} times and was holding up the ingest queue, "
+                f"so it's been set aside. Everything behind it will now process."
+            )
+            continue
+
         job.status = "ingesting"
         db.commit()
 
@@ -1171,7 +1197,8 @@ def run_ops_auto_ingest(db: Session) -> dict:
             errors += 1
             _post_confirmation(f":x: *{label} auto-ingest failed* — `{job.file_name}`\n{result.get('message', 'Unknown error')}")
 
-    return {"status": "checked", "ingested": ingested, "errors": errors, "total_pending": len(jobs), "by_type": by_type}
+    return {"status": "checked", "ingested": ingested, "errors": errors,
+            "quarantined": quarantined, "total_pending": len(jobs), "by_type": by_type}
 
 
 def is_type_ingested_today(db: Session, detected_type: str, today: date) -> bool:
@@ -1229,6 +1256,9 @@ def reset_job(job_id: int, db: Session = Depends(get_db)):
     previous = job.status
     job.status = "pending"
     job.error_message = None
+    # Clear the poison-pill counter too, otherwise a quarantined job would be
+    # re-quarantined on its very next sweep and the reset would do nothing.
+    job.attempts = 0
     db.commit()
     return {"status": "reset", "job_id": job_id, "from": previous, "to": "pending",
             "file_name": job.file_name}
@@ -1240,12 +1270,17 @@ def ingest_job(job_id: int, db: Session = Depends(get_db)):
     job = db.query(OpsIngestJob).filter(OpsIngestJob.id == job_id).first()
     if not job:
         raise HTTPException(404, "Job not found.")
-    if job.status not in ("pending", "error"):
-        raise HTTPException(400, f"Job status is '{job.status}' — only pending or error jobs can be ingested.")
+    if job.status not in ("pending", "error", "quarantined"):
+        raise HTTPException(400, f"Job status is '{job.status}' — only pending, error or quarantined jobs can be ingested.")
     if not job.file_url:
         raise HTTPException(400, "No download URL stored for this job.")
 
     job.status = "ingesting"
+    # A human explicitly clicking Ingest is a deliberate override of the
+    # quarantine, so clear the counter -- otherwise the next auto sweep would
+    # immediately re-quarantine the job and the click would appear to do
+    # nothing.
+    job.attempts = 0
     db.commit()
 
     content = _download_file(job.file_url)

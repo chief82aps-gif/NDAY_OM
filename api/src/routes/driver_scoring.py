@@ -435,10 +435,26 @@ def compute_driver_scores(db: Session) -> list[dict]:
         )
 
         tenure_rec = get_latest_tenure_record(db, row.transporter_id) if row.transporter_id else None
-        trailing_routes = (
-            get_trailing_route_count(db, row.transporter_id, weeks=ROUTE_ELIGIBILITY_WEEKS)
-            if row.transporter_id else 0
+
+        # Count routes from OUR OWN assignments, not Amazon's weekly report
+        # (2026-08-07, explicit direction: "lifetime routes is a static number
+        # from a point in time... we could capture the number and add any
+        # routes completed in the current week").
+        #
+        # get_trailing_route_count() summed TenuredWorkforceRecord.routes_in_week,
+        # which lags a week, only updates on Fridays, and took the 6 most recent
+        # rows regardless of their age. We assign the routes, so this is knowable
+        # exactly and today. Falls back to the report only when the driver has no
+        # resolvable roster entry.
+        from api.src.database import get_actual_trailing_route_count
+        _entry = resolve_roster_entry(row.driver_name, db, include_inactive=True)
+        trailing_routes = get_actual_trailing_route_count(
+            db, weeks=ROUTE_ELIGIBILITY_WEEKS,
+            roster_id=_entry.id if _entry else None,
+            driver_name=row.driver_name,
         )
+        if not trailing_routes and row.transporter_id:
+            trailing_routes = get_trailing_route_count(db, row.transporter_id, weeks=ROUTE_ELIGIBILITY_WEEKS)
 
         tenure_ok = bool(tenure_rec and tenure_rec.tenure_status == "Tenured")
         routes_ok = trailing_routes >= ROUTE_ELIGIBILITY_THRESHOLD

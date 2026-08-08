@@ -1983,6 +1983,41 @@ def get_trailing_route_count(db, transporter_id: str, weeks: int = 6) -> int:
     return sum(r[0] or 0 for r in rows)
 
 
+def get_actual_trailing_route_count(db, weeks: int = 6, *, roster_id=None, driver_name: str = None) -> int:
+    """Routes this driver ACTUALLY ran in the trailing N weeks, counted from
+    our own DailyRouteAssignment rows — added 2026-08-07.
+
+    Replaces summing TenuredWorkforceRecord.routes_in_week, which had two
+    problems. First it depended entirely on Amazon's weekly Tenured Workforce
+    report, which lags about a week and only lands Fridays, so the count was
+    always stale and got staler until the next file. Second it took the 6 most
+    recent report ROWS regardless of age — months-old rows were summed as if
+    current.
+
+    We assign the routes, so we already know this number exactly, today, with
+    no dependency on an external file. Same reasoning as
+    get_route_count_baseline()'s "count how many we route them on" approach
+    (2026-08-05, explicit direction).
+
+    Counts DISTINCT assignment dates, not rows — a driver reassigned mid-day
+    (route swap, rescue) has two rows for one day and must not count twice.
+    Prefers roster_id (stable); falls back to driver_name for rows predating
+    the roster_id backfill.
+    """
+    from datetime import timedelta as _td
+    cutoff = datetime.utcnow().date() - _td(weeks=weeks)
+    q = db.query(DailyRouteAssignment.assignment_date).filter(
+        DailyRouteAssignment.assignment_date >= cutoff
+    )
+    if roster_id is not None:
+        q = q.filter(DailyRouteAssignment.roster_id == roster_id)
+    elif driver_name:
+        q = q.filter(DailyRouteAssignment.driver_name == driver_name)
+    else:
+        return 0
+    return len({r[0] for r in q.all()})
+
+
 # ============================================================================
 # ATTENDANCE TRACKING
 # ============================================================================

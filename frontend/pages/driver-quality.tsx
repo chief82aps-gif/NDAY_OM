@@ -265,6 +265,7 @@ function TrainingVideoManager({ api }: { api: string }) {
   const [videos, setVideos] = useState<TrainingVideoEntry[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<string | null>(null);
+  const [videoError, setVideoError] = useState('');
 
   const load = useCallback(() => {
     fetch(`${api}/driver-scoring/training-videos`)
@@ -283,17 +284,38 @@ function TrainingVideoManager({ api }: { api: string }) {
   async function save(metric_label: string) {
     setSaving(metric_label);
     try {
+      // Both endpoints are behind require_any_role("owner","hr"). Without the
+      // token they return 401 and, because nothing checked res.ok, the button
+      // appeared to work while saving nothing — the same silent-401 failure as
+      // survey-admin (2026-08-07). Found by the frontend/backend auth scrub.
+      const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+      const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+
       const url = (drafts[metric_label] || '').trim();
-      if (!url) {
-        await fetch(`${api}/driver-scoring/training-videos/${encodeURIComponent(metric_label)}`, { method: 'DELETE' });
-      } else {
-        await fetch(`${api}/driver-scoring/training-videos`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ metric_label, video_url: url }),
-        });
+      const res = !url
+        ? await fetch(`${api}/driver-scoring/training-videos/${encodeURIComponent(metric_label)}`, {
+            method: 'DELETE', headers: authHeaders,
+          })
+        : await fetch(`${api}/driver-scoring/training-videos`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders },
+            body: JSON.stringify({ metric_label, video_url: url }),
+          });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const detail = typeof body.detail === 'string' ? body.detail : '';
+        setVideoError(
+          res.status === 401 ? 'Not signed in — your session expired. Sign in again and retry.'
+          : res.status === 403 ? `Your account lacks permission (403). ${detail}`
+          : `Save failed — HTTP ${res.status}${detail ? ': ' + detail : ''}`
+        );
+        return;
       }
+      setVideoError('');
       load();
+    } catch (e: any) {
+      setVideoError(`Network error: ${e?.message ?? 'request never reached the server'}`);
     } finally {
       setSaving(null);
     }
@@ -302,6 +324,12 @@ function TrainingVideoManager({ api }: { api: string }) {
   return (
     <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 10, padding: 16, marginBottom: 20 }}>
       <p style={{ fontSize: 13, fontWeight: 700, margin: '0 0 10px' }}>📺 Training Video Library</p>
+      {videoError && (
+        <div style={{ marginBottom: 10, padding: '8px 12px', borderRadius: 6, fontSize: 13,
+                      background: '#3b1e1e', border: '1px solid #7f1d1d', color: '#f87171' }}>
+          {videoError}
+        </div>
+      )}
       <p style={{ fontSize: 11, color: '#94a3b8', margin: '0 0 12px' }}>
         One video per metric — auto-attaches whenever that metric shows up as a driver's focus area.
       </p>

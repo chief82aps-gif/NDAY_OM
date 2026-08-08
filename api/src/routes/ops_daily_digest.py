@@ -82,8 +82,16 @@ def _callout_lines(db: Session, today: date) -> list[str]:
 
 
 def _grounded_van_lines(db: Session) -> list[str]:
+    """Vans currently GROUNDED per the latest Fleet ingest.
+
+    Each line says GROUNDED explicitly (2026-08-07). Previously these rendered
+    as `name (VIN) — service_type` with no status word at all, under a section
+    headed only "Fleet" — so a correct list of down vehicles read as a
+    meaningless VIN dump and was reported as "why are all these vans posting,
+    I see no issues". The content was always right; nothing labelled it.
+    """
     rows = db.query(Vehicle).filter(func.lower(Vehicle.status) == "grounded").all()
-    return [f"• {r.vehicle_name} ({r.vin}) — {r.service_type}" for r in rows]
+    return [f"• 🚫 *GROUNDED* — {r.vehicle_name} ({r.vin}) — {r.service_type}" for r in rows]
 
 
 def _van_issue_lines(db: Session, today: date) -> list[str]:
@@ -261,13 +269,23 @@ def build_digest_text(db: Session, today: date) -> str:
     van_issue_lines = _van_issue_lines(db, today)
     chat_equipment_lines = chat_flagged_equipment_lines(db, today)   # AI-detected equipment mentions in #nday-team-room
     fleet_lines = grounded_lines + van_issue_lines + chat_equipment_lines
-    fleet_section = "\n".join(fleet_lines) or "_No van issues reported._"
+    fleet_section = "\n".join(fleet_lines) or "_Nothing to report._"
+
+    # Counts in the header so the section is scannable — a reader can tell at a
+    # glance whether anything needs acting on, instead of counting bullets.
+    fleet_counts = ", ".join(
+        part for part in [
+            f"{len(grounded_lines)} grounded" if grounded_lines else "",
+            f"{len(van_issue_lines)} driver-reported" if van_issue_lines else "",
+            f"{len(chat_equipment_lines)} flagged in chat" if chat_equipment_lines else "",
+        ] if part
+    ) or "nothing to report"
 
     return (
         f"📋 *Daily Ops Digest — {date_str}*\n\n"
         f"*HR* ({len(hr_lines)} item(s))\n{hr_section}\n\n"
         f"*Operational*\n{mgt_section}\n\n"
-        f"*Fleet*\n{fleet_section}"
+        f"*Fleet* ({fleet_counts})\n{fleet_section}"
     )
 
 

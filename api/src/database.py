@@ -2587,6 +2587,48 @@ class OffboardingFileSnapshot(Base):
     payload = Column(Text)   # JSON: [{name, transporter_id, email, status}]
 
 
+def ensure_packages_record_column_widths():
+    """Widen packages_records text columns to fit real Amazon data — added
+    2026-08-07.
+
+    Base.metadata.create_all() creates missing TABLES but never alters existing
+    COLUMNS, so a model widened after the table already existed leaves
+    production on the original narrower definition. Confirmed live: an insert
+    failed with
+
+        StringDataRightTruncation: value too long for type character varying(50)
+
+    for a column the model declares as String(150)/String(255) — the model and
+    the live schema had silently drifted.
+
+    The blast radius was far bigger than one file. The failed flush left the
+    SQLAlchemy session needing a rollback, which aborted the whole auto-ingest
+    batch; the job stayed stuck at 'ingesting'; and because the sweep runs
+    oldest-first it hit that same row every time and died before reaching
+    anything behind it. Twenty files — including a driver schedule — sat
+    unprocessed for hours behind one oversized address.
+
+    Widening only. ALTER ... TYPE VARCHAR(n) to a LARGER size is
+    non-destructive and safe to re-run; never narrow here, that truncates.
+    """
+    for col, size in [
+        ("tracking_id", 100),
+        ("route_code", 40),
+        ("transporter_name", 200),
+        ("transporter_id", 100),
+        ("address", 500),
+        ("package_status", 60),
+        ("reason_code", 200),
+    ]:
+        try:
+            with engine.begin() as conn:
+                if DATABASE_URL.startswith("sqlite"):
+                    continue   # SQLite ignores VARCHAR lengths entirely
+                conn.execute(text(f"ALTER TABLE packages_records ALTER COLUMN {col} TYPE VARCHAR({size})"))
+        except Exception:
+            pass  # table absent, or already at least this wide
+
+
 def ensure_dvic_ack_unlock_column():
     """Add ack_unlocks_at to dvic_violations — added 2026-08-07 for the
     95-second Acknowledge lock on sub-90s pre-trip notices."""
@@ -3466,7 +3508,7 @@ class CustomerFeedbackEvent(Base):
     delivery_group_id = Column(String(64), nullable=False, unique=True, index=True)
     driver_name = Column(String(150), index=True)          # "Delivery Associate Name"
     transporter_id = Column(String(50), index=True)         # "Delivery Associate"
-    tracking_id = Column(String(50), index=True)
+    tracking_id = Column(String(100), index=True)
     mishandled_package = Column(Boolean, default=False)
     unprofessional = Column(Boolean, default=False)
     did_not_follow_instructions = Column(Boolean, default=False)
@@ -4238,12 +4280,12 @@ class PackagesRecord(Base):
     id = Column(Integer, primary_key=True)
     snapshot_id = Column(Integer, ForeignKey("packages_snapshots.id"), nullable=False, index=True)
     tracking_id = Column(String(50), index=True)
-    route_code = Column(String(20), index=True)
-    transporter_name = Column(String(150), index=True)
+    route_code = Column(String(40), index=True)
+    transporter_name = Column(String(200), index=True)
     transporter_id = Column(String(50), index=True)
-    address = Column(String(255))
-    package_status = Column(String(30))     # Reattemptable | Undeliverable | Missing | Returned to station | Pickup failed
-    reason_code = Column(String(60))        # NULL == Amazon's "NONE" -- no reason recorded yet
+    address = Column(String(500))
+    package_status = Column(String(60))     # Reattemptable | Undeliverable | Missing | Returned to station | Pickup failed
+    reason_code = Column(String(200))        # NULL == Amazon's "NONE" -- no reason recorded yet
     last_scan_at = Column(DateTime)
 
 

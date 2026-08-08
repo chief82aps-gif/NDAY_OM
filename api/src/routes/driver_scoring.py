@@ -305,16 +305,27 @@ def is_non_tenured_phase(phase: Optional[str]) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_route_count_baseline(db: Session, transporter_id: str) -> Optional[dict]:
-    """Most recent real Amazon-reported lifetime_routes + the date it was
-    as-of (the Friday of that ISO year/week -- matches the report's own
-    Friday COB cadence). None if this driver has never appeared in a
-    Tenured Workforce report."""
+    """Most recent real Amazon-reported lifetime_routes + the date it counts
+    up to — the SATURDAY of that ISO year/week.
+
+    Corrected 2026-08-07 (explicit direction): "the date of the report counts
+    all routes by the driver up to the Saturday in the week of the date of the
+    report." This was previously Friday (ISO weekday 5), while
+    get_estimated_lifetime_routes() counts every route-day STRICTLY AFTER the
+    baseline — so any Saturday the driver worked was counted twice, once inside
+    Amazon's lifetime_routes and again by us. That inflated every estimate by
+    roughly one route per week worked since the last report, compounding the
+    longer the gap.
+
+    Saturday is the inclusive end of the reported period, so counting
+    `> as_of_date` correctly resumes from the Sunday.
+    """
     rec = get_latest_tenure_record(db, transporter_id)
     if not rec or rec.lifetime_routes is None:
         return None
     from datetime import date as _date
     try:
-        as_of_date = _date.fromisocalendar(rec.year, rec.week, 5)   # ISO weekday 5 = Friday
+        as_of_date = _date.fromisocalendar(rec.year, rec.week, 6)   # ISO weekday 6 = Saturday
     except ValueError:
         return None
     return {"baseline_routes": rec.lifetime_routes, "baseline_as_of": as_of_date, "tenure_status": rec.tenure_status}

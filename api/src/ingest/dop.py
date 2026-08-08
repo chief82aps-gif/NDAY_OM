@@ -42,6 +42,29 @@ def _safe_cell(row: pd.Series, col_idx: int):
     return row.iloc[col_idx]
 
 
+def _coerce_int(cell):
+    """Int from a DOP cell, or None if it isn't a number.
+
+    Excel hands these back as int/float, but CSV hands back *strings* --
+    pandas reads the whole column as object dtype because row 0 holds the
+    header text. The previous isinstance((int, float)) check therefore
+    silently dropped every numeric field on CSV DOP files: num_packages
+    was None for all 42 routes on 2026-08-07 with no parse error raised,
+    which is why progress DMs had no route total to anchor a stop count
+    to. route_duration already had this string fallback, which is why it
+    was the one numeric field that survived. Non-fatal by design -- a
+    genuinely absent count returns None rather than dropping the route.
+    """
+    if cell is None or not pd.notna(cell):
+        return None
+    if isinstance(cell, (int, float)):
+        return int(cell)
+    try:
+        return int(str(cell).strip())
+    except (ValueError, TypeError):
+        return None
+
+
 def parse_dop_excel(file_path: str) -> Tuple[List[RouteDOP], List[str]]:
     """Parse DOP Excel or CSV file and return route records and validation errors."""
     errors = []
@@ -74,9 +97,9 @@ def parse_dop_excel(file_path: str) -> Tuple[List[RouteDOP], List[str]]:
                 wave = str(wave_cell).strip() if pd.notna(wave_cell) else ""
                 staging_location = str(staging_cell).strip() if pd.notna(staging_cell) else ""
                 route_duration_raw = route_duration_cell if pd.notna(route_duration_cell) else None
-                num_zones = int(num_zones_cell) if pd.notna(num_zones_cell) and isinstance(num_zones_cell, (int, float)) else None
-                num_packages = int(num_packages_cell) if pd.notna(num_packages_cell) and isinstance(num_packages_cell, (int, float)) else None
-                num_commercial_pkgs = int(num_commercial_cell) if pd.notna(num_commercial_cell) and isinstance(num_commercial_cell, (int, float)) else None
+                num_zones = _coerce_int(num_zones_cell)
+                num_packages = _coerce_int(num_packages_cell)
+                num_commercial_pkgs = _coerce_int(num_commercial_cell)
 
                 if not dsp:
                     errors.append(f"Row {idx+1}: DSP is empty.")

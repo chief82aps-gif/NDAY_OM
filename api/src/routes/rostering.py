@@ -813,18 +813,21 @@ def run_showtime_watchdog(db: Session, now: Optional[datetime] = None) -> dict:
     if hour < _SHOWTIME_FIRST_CHECK_HOUR:
         return {"status": "before_window"}
 
-    # Don't alarm about a feature that is deliberately switched off.
-    # send_driver_shift_dms() is gated by DRIVER_DM_ACTIVE, so while that flag
-    # is off NO Showtime DM can ever be sent and this watchdog escalated
-    # "0/41 drivers have a confirmed Showtime DM" every 15 minutes toward a
-    # 10 PM deadline that could not possibly be met. It also set
-    # blocked_all_in, withholding the All In summary over a non-problem.
-    # Reported 2026-08-07. Same root fault as the Schedule Responses summary
-    # counting never-DMed drivers as "no reply": treating "never sent"
-    # as "failed to send".
-    if not get_flag("DRIVER_DM_ACTIVE"):
-        return {"status": "driver_dms_disabled",
-                "note": "DRIVER_DM_ACTIVE is off — Showtime DMs are intentionally not being sent, so there is nothing to escalate."}
+    # This watchdog covers TWO distinct failures: (1) tomorrow's schedule was
+    # never ingested, and (2) the schedule is in but Showtime DMs didn't go
+    # out. Only (2) depends on DRIVER_DM_ACTIVE.
+    #
+    # send_driver_shift_dms() is gated by that flag, so while it is off NO
+    # Showtime DM can ever be sent — yet this escalated "0/41 drivers have a
+    # confirmed Showtime DM" every 15 minutes toward a 10 PM deadline that
+    # could not possibly be met, and set blocked_all_in, withholding the All
+    # In summary over a non-problem (reported 2026-08-07).
+    #
+    # Suppress ONLY the DM-completeness half. A missing schedule still matters
+    # regardless of whether DMs are switched on — that is the alarm that tells
+    # you tomorrow has no roster at all, and silencing it would trade a noisy
+    # false alarm for a silent real one.
+    dms_enabled = get_flag("DRIVER_DM_ACTIVE")
 
     target_date = (now + timedelta(days=1)).date()
     state_key = f"{_SHOWTIME_WATCHDOG_KEY_PREFIX}{target_date.isoformat()}"
@@ -836,6 +839,15 @@ def run_showtime_watchdog(db: Session, now: Optional[datetime] = None) -> dict:
     if status["has_schedule"] and status["complete"]:
         set_reminder_state(db, state_key, {**state, "resolved": True, "blocked_all_in": False})
         return {"status": "resolved", "date": target_date.isoformat(), **status}
+
+    # Schedule is in, DMs are intentionally off — nothing to send, nothing to
+    # escalate. Explicitly clears blocked_all_in so a previously-set block from
+    # before the flag was turned off doesn't keep withholding the All In post.
+    if status["has_schedule"] and not dms_enabled:
+        set_reminder_state(db, state_key, {**state, "blocked_all_in": False})
+        return {"status": "driver_dms_disabled", "date": target_date.isoformat(),
+                "note": "Schedule is ingested; DRIVER_DM_ACTIVE is off so Showtime DMs are intentionally not sent.",
+                **status}
 
     # Retry the (idempotent) send every check -- if the schedule landed late
     # or a transient Slack failure caused a partial send, this closes the gap

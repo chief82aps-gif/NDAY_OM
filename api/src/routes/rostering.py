@@ -3614,6 +3614,24 @@ def refresh_shift_response_summary(shift_date: date, db: Session) -> dict:
         for r in db.query(DriverShiftDM).filter(DriverShiftDM.shift_date == shift_date).all()
     }
 
+    # Nothing was ever sent, so there are no responses to summarise.
+    #
+    # _shift_response_status() returns "yellow" for a driver with no DM record
+    # at all, which is indistinguishable from one who was DMed and ignored it.
+    # With no sends this posted "0 acknowledged · 38 no reply" — reported
+    # 2026-08-07, fired at 12:26 AM for a shift ~18 hours before its DMs were
+    # even due, and kept re-posting every 30 minutes while DRIVER_DM_ACTIVE was
+    # off so none would ever be sent. It also names drivers under "No reply
+    # yet", implying they ignored something they never received.
+    #
+    # Same fault as the Showtime watchdog escalating a disabled feature:
+    # treating "never sent" as "failed to send". Authorized 2026-08-07; this
+    # function is on the locked-2026-07-21 list, so the change is deliberately
+    # one early return — bucket logic, formatting and the chat_update flow are
+    # untouched. Self-correcting: the moment one real DM exists this resumes.
+    if not dm_records:
+        return {"status": "no_dms_sent", "date": shift_date.isoformat(), "scheduled": len(scheduled)}
+
     green, yellow, red = [], [], []
     for entry in scheduled:
         status = _shift_response_status(dm_records.get(entry.driver_name))

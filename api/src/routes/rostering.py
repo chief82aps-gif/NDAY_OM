@@ -706,6 +706,19 @@ def send_driver_shift_dms(shift_date: date, db: Session) -> dict:
             skipped += 1
             continue
 
+        # Pilot scoping (2026-08-07, explicitly authorized — this function is
+        # on the locked-2026-07-21 list). Checked AFTER DRIVER_DM_ACTIVE, never
+        # instead of it: the pilot list narrows an already-enabled feature, it
+        # can never enable one. No pilot set == everyone, exactly as before, so
+        # this is a no-op outside a pilot.
+        #
+        # Nothing else in this function changes — message content, the
+        # Acknowledge/Can't-Make-It button pair and the send/record flow are
+        # untouched.
+        if not allow_driver(entry.roster_id, db):
+            skipped += 1
+            continue
+
         slack_id = _get_driver_slack_id(name, db, roster_id=entry.roster_id)
         text_fallback, blocks, showtime = _build_shift_dm(entry, wave_lead_name, date_str, shift_date)
 
@@ -2592,6 +2605,15 @@ def send_day_of_dms(shift_date: date, db: Session, bypass_outstanding_items: boo
     sent = skipped = no_slack = pending_ack = 0
 
     for a in assignments:
+        # Pilot scoping (2026-08-07, explicitly authorized — this function is
+        # on the locked-2026-07-21 list). Sits BEFORE the Slack lookup and
+        # before the outstanding-items gate, and deliberately does NOT touch
+        # dm_sent: a non-pilot driver must stay eligible for the moment the
+        # pilot ends, exactly as if this send had never run for them.
+        # No pilot set == everyone, so this is a no-op outside a pilot.
+        if not allow_driver(a.roster_id, db):
+            continue
+
         slack_id = _get_driver_slack_id(a.driver_name, db, roster_id=a.roster_id)
         if not slack_id:
             no_slack += 1

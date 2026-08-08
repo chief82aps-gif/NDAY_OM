@@ -281,7 +281,13 @@ def build_progress_message_text(stats: dict, db: Optional[Session] = None, time_
     if stats["total_packages"] and stats["delivered_so_far"] is not None:
         pct_str = f" ({pct}%)" if pct is not None else ""
         lines.append(f"📦 {stats['delivered_so_far']}/{stats['total_packages']} delivered{pct_str}")
-    if stats["remaining_packages"] is not None:
+    # Only state a stop count when we have the route total to anchor it.
+    # remaining_packages is a row count from the packages snapshot, which
+    # lists *problem* packages -- a driver absent from that file counts 0,
+    # which is indistinguishable from "finished". Without a known total we
+    # cannot tell those apart, so we say nothing rather than tell a driver
+    # mid-route they have 0 stops left.
+    if stats["total_packages"] and stats["remaining_packages"] is not None:
         lines.append(f"🎯 {stats['remaining_packages']} stop(s) to go")
 
     trm = stats["time_remaining_minutes"]

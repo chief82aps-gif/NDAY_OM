@@ -813,6 +813,19 @@ def run_showtime_watchdog(db: Session, now: Optional[datetime] = None) -> dict:
     if hour < _SHOWTIME_FIRST_CHECK_HOUR:
         return {"status": "before_window"}
 
+    # Don't alarm about a feature that is deliberately switched off.
+    # send_driver_shift_dms() is gated by DRIVER_DM_ACTIVE, so while that flag
+    # is off NO Showtime DM can ever be sent and this watchdog escalated
+    # "0/41 drivers have a confirmed Showtime DM" every 15 minutes toward a
+    # 10 PM deadline that could not possibly be met. It also set
+    # blocked_all_in, withholding the All In summary over a non-problem.
+    # Reported 2026-08-07. Same root fault as the Schedule Responses summary
+    # counting never-DMed drivers as "no reply": treating "never sent"
+    # as "failed to send".
+    if not get_flag("DRIVER_DM_ACTIVE"):
+        return {"status": "driver_dms_disabled",
+                "note": "DRIVER_DM_ACTIVE is off — Showtime DMs are intentionally not being sent, so there is nothing to escalate."}
+
     target_date = (now + timedelta(days=1)).date()
     state_key = f"{_SHOWTIME_WATCHDOG_KEY_PREFIX}{target_date.isoformat()}"
     state = get_reminder_state(db, state_key)
